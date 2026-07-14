@@ -18,6 +18,8 @@ public sealed class HermesTraderService(
     HandbookHelper handbookHelper,
     ItemHelper itemHelper,
     HermesCatalogService catalogService,
+    HermesStashService stashService,
+    HermesMarketPriceService marketPriceService,
     JsonUtil jsonUtil)
 {
     private static readonly HashSet<string> VanillaTraderNames = new(StringComparer.OrdinalIgnoreCase)
@@ -39,7 +41,10 @@ public sealed class HermesTraderService(
     private static readonly MongoId EurosTpl = new("569668774bdc2da2298b4568");
     private static readonly MongoId GpCoinTpl = new("5d235b4d86f7742e017bc88a");
 
-    public HermesTraderSummaryResponse GetSummary(string? itemKey, MongoId sessionId)
+    public HermesTraderSummaryResponse GetSummary(
+        string? itemKey,
+        string? instanceKey,
+        MongoId sessionId)
     {
         var item = catalogService.ResolveItem(itemKey);
         if (item is null)
@@ -55,7 +60,15 @@ public sealed class HermesTraderService(
 
         var profileJson = jsonUtil.Serialize(pmcProfile) ?? "{}";
         var referencePrice = catalogService.GetReferencePrice(item.TemplateId);
-        var sellOffers = BuildSellOffers(item.TemplateId, referencePrice, profileJson);
+        var selectedInstance = stashService.ResolveSelectedInstance(item.ItemKey, instanceKey, sessionId);
+        IReadOnlyList<HermesTraderSaleComponent> saleComponents = selectedInstance?.Components
+            ?? (referencePrice is > 0
+                ? [new HermesTraderSaleComponent(
+                    item.TemplateId,
+                    referencePrice.Value,
+                    HermesSaleComponentKind.Root)]
+                : []);
+        var sellOffers = BuildSellOffers(item.TemplateId, saleComponents, profileJson);
         var purchaseOffers = BuildPurchaseOffers(item.TemplateId, sessionId, profileJson);
 
         var best = sellOffers.FirstOrDefault();
@@ -67,25 +80,53 @@ public sealed class HermesTraderService(
             best = sellOffers[0];
         }
 
+        var instanceSummary = selectedInstance?.Summary;
+        var salePriceBasis = instanceSummary is null
+            ? "Full-condition base item estimate. Select a matching stash copy to value its root condition and installed equipment separately."
+            : $"Selected stash copy: {instanceSummary.Label}. Root basis ₽{instanceSummary.RootConditionAdjustedReferenceValue:N0} + installed basis ₽{instanceSummary.InstalledComponentReferenceValue:N0}. Each trader values only installed components it accepts.";
+
         return new HermesTraderSummaryResponse(
             true,
-            null,
+            selectedInstance is null && !string.IsNullOrWhiteSpace(instanceKey)
+                ? "The selected stash copy is no longer available. HERMES returned the base-item estimate instead."
+                : null,
             item.ItemKey,
             item.Name,
             item.ShortName,
             referencePrice,
             item.AcceptedBySupportedTrader,
+            instanceSummary is not null,
+            instanceSummary?.InstanceKey,
+            instanceSummary?.Label,
+            instanceSummary?.ConditionPercent,
+            instanceSummary?.Quantity ?? 1d,
+            instanceSummary?.ChildItemCount ?? 0,
+            instanceSummary?.WeaponAttachmentCount ?? 0,
+            instanceSummary?.ArmorInsertCount ?? 0,
+            instanceSummary?.RootConditionAdjustedReferenceValue,
+            instanceSummary?.InstalledComponentReferenceValue,
+            instanceSummary?.ConditionAdjustedReferenceValue,
+            salePriceBasis,
             best,
             sellOffers,
             purchaseOffers);
     }
 
-    private List<HermesSellOffer> BuildSellOffers(
-        MongoId itemTpl,
-        long? referencePrice,
+    internal HermesSellOffer? GetBestSellOfferForComponents(
+        MongoId rootItemTpl,
+        IReadOnlyList<HermesTraderSaleComponent> components,
         string profileJson)
     {
-        if (referencePrice is null or <= 0)
+        var best = BuildSellOffers(rootItemTpl, components, profileJson).FirstOrDefault();
+        return best is null ? null : best with { IsBest = true };
+    }
+
+    private List<HermesSellOffer> BuildSellOffers(
+        MongoId rootItemTpl,
+        IReadOnlyList<HermesTraderSaleComponent> components,
+        string profileJson)
+    {
+        if (components.Count == 0)
         {
             return [];
         }
@@ -95,7 +136,7 @@ public sealed class HermesTraderService(
         foreach (var (traderId, trader) in databaseService.GetTraders())
         {
             var traderBase = trader.Base;
-            if (!IsVanillaTrader(traderBase) || !CanTraderBuyItem(traderBase, itemTpl))
+            if (!IsVanillaTrader(traderBase) || !CanTraderBuyItem(traderBase, rootItemTpl))
             {
                 continue;
             }
@@ -114,10 +155,51 @@ public sealed class HermesTraderService(
 
             var playerLoyalty = Math.Clamp(playerState.LoyaltyLevel, 1, loyaltyLevels.Count);
             var coefficient = loyaltyLevels[playerLoyalty - 1].BuyPriceCoefficient ?? 100d;
-            var roubleEquivalent = Math.Max(
-                0L,
-                Convert.ToInt64(Math.Floor(referencePrice.Value * Math.Max(0d, 100d - coefficient) / 100d)));
+            var traderMultiplier = Math.Max(0d, 100d - coefficient) / 100d;
 
+            long rootValue = 0L;
+            long installedValue = 0L;
+            long ignoredInstalledReferenceValue = 0L;
+            var includedInstalledCount = 0;
+            var includedWeaponAttachmentCount = 0;
+            var includedArmorInsertCount = 0;
+            var ignoredInstalledCount = 0;
+
+            foreach (var component in components)
+            {
+                var isRoot = component.Kind == HermesSaleComponentKind.Root;
+                var accepted = isRoot || CanTraderBuyItem(traderBase, component.TemplateId);
+                if (!accepted)
+                {
+                    ignoredInstalledCount++;
+                    ignoredInstalledReferenceValue += component.ConditionAdjustedReferenceValue;
+                    continue;
+                }
+
+                var componentValue = Math.Max(
+                    0L,
+                    Convert.ToInt64(Math.Floor(
+                        component.ConditionAdjustedReferenceValue * traderMultiplier)));
+
+                if (isRoot)
+                {
+                    rootValue += componentValue;
+                    continue;
+                }
+
+                installedValue += componentValue;
+                includedInstalledCount++;
+                if (component.Kind == HermesSaleComponentKind.ArmorInsert)
+                {
+                    includedArmorInsertCount++;
+                }
+                else
+                {
+                    includedWeaponAttachmentCount++;
+                }
+            }
+
+            var roubleEquivalent = Math.Max(0L, rootValue + installedValue);
             if (roubleEquivalent <= 0)
             {
                 continue;
@@ -132,6 +214,13 @@ public sealed class HermesTraderService(
                 amount,
                 currency,
                 roubleEquivalent,
+                rootValue,
+                installedValue,
+                includedInstalledCount,
+                includedWeaponAttachmentCount,
+                includedArmorInsertCount,
+                ignoredInstalledCount,
+                ignoredInstalledReferenceValue,
                 false));
         }
 
@@ -148,6 +237,7 @@ public sealed class HermesTraderService(
     {
         var output = new List<HermesPurchaseOffer>();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var marketPriceCache = new Dictionary<string, HermesMarketUnitValuation>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var (traderId, trader) in databaseService.GetTraders())
         {
@@ -240,7 +330,7 @@ public sealed class HermesTraderService(
                     purchaseRemaining,
                     1,
                     secondsUntilRestock,
-                    BuildPaymentOptions(allAssort, root.Id)));
+                    BuildPaymentOptions(allAssort, root.Id, marketPriceCache)));
             }
         }
 
@@ -251,7 +341,10 @@ public sealed class HermesTraderService(
             .ToList();
     }
 
-    private IReadOnlyList<HermesPaymentOption> BuildPaymentOptions(TraderAssort assort, MongoId assortId)
+    private IReadOnlyList<HermesPaymentOption> BuildPaymentOptions(
+        TraderAssort assort,
+        MongoId assortId,
+        IDictionary<string, HermesMarketUnitValuation> marketPriceCache)
     {
         if (!assort.BarterScheme.TryGetValue(assortId, out var schemes) || schemes is null)
         {
@@ -270,6 +363,10 @@ public sealed class HermesTraderService(
             var requirements = new List<HermesPaymentRequirement>();
             var estimatedRoubles = 0d;
             var allCurrency = true;
+            var estimateAvailable = true;
+            var usedHandbookFallback = false;
+            var usedMarketPrice = false;
+            var usedConvertedBarterPrice = false;
 
             foreach (var requirement in scheme)
             {
@@ -278,14 +375,78 @@ public sealed class HermesTraderService(
                 var isCurrency = currency is not null;
                 allCurrency &= isCurrency;
 
-                requirements.Add(new HermesPaymentRequirement(
-                    isCurrency ? GetCurrencyName(currency!) : catalogService.GetPlayerFacingName(requirement.Template),
-                    count,
-                    currency));
+                var requirementName = isCurrency
+                    ? GetCurrencyName(currency!)
+                    : catalogService.GetPlayerFacingName(requirement.Template);
 
-                estimatedRoubles += isCurrency
-                    ? handbookHelper.InRoubles(count, requirement.Template)
-                    : count * (catalogService.GetReferencePrice(requirement.Template) ?? 0L);
+                if (count <= 0d)
+                {
+                    estimateAvailable = false;
+                    requirements.Add(new HermesPaymentRequirement(
+                        requirementName,
+                        count,
+                        currency,
+                        null,
+                        null,
+                        "Invalid required quantity",
+                        false,
+                        false));
+                    continue;
+                }
+
+                if (isCurrency)
+                {
+                    var unitCurrencyValue = handbookHelper.InRoubles(1d, requirement.Template);
+                    var currencyValue = handbookHelper.InRoubles(count, requirement.Template);
+                    var currencyAvailable = unitCurrencyValue > 0d && currencyValue > 0d;
+                    if (!currencyAvailable)
+                    {
+                        estimateAvailable = false;
+                    }
+                    else
+                    {
+                        estimatedRoubles += currencyValue;
+                    }
+
+                    requirements.Add(new HermesPaymentRequirement(
+                        requirementName,
+                        count,
+                        currency,
+                        currencyAvailable ? Convert.ToInt64(Math.Round(unitCurrencyValue)) : null,
+                        currencyAvailable ? Convert.ToInt64(Math.Round(currencyValue)) : null,
+                        currencyAvailable ? "Trader currency conversion" : "Currency conversion unavailable",
+                        false,
+                        currencyAvailable));
+                    continue;
+                }
+
+                var marketValue = marketPriceService.GetBestUnitValue(
+                    requirement.Template,
+                    marketPriceCache);
+                var requirementAvailable = marketValue.UnitValue > 0L;
+                if (!requirementAvailable)
+                {
+                    estimateAvailable = false;
+                }
+                else
+                {
+                    estimatedRoubles += marketValue.UnitValue * count;
+                    usedHandbookFallback |= marketValue.UsedHandbookFallback;
+                    usedConvertedBarterPrice |= marketValue.IsConvertedBarter;
+                    usedMarketPrice |= !marketValue.UsedHandbookFallback || marketValue.IsConvertedBarter;
+                }
+
+                requirements.Add(new HermesPaymentRequirement(
+                    requirementName,
+                    count,
+                    currency,
+                    requirementAvailable ? marketValue.UnitValue : null,
+                    requirementAvailable
+                        ? Convert.ToInt64(Math.Round(marketValue.UnitValue * count))
+                        : null,
+                    requirementAvailable ? marketValue.Source : "Market value unavailable",
+                    marketValue.UsedHandbookFallback,
+                    requirementAvailable));
             }
 
             var displayPrice = allCurrency && requirements.Count == 1
@@ -293,10 +454,35 @@ public sealed class HermesTraderService(
                 : string.Join(" + ", requirements.Select(requirement =>
                     $"{FormatCount(requirement.Count)} × {requirement.Name}"));
 
+            string estimateSource;
+            if (allCurrency)
+            {
+                estimateSource = "Trader currency conversion";
+            }
+            else if (!estimateAvailable)
+            {
+                estimateSource = "Market estimate unavailable for one or more requirements";
+            }
+            else if (usedHandbookFallback)
+            {
+                estimateSource = "Current local flea market, with handbook fallback";
+            }
+            else if (usedMarketPrice || usedConvertedBarterPrice)
+            {
+                estimateSource = "Current local flea market";
+            }
+            else
+            {
+                estimateSource = "Current local flea market, with handbook fallback";
+            }
+
             output.Add(new HermesPaymentOption(
                 allCurrency,
                 displayPrice,
-                Convert.ToInt64(Math.Round(estimatedRoubles)),
+                estimateAvailable ? Convert.ToInt64(Math.Round(estimatedRoubles)) : 0L,
+                estimateSource,
+                usedHandbookFallback,
+                estimateAvailable,
                 requirements));
         }
 
@@ -720,6 +906,18 @@ public sealed class HermesTraderService(
             string.Empty,
             null,
             false,
+            false,
+            null,
+            null,
+            null,
+            1d,
+            0,
+            0,
+            0,
+            null,
+            null,
+            null,
+            "Trader sale valuation is unavailable.",
             null,
             [],
             []);

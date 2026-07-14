@@ -5,6 +5,14 @@ namespace Hermes.Client;
 
 internal sealed class HermesWindow
 {
+    private enum HermesTab
+    {
+        ItemSearch,
+        Hideout,
+        Crafts,
+        Stash
+    }
+
     private const int WindowId = 0x4845524D;
 
     private Rect _windowRect = new(70f, 70f, 1120f, 760f);
@@ -12,20 +20,188 @@ internal sealed class HermesWindow
     private Vector2 _detailScroll;
     private string _query = string.Empty;
     private string _status = "Search for an item or ask where it can be bought or sold.";
-    private string _detailStatus = "Select an item to inspect trader and local flea information.";
+    private string _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
     private bool _visible;
     private bool _searching;
     private bool _loadingDetails;
     private bool _saleComparisonExpanded;
     private bool _marketExpanded;
+    private bool _hideoutUsageExpanded;
+    private bool _stashInstancesExpanded = true;
+    private bool _loadingInstancePrice;
+    private HermesTab _activeTab;
+    private readonly HermesHideoutPanel _hideoutPanel = new();
+    private readonly HermesCraftPanel _craftPanel = new();
+    private readonly HermesStashPanel _stashPanel = new();
     private IReadOnlyList<HermesItemSummary> _results = [];
     private HermesItemSummary? _selectedItem;
     private HermesTraderSummaryResponse? _traderSummary;
     private HermesMarketSummaryResponse? _marketSummary;
+    private HermesItemHideoutUsageResponse? _hideoutUsage;
+    private IReadOnlyList<HermesStashInstanceSummary> _stashInstances = [];
+    private string? _selectedStashInstanceKey;
+    private int _searchRequestVersion;
+    private int _openRequestVersion;
+    private int _detailRequestVersion;
+    private int _instanceRequestVersion;
+    private bool _refreshingCurrent;
+    private bool _cacheStatusRequested;
+    private bool _cacheStatusLoading;
+    private float _nextCacheStatusRefresh;
+    private HermesCacheStatusResponse? _cacheStatus;
+    private string? _refreshStatus;
 
     public void Toggle()
     {
         _visible = !_visible;
+    }
+
+    internal void OpenForStashItem(string profileItemId)
+    {
+        if (string.IsNullOrWhiteSpace(profileItemId))
+        {
+            return;
+        }
+
+        _visible = true;
+        _activeTab = HermesTab.ItemSearch;
+        _ = OpenForStashItemAsync(profileItemId);
+    }
+
+    internal void OpenForPreviewItem(string templateId, string sourceLabel)
+    {
+        if (string.IsNullOrWhiteSpace(templateId))
+        {
+            return;
+        }
+
+        _visible = true;
+        _activeTab = HermesTab.ItemSearch;
+        _ = OpenForPreviewItemAsync(templateId, sourceLabel);
+    }
+
+    private async Task OpenForPreviewItemAsync(string templateId, string sourceLabel)
+    {
+        var requestVersion = ++_openRequestVersion;
+        _detailRequestVersion++;
+        _instanceRequestVersion++;
+        _searching = true;
+        _loadingDetails = true;
+        _status = $"Resolving the selected {sourceLabel} preview...";
+        _detailStatus = "HERMES is loading a base-item analysis for the previewed offer.";
+        _results = [];
+        _selectedItem = null;
+        _traderSummary = null;
+        _marketSummary = null;
+        _hideoutUsage = null;
+        _stashInstances = [];
+        _selectedStashInstanceKey = null;
+        _resultScroll = Vector2.zero;
+        _detailScroll = Vector2.zero;
+
+        try
+        {
+            var response = await HermesApiClient.GetPreviewItemSelectionAsync(templateId);
+            if (requestVersion != _openRequestVersion)
+            {
+                return;
+            }
+
+            if (!response.Found || response.Item is null)
+            {
+                _status = response.Message ?? "HERMES could not analyze the selected preview item.";
+                _detailStatus = _status;
+                return;
+            }
+
+            _query = response.Item.Name;
+            _results = [response.Item];
+            _status = $"Selected {sourceLabel} preview: {response.Item.Name}.";
+            await SelectItemAsync(response.Item, null, false);
+        }
+        catch (Exception ex)
+        {
+            if (requestVersion == _openRequestVersion)
+            {
+                _status = HermesApiClient.DescribeFailure(ex, "Preview item analysis");
+                _detailStatus = _status;
+            }
+
+            Plugin.Log.LogError(ex);
+        }
+        finally
+        {
+            if (requestVersion == _openRequestVersion)
+            {
+                _searching = false;
+                if (_selectedItem is null)
+                {
+                    _loadingDetails = false;
+                }
+            }
+        }
+    }
+
+    private async Task OpenForStashItemAsync(string profileItemId)
+    {
+        var requestVersion = ++_openRequestVersion;
+        _detailRequestVersion++;
+        _instanceRequestVersion++;
+        _searching = true;
+        _loadingDetails = true;
+        _status = "Resolving the selected stash item...";
+        _detailStatus = "HERMES is locating the exact PMC inventory instance.";
+        _results = [];
+        _selectedItem = null;
+        _traderSummary = null;
+        _marketSummary = null;
+        _hideoutUsage = null;
+        _stashInstances = [];
+        _selectedStashInstanceKey = null;
+        _resultScroll = Vector2.zero;
+        _detailScroll = Vector2.zero;
+
+        try
+        {
+            var response = await HermesApiClient.GetStashInstanceSelectionAsync(profileItemId);
+            if (requestVersion != _openRequestVersion)
+            {
+                return;
+            }
+
+            if (!response.Found || response.Item is null || response.Instance is null)
+            {
+                _status = response.Message ?? "HERMES could not analyze the selected inventory item.";
+                _detailStatus = _status;
+                return;
+            }
+
+            _query = response.Item.Name;
+            _results = [response.Item];
+            _status = $"Selected exact stash copy: {response.Item.Name}.";
+            await SelectItemAsync(response.Item, response.Instance);
+        }
+        catch (Exception ex)
+        {
+            if (requestVersion == _openRequestVersion)
+            {
+                _status = HermesApiClient.DescribeFailure(ex, "Exact stash-item analysis");
+                _detailStatus = _status;
+            }
+
+            Plugin.Log.LogError(ex);
+        }
+        finally
+        {
+            if (requestVersion == _openRequestVersion)
+            {
+                _searching = false;
+                if (_selectedItem is null)
+                {
+                    _loadingDetails = false;
+                }
+            }
+        }
     }
 
     public void Draw()
@@ -35,11 +211,19 @@ internal sealed class HermesWindow
             return;
         }
 
+        if (!_cacheStatusLoading
+            && (!_cacheStatusRequested || Time.realtimeSinceStartup >= _nextCacheStatusRefresh))
+        {
+            _cacheStatusRequested = true;
+            _cacheStatusLoading = true;
+            _ = LoadCacheStatusAsync();
+        }
+
         _windowRect = GUI.Window(
             WindowId,
             _windowRect,
             DrawWindow,
-            "HERMES 0.1.0-alpha7.1 — Market Intelligence");
+            "HERMES 0.1.0-alpha10.2 — Stash Sale Intelligence");
     }
 
     private void DrawWindow(int windowId)
@@ -47,9 +231,56 @@ internal sealed class HermesWindow
         GUILayout.BeginVertical();
 
         GUILayout.Label("READ-ONLY PERSONAL OPERATIONS ASSISTANT");
-        GUILayout.Label("Market values come from the current local SPT flea market. HERMES never buys, sells, or lists items in Alpha7.");
+        GUILayout.Label("Right-click inventory, trader, or flea items and choose Ask HERMES. Owned items use the exact stash instance; previews use the base item.");
+        GUILayout.Space(6f);
+        DrawTabs();
+        GUILayout.Space(6f);
+
+        switch (_activeTab)
+        {
+            case HermesTab.Hideout:
+                _hideoutPanel.Draw();
+                break;
+            case HermesTab.Crafts:
+                _craftPanel.Draw();
+                break;
+            case HermesTab.Stash:
+                _stashPanel.Draw();
+                break;
+            default:
+                DrawItemSearchTab();
+                break;
+        }
 
         GUILayout.Space(6f);
+        DrawFooter();
+
+        GUILayout.EndVertical();
+        GUI.DragWindow(new Rect(0f, 0f, _windowRect.width, 24f));
+    }
+
+    private void DrawTabs()
+    {
+        GUILayout.BeginHorizontal();
+        DrawTabButton(HermesTab.ItemSearch, "Item Search");
+        DrawTabButton(HermesTab.Hideout, "Hideout");
+        DrawTabButton(HermesTab.Crafts, "Crafts");
+        DrawTabButton(HermesTab.Stash, "Stash");
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
+    }
+
+    private void DrawTabButton(HermesTab tab, string label)
+    {
+        var selected = _activeTab == tab;
+        if (GUILayout.Button((selected ? "● " : string.Empty) + label, GUILayout.Width(145f), GUILayout.Height(30f)))
+        {
+            _activeTab = tab;
+        }
+    }
+
+    private void DrawItemSearchTab()
+    {
         DrawSearchBar();
 
         GUILayout.Space(4f);
@@ -61,12 +292,6 @@ internal sealed class HermesWindow
         GUILayout.Space(8f);
         DrawDetailPanel();
         GUILayout.EndHorizontal();
-
-        GUILayout.Space(6f);
-        DrawFooter();
-
-        GUILayout.EndVertical();
-        GUI.DragWindow(new Rect(0f, 0f, _windowRect.width, 24f));
     }
 
     private void DrawSearchBar()
@@ -152,6 +377,7 @@ internal sealed class HermesWindow
         else
         {
             DrawSelectedItemOverview(_selectedItem);
+            DrawStashInstanceSection();
 
             if (_loadingDetails)
             {
@@ -174,6 +400,11 @@ internal sealed class HermesWindow
                 {
                     DrawTraderPurchaseSection(_traderSummary);
                 }
+
+                if (_hideoutUsage is not null)
+                {
+                    DrawHideoutUsageSection(_hideoutUsage);
+                }
             }
         }
 
@@ -194,26 +425,78 @@ internal sealed class HermesWindow
         GUILayout.Label(item.ReferencePrice.HasValue
             ? $"Handbook reference: ₽{item.ReferencePrice.Value:N0}"
             : "Handbook reference: unavailable");
+        GUILayout.Label("Current quest, hideout, and crafting progress is shown below from the active PMC profile.");
+        GUILayout.EndVertical();
+    }
 
-        var uses = new List<string>();
-        if (item.AppearsInTraderData)
+    private void DrawStashInstanceSection()
+    {
+        GUILayout.Space(8f);
+        GUILayout.BeginVertical(GUI.skin.box);
+
+        var arrow = _stashInstancesExpanded ? "▼" : "▶";
+        var selectedLabel = _selectedStashInstanceKey is null
+            ? "Base item estimate"
+            : _stashInstances.FirstOrDefault(instance => instance.InstanceKey == _selectedStashInstanceKey)?.Label
+              ?? "Selected stash copy";
+
+        if (GUILayout.Button(
+                $"{arrow}  STASH COPY FOR TRADER SALE — {selectedLabel}",
+                GUILayout.Height(30f),
+                GUILayout.ExpandWidth(true)))
         {
-            uses.Add("Trader data");
+            _stashInstancesExpanded = !_stashInstancesExpanded;
         }
 
-        if (item.AppearsInHideoutData)
+        if (_loadingInstancePrice)
         {
-            uses.Add("Hideout data");
+            GUILayout.Label("Recalculating trader prices for the selected stash copy...");
         }
 
-        if (item.AppearsInQuestData)
+        if (_stashInstancesExpanded)
         {
-            uses.Add("Quest data");
+            GUILayout.Space(4f);
+            GUILayout.Label("Select the exact stash copy HERMES should value.");
+
+            GUI.enabled = !_loadingInstancePrice && !_loadingDetails;
+            var baseSelected = _selectedStashInstanceKey is null;
+            if (GUILayout.Button(
+                    (baseSelected ? "● " : string.Empty) + "Base item estimate — full condition, quantity 1, no installed items",
+                    GUILayout.MinHeight(36f),
+                    GUILayout.ExpandWidth(true)))
+            {
+                _ = SelectStashInstanceAsync(null);
+            }
+
+            foreach (var instance in _stashInstances)
+            {
+                var selected = string.Equals(
+                    instance.InstanceKey,
+                    _selectedStashInstanceKey,
+                    StringComparison.OrdinalIgnoreCase);
+                var valueText = instance.ConditionAdjustedReferenceValue > 0
+                    ? $" • root ₽{instance.RootConditionAdjustedReferenceValue:N0} + installed ₽{instance.InstalledComponentReferenceValue:N0}"
+                    : string.Empty;
+
+                if (GUILayout.Button(
+                        (selected ? "● " : string.Empty) + instance.Label + valueText,
+                        GUILayout.MinHeight(42f),
+                        GUILayout.ExpandWidth(true)))
+                {
+                    _ = SelectStashInstanceAsync(instance.InstanceKey);
+                }
+            }
+
+            GUI.enabled = true;
+
+            if (_stashInstances.Count == 0)
+            {
+                GUILayout.Label(_loadingDetails
+                    ? "Loading matching stash copies..."
+                    : "No matching copy is currently stored in the PMC stash. The base-item estimate is being used.");
+            }
         }
 
-        GUILayout.Label(uses.Count > 0
-            ? "Detected in: " + string.Join(" • ", uses)
-            : "No trader, hideout, or quest references detected.");
         GUILayout.EndVertical();
     }
 
@@ -228,6 +511,17 @@ internal sealed class HermesWindow
         }
 
         GUILayout.BeginVertical(GUI.skin.box);
+
+        if (!string.IsNullOrWhiteSpace(summary.Message))
+        {
+            GUILayout.Label(summary.Message);
+        }
+
+        if (!string.IsNullOrWhiteSpace(summary.SalePriceBasis))
+        {
+            GUILayout.Label(summary.SalePriceBasis);
+            GUILayout.Space(4f);
+        }
 
         var arrow = _saleComparisonExpanded ? "▼" : "▶";
         if (GUILayout.Button(
@@ -271,7 +565,9 @@ internal sealed class HermesWindow
     private static void DrawBestSale(HermesTraderSummaryResponse summary)
     {
         GUILayout.BeginVertical(GUI.skin.box);
-        GUILayout.Label("BEST ESTIMATED SALE");
+        GUILayout.Label(summary.UsesSelectedStashInstance
+            ? "BEST ESTIMATED SALE FOR SELECTED STASH COPY"
+            : "BEST ESTIMATED SALE FOR BASE ITEM");
 
         var best = summary.BestSellOffer;
         if (best is null)
@@ -291,6 +587,16 @@ internal sealed class HermesWindow
             if (!string.Equals(best.Currency, "RUB", StringComparison.OrdinalIgnoreCase))
             {
                 GUILayout.Label($"Rouble equivalent: ₽{best.RoubleEquivalent:N0}");
+            }
+
+            if (summary.UsesSelectedStashInstance)
+            {
+                GUILayout.Label($"Root item value: ₽{best.RootRoubleEquivalent:N0}");
+                GUILayout.Label($"Accepted installed value: ₽{best.InstalledComponentRoubleEquivalent:N0} ({best.IncludedWeaponAttachmentCount} attachment(s), {best.IncludedArmorInsertCount} armor insert(s))");
+                if (best.IgnoredInstalledItemCount > 0)
+                {
+                    GUILayout.Label($"Ignored by {best.TraderName}: {best.IgnoredInstalledItemCount} installed item(s), reference basis ₽{best.IgnoredInstalledReferenceValue:N0}");
+                }
             }
         }
 
@@ -312,6 +618,21 @@ internal sealed class HermesWindow
             GUILayout.Label($"Rouble equivalent: ₽{offer.RoubleEquivalent:N0}");
         }
 
+        GUILayout.Label($"Root item: ₽{offer.RootRoubleEquivalent:N0}");
+        if (offer.IncludedInstalledItemCount > 0)
+        {
+            GUILayout.Label($"Accepted installed items: ₽{offer.InstalledComponentRoubleEquivalent:N0} ({offer.IncludedWeaponAttachmentCount} attachment(s), {offer.IncludedArmorInsertCount} armor insert(s))");
+        }
+        else
+        {
+            GUILayout.Label("Accepted installed items: none");
+        }
+
+        if (offer.IgnoredInstalledItemCount > 0)
+        {
+            GUILayout.Label($"Ignored installed items: {offer.IgnoredInstalledItemCount} • reference basis ₽{offer.IgnoredInstalledReferenceValue:N0}");
+        }
+
         GUILayout.EndVertical();
     }
 
@@ -322,8 +643,8 @@ internal sealed class HermesWindow
 
         var arrow = _marketExpanded ? "▼" : "▶";
         var headline = summary.MedianPrice.HasValue
-            ? $"Median ₽{summary.MedianPrice.Value:N0} • {summary.ValidCashOfferCount:N0} cash offer(s)"
-            : "No comparable cash offers";
+            ? $"Adjusted median ₽{summary.MedianPrice.Value:N0} • {summary.ValidCashOfferCount:N0} cash + {summary.ConvertedBarterOfferCount:N0} barter"
+            : "No comparable flea offers";
 
         if (GUILayout.Button(
                 $"{arrow}  LOCAL FLEA MARKET — {headline}",
@@ -375,32 +696,46 @@ internal sealed class HermesWindow
     private static void DrawFleaStatistics(HermesMarketSummaryResponse summary)
     {
         GUILayout.BeginVertical(GUI.skin.box);
-        GUILayout.Label("CURRENT LOCAL CASH OFFERS");
+        GUILayout.Label("CURRENT LOCAL OFFERS");
 
         if (!summary.LowestPrice.HasValue)
         {
-            GUILayout.Label("No valid comparable cash offer was found.");
+            GUILayout.Label("No valid comparable flea offer was found.");
         }
         else
         {
-            GUILayout.Label($"Lowest: ₽{summary.LowestPrice.Value:N0}");
-            GUILayout.Label($"Median: ₽{summary.MedianPrice.GetValueOrDefault():N0}");
-            GUILayout.Label($"Average: ₽{summary.AveragePrice.GetValueOrDefault():N0}");
-            GUILayout.Label($"Highest reasonable: ₽{summary.HighestReasonablePrice.GetValueOrDefault():N0}");
+            if (summary.LowestListedPrice.HasValue)
+            {
+                GUILayout.Label($"Best comparable listing total: ₽{summary.LowestListedPrice.Value:N0}");
+            }
+
+            GUILayout.Label($"Component-adjusted lowest: ₽{summary.LowestPrice.Value:N0}");
+            GUILayout.Label($"Component-adjusted median: ₽{summary.MedianPrice.GetValueOrDefault():N0}");
+            GUILayout.Label($"Component-adjusted average: ₽{summary.AveragePrice.GetValueOrDefault():N0}");
+            GUILayout.Label($"Component-adjusted highest reasonable: ₽{summary.HighestReasonablePrice.GetValueOrDefault():N0}");
         }
 
         GUILayout.Label($"Valid cash offers found: {summary.ValidCashOfferCount:N0}");
+        GUILayout.Label($"Converted barter offers found: {summary.ConvertedBarterOfferCount:N0}");
+        if (summary.BarterOffersUsingHandbookFallback > 0)
+        {
+            GUILayout.Label($"Converted barters using handbook fallback: {summary.BarterOffersUsingHandbookFallback:N0}");
+        }
         GUILayout.Label($"Offers used for comparison: {summary.ComparableOfferCount:N0}");
+        GUILayout.Label($"Offers with installed attachments or armor inserts: {summary.OffersWithInstalledComponents:N0}");
+
+        GUILayout.Label(
+            "Valuation note: HERMES evaluates cash and barter flea offers together. Barter requirements are converted using the lowest current local cash-flea price for each required item, with handbook value only when no cash offer exists. The root item's condition is evaluated separately; installed weapon attachments and armor inserts are condition-adjusted and subtracted to estimate a base-item-equivalent value. Stored container contents and loaded ammunition are ignored.");
 
         if (summary.UsedLowConditionFallback)
         {
-            GUILayout.Label("Condition note: No 80%+ condition offers were found, so used-condition offers were analyzed.");
+            GUILayout.Label("Condition note: No 80%+ root-condition offers were found, so used-condition offers were analyzed.");
         }
 
         var ignoredParts = new List<string>();
         if (summary.IgnoredBarterOfferCount > 0)
         {
-            ignoredParts.Add($"barter {summary.IgnoredBarterOfferCount}");
+            ignoredParts.Add($"unpriced barter {summary.IgnoredBarterOfferCount}");
         }
 
         if (summary.IgnoredTraderOfferCount > 0)
@@ -415,7 +750,7 @@ internal sealed class HermesWindow
 
         if (summary.IgnoredLowConditionOfferCount > 0)
         {
-            ignoredParts.Add($"below 80% condition {summary.IgnoredLowConditionOfferCount}");
+            ignoredParts.Add($"below 80% root condition {summary.IgnoredLowConditionOfferCount}");
         }
 
         if (summary.IgnoredOutlierCount > 0)
@@ -442,17 +777,17 @@ internal sealed class HermesWindow
         }
         else if (!summary.SuggestedListPrice.HasValue)
         {
-            GUILayout.Label("A suggested listing price is unavailable because no comparable cash offer was found.");
+            GUILayout.Label("A suggested listing price is unavailable because no comparable flea offer was found.");
         }
         else
         {
-            GUILayout.Label($"Suggested listing price: ₽{summary.SuggestedListPrice.Value:N0}");
+            GUILayout.Label($"Suggested base-item listing price: ₽{summary.SuggestedListPrice.Value:N0}");
             GUILayout.Label(summary.EstimatedListingFee.HasValue
                 ? $"Estimated listing fee: ₽{summary.EstimatedListingFee.Value:N0}"
                 : "Estimated listing fee: unavailable");
             GUILayout.Label(summary.EstimatedNetSale.HasValue
-                ? $"Estimated net sale: ₽{summary.EstimatedNetSale.Value:N0}"
-                : "Estimated net sale: unavailable");
+                ? $"Estimated base-item net sale: ₽{summary.EstimatedNetSale.Value:N0}"
+                : "Estimated base-item net sale: unavailable");
         }
 
         if (summary.BestTraderSellPrice.HasValue)
@@ -469,9 +804,15 @@ internal sealed class HermesWindow
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.Label("BUY ANALYSIS");
 
+        GUILayout.Label(summary.LowestListedPrice.HasValue
+            ? summary.LowestOfferIsBarter
+                ? $"Converted requirement value for best barter assembly: ₽{summary.LowestListedPrice.Value:N0}"
+                : $"Cash required for best comparable flea assembly: ₽{summary.LowestListedPrice.Value:N0}"
+            : "Best comparable flea assembly value: unavailable");
+
         GUILayout.Label(summary.LowestPrice.HasValue
-            ? $"Lowest local flea offer: ₽{summary.LowestPrice.Value:N0}"
-            : "Lowest local flea offer: unavailable");
+            ? $"Component-adjusted base-item value: ₽{summary.LowestPrice.Value:N0}"
+            : "Component-adjusted base-item value: unavailable");
 
         GUILayout.Label(summary.CheapestAvailableTraderBuyPrice.HasValue
             ? $"Cheapest available cash trader: {summary.CheapestAvailableTraderName} — ₽{summary.CheapestAvailableTraderBuyPrice.Value:N0}"
@@ -484,7 +825,7 @@ internal sealed class HermesWindow
     private static void DrawLowestFleaOffers(HermesMarketSummaryResponse summary)
     {
         GUILayout.BeginVertical(GUI.skin.box);
-        GUILayout.Label("LOWEST COMPARABLE OFFERS");
+        GUILayout.Label("LOWEST COMPONENT-ADJUSTED OFFERS");
 
         if (summary.LowestOffers.Count == 0)
         {
@@ -494,11 +835,45 @@ internal sealed class HermesWindow
         {
             foreach (var offer in summary.LowestOffers)
             {
+                GUILayout.BeginVertical(GUI.skin.box);
+
                 GUILayout.BeginHorizontal();
-                GUILayout.Label($"₽{offer.UnitPrice:N0} each");
+                GUILayout.Label($"Base-item equivalent: ₽{offer.UnitPrice:N0}");
                 GUILayout.FlexibleSpace();
-                GUILayout.Label($"Qty {offer.Quantity:N0} • {offer.ConditionLabel} {offer.ConditionPercent}% • {FormatDuration(offer.SecondsRemaining)} left");
+                GUILayout.Label(offer.IsBarter
+                    ? $"Converted requirements: ₽{offer.ListedUnitPrice:N0}"
+                    : $"Listed total: ₽{offer.ListedUnitPrice:N0}");
                 GUILayout.EndHorizontal();
+
+                if (offer.IsBarter)
+                {
+                    GUILayout.Label($"Barter offer • {offer.BarterRequirementCount:N0} requirement type(s)");
+                    GUILayout.Label("Conversion source: " + offer.PriceSource);
+                    if (offer.UsedHandbookFallback)
+                    {
+                        GUILayout.Label("Fallback note: At least one requirement had no current cash flea offer, so its handbook value was used.");
+                    }
+                }
+
+                if (offer.InstalledComponentValue > 0
+                    || offer.WeaponAttachmentCount > 0
+                    || offer.ArmorInsertCount > 0)
+                {
+                    GUILayout.Label(
+                        $"Installed value: ₽{offer.InstalledComponentValue:N0} • "
+                        + $"Weapon attachments: {offer.WeaponAttachmentCount:N0} • "
+                        + $"Armor inserts: {offer.ArmorInsertCount:N0}");
+                }
+                else
+                {
+                    GUILayout.Label("Installed value: none");
+                }
+
+                GUILayout.Label(
+                    $"Qty {offer.Quantity:N0} • Root condition {offer.ConditionLabel} {offer.ConditionPercent}% • "
+                    + $"{FormatDuration(offer.SecondsRemaining)} left");
+
+                GUILayout.EndVertical();
             }
         }
 
@@ -583,9 +958,63 @@ internal sealed class HermesWindow
                 GUILayout.BeginVertical(GUI.skin.box);
                 GUILayout.Label(payment.IsCash ? $"Cash — {payment.DisplayPrice}" : $"Barter — {payment.DisplayPrice}");
 
-                if (!payment.IsCash && payment.EstimatedRoubleValue > 0)
+                if (!payment.IsCash)
                 {
-                    GUILayout.Label($"Handbook estimate: ₽{payment.EstimatedRoubleValue:N0}");
+                    if (payment.EstimateAvailable && payment.EstimatedRoubleValue > 0)
+                    {
+                        GUILayout.Label($"Current market estimate: ₽{payment.EstimatedRoubleValue:N0}");
+                        if (!string.IsNullOrWhiteSpace(payment.EstimateSource))
+                        {
+                            GUILayout.Label($"Source: {payment.EstimateSource}");
+                        }
+
+                        if (payment.UsedHandbookFallback)
+                        {
+                            GUILayout.Label("Fallback note: One or more required items had no current local market offer, so HERMES used their handbook value.");
+                        }
+
+                        if (payment.Requirements.Count > 0)
+                        {
+                            GUILayout.Space(3f);
+                            GUILayout.Label("Market calculation:");
+                            foreach (var requirement in payment.Requirements)
+                            {
+                                if (!requirement.EstimateAvailable
+                                    || !requirement.EstimatedUnitRoubleValue.HasValue
+                                    || !requirement.EstimatedSubtotalRoubleValue.HasValue)
+                                {
+                                    GUILayout.Label($"• {FormatCount(requirement.Count)} × {requirement.Name} — value unavailable");
+                                    continue;
+                                }
+
+                                var sourceLabel = requirement.UsedHandbookFallback
+                                    ? "handbook fallback"
+                                    : requirement.EstimateSource.Contains("barter", StringComparison.OrdinalIgnoreCase)
+                                        ? "converted local flea barter"
+                                        : requirement.Currency is not null
+                                            ? "currency conversion"
+                                            : "local flea market";
+
+                                GUILayout.Label(
+                                    $"• {FormatCount(requirement.Count)} × {requirement.Name} — " +
+                                    $"₽{requirement.EstimatedUnitRoubleValue.Value:N0} each • " +
+                                    $"subtotal ₽{requirement.EstimatedSubtotalRoubleValue.Value:N0} ({sourceLabel})");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        GUILayout.Label("Current market estimate unavailable.");
+                        if (!string.IsNullOrWhiteSpace(payment.EstimateSource))
+                        {
+                            GUILayout.Label($"Reason: {payment.EstimateSource}");
+                        }
+
+                        foreach (var requirement in payment.Requirements.Where(requirement => !requirement.EstimateAvailable))
+                        {
+                            GUILayout.Label($"• {FormatCount(requirement.Count)} × {requirement.Name} — {requirement.EstimateSource}");
+                        }
+                    }
                 }
 
                 GUILayout.EndVertical();
@@ -596,15 +1025,139 @@ internal sealed class HermesWindow
         GUILayout.Space(4f);
     }
 
+    private void DrawHideoutUsageSection(HermesItemHideoutUsageResponse usage)
+    {
+        GUILayout.Space(8f);
+        if (!usage.Found)
+        {
+            GUILayout.Label(usage.Message ?? "Quest, hideout, and crafting usage is unavailable.");
+            return;
+        }
+
+        GUILayout.BeginVertical(GUI.skin.box);
+        var arrow = _hideoutUsageExpanded ? "▼" : "▶";
+        var totalUses = usage.QuestUses.Count + usage.UpgradeUses.Count + usage.ProducedBy.Count + usage.UsedBy.Count;
+        if (GUILayout.Button(
+                $"{arrow}  QUEST, HIDEOUT AND CRAFTING USAGE — {totalUses:N0}",
+                GUILayout.Height(30f),
+                GUILayout.ExpandWidth(true)))
+        {
+            _hideoutUsageExpanded = !_hideoutUsageExpanded;
+        }
+
+        if (_hideoutUsageExpanded)
+        {
+            GUILayout.Space(6f);
+            GUILayout.Label($"Owned in PMC inventory: {usage.OwnedQuantity:N0} total • {usage.OwnedFoundInRaidQuantity:N0} FIR");
+
+            GUILayout.Space(8f);
+            GUILayout.Label("QUEST REQUIREMENTS");
+            if (usage.QuestUses.Count == 0)
+            {
+                GUILayout.Label("No player-facing item requirement was found in standard quest completion conditions.");
+            }
+            else
+            {
+                foreach (var quest in usage.QuestUses)
+                {
+                    var marker = quest.ConditionCompleted ? "✓" : quest.IsActive ? "▶" : "•";
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"{marker} {quest.QuestName} — {quest.TraderName}");
+                    GUILayout.Label($"Status: {quest.QuestStatus} • Action: {quest.ConditionType}");
+                    GUILayout.Label($"Required: {quest.Required:N0}{(quest.FoundInRaidRequired ? " FIR" : string.Empty)} • Owned matching targets: {quest.OwnedMatchingTargets:N0} • This item: {quest.OwnedSelectedItem:N0}");
+                    GUILayout.Label(quest.ProgressText);
+                    if (!quest.ConditionCompleted && quest.Missing > 0d)
+                    {
+                        GUILayout.Label($"Missing: {quest.Missing:N0}");
+                    }
+                    GUILayout.EndVertical();
+                }
+            }
+
+            GUILayout.Space(8f);
+            GUILayout.Label("HIDEOUT UPGRADES");
+            if (usage.UpgradeUses.Count == 0)
+            {
+                GUILayout.Label("Not required by a player-facing hideout upgrade.");
+            }
+            else
+            {
+                foreach (var upgrade in usage.UpgradeUses)
+                {
+                    var marker = upgrade.TargetLevel <= upgrade.CurrentLevel || upgrade.IsMet ? "✓" : upgrade.IsNextUpgrade ? "▶" : "•";
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"{marker} {upgrade.AreaName} Level {upgrade.TargetLevel} — {upgrade.Status}");
+                    GUILayout.Label($"Current area level: {upgrade.CurrentLevel} • Required: {upgrade.Required:N0}{(upgrade.FoundInRaidRequired ? " FIR" : string.Empty)} • Owned: {upgrade.Owned:N0} • Missing: {upgrade.Missing:N0}");
+                    if (upgrade.EstimatedMissingCost.HasValue)
+                    {
+                        GUILayout.Label($"Estimated missing cost: ₽{upgrade.EstimatedMissingCost.Value:N0}{(string.IsNullOrWhiteSpace(upgrade.AcquisitionSource) ? string.Empty : $" via {upgrade.AcquisitionSource}")}");
+                    }
+                    GUILayout.EndVertical();
+                }
+            }
+
+            GUILayout.Space(8f);
+            GUILayout.Label("PRODUCED BY");
+            if (usage.ProducedBy.Count == 0)
+            {
+                GUILayout.Label("No player-facing hideout recipe produces this item.");
+            }
+            else
+            {
+                foreach (var craft in usage.ProducedBy)
+                {
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"• {craft.StationName} L{craft.RequiredStationLevel} — produces {craft.OutputQuantity:N0} × {craft.OutputName}");
+                    GUILayout.Label($"Current station: L{craft.CurrentStationLevel} • {craft.Status} • {FormatDuration(craft.DurationSeconds)}");
+                    if (craft.IsActive || craft.IsComplete)
+                    {
+                        GUILayout.Label(craft.IsComplete ? "Production complete — ready to collect" : "Production currently active");
+                    }
+                    GUILayout.EndVertical();
+                }
+            }
+
+            GUILayout.Space(8f);
+            GUILayout.Label("USED AS AN INGREDIENT");
+            if (usage.UsedBy.Count == 0)
+            {
+                GUILayout.Label("Not used by a player-facing hideout recipe.");
+            }
+            else
+            {
+                foreach (var craft in usage.UsedBy)
+                {
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"• {craft.ItemCount:N0} × for {craft.OutputName} at {craft.StationName} L{craft.RequiredStationLevel}");
+                    GUILayout.Label($"Current station: L{craft.CurrentStationLevel} • Owned: {craft.Owned:N0} • Missing: {craft.Missing:N0} • {craft.Status}");
+                    GUILayout.EndVertical();
+                }
+            }
+        }
+
+        GUILayout.EndVertical();
+    }
+
     private void DrawFooter()
     {
         GUILayout.BeginHorizontal();
 
         if (GUILayout.Button("Clear", GUILayout.Width(90f)))
         {
-            Clear();
+            ClearCurrentTab();
         }
 
+        GUI.enabled = !_refreshingCurrent;
+        if (GUILayout.Button(
+                _refreshingCurrent ? "Refreshing..." : "Refresh current data",
+                GUILayout.Width(155f)))
+        {
+            _ = RefreshCurrentDataAsync();
+        }
+
+        GUI.enabled = true;
+        GUILayout.Space(8f);
+        GUILayout.Label(FormatCacheStatus(), GUILayout.ExpandWidth(true));
         GUILayout.FlexibleSpace();
         GUILayout.Label("F8 toggles HERMES");
         GUILayout.Space(12f);
@@ -615,6 +1168,126 @@ internal sealed class HermesWindow
         }
 
         GUILayout.EndHorizontal();
+
+        if (!string.IsNullOrWhiteSpace(_refreshStatus))
+        {
+            GUILayout.Label(_refreshStatus);
+        }
+    }
+
+    private string FormatCacheStatus()
+    {
+        if (_cacheStatus is null || !_cacheStatus.Found)
+        {
+            return "Market cache: status unavailable";
+        }
+
+        var totalEntries = _cacheStatus.MarketUnitValueEntryCount + _cacheStatus.MarketSummaryEntryCount;
+        return $"Market cache: {totalEntries:N0} entries • {_cacheStatus.CacheHits:N0} hits / {_cacheStatus.CacheMisses:N0} misses • {_cacheStatus.TtlSeconds}s TTL";
+    }
+
+    private async Task LoadCacheStatusAsync()
+    {
+        try
+        {
+            _cacheStatus = await HermesApiClient.GetCacheStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogError(ex);
+            _cacheStatus = new HermesCacheStatusResponse
+            {
+                Found = false,
+                Message = HermesApiClient.DescribeFailure(ex, "Cache status")
+            };
+        }
+        finally
+        {
+            _nextCacheStatusRefresh = Time.realtimeSinceStartup + 10f;
+            _cacheStatusLoading = false;
+        }
+    }
+
+    private async Task RefreshCurrentDataAsync()
+    {
+        if (_refreshingCurrent)
+        {
+            return;
+        }
+
+        _refreshingCurrent = true;
+        _refreshStatus = "Clearing short-lived market caches and reloading the current view...";
+        try
+        {
+            var cleared = await HermesApiClient.ClearCachesAsync();
+            _cacheStatus = cleared.Status;
+            _refreshStatus = cleared.Message;
+
+            switch (_activeTab)
+            {
+                case HermesTab.Hideout:
+                    await _hideoutPanel.RefreshFromServerAsync(false, true);
+                    break;
+                case HermesTab.Crafts:
+                    await _craftPanel.RefreshFromServerAsync(false, true);
+                    break;
+                case HermesTab.Stash:
+                    await _stashPanel.RefreshFromServerAsync(false, true);
+                    break;
+                default:
+                    if (_selectedItem is not null)
+                    {
+                        _detailRequestVersion++;
+                        _instanceRequestVersion++;
+                        _loadingDetails = false;
+                        _loadingInstancePrice = false;
+
+                        var selectedInstance = _selectedStashInstanceKey is null
+                            ? null
+                            : _stashInstances.FirstOrDefault(instance =>
+                                instance.InstanceKey == _selectedStashInstanceKey);
+                        await SelectItemAsync(
+                            _selectedItem,
+                            selectedInstance,
+                            _selectedStashInstanceKey is not null);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(_query))
+                    {
+                        await RunSearchAsync();
+                    }
+                    break;
+            }
+
+            await LoadCacheStatusAsync();
+        }
+        catch (Exception ex)
+        {
+            _refreshStatus = HermesApiClient.DescribeFailure(ex, "Current-data refresh");
+            Plugin.Log.LogError(ex);
+        }
+        finally
+        {
+            _refreshingCurrent = false;
+        }
+    }
+
+    private void ClearCurrentTab()
+    {
+        switch (_activeTab)
+        {
+            case HermesTab.Hideout:
+                _hideoutPanel.Clear();
+                break;
+            case HermesTab.Crafts:
+                _craftPanel.Clear();
+                break;
+            case HermesTab.Stash:
+                _stashPanel.Clear();
+                break;
+            default:
+                Clear();
+                break;
+        }
     }
 
     private async Task RunSearchAsync()
@@ -625,18 +1298,32 @@ internal sealed class HermesWindow
             return;
         }
 
+        var requestVersion = ++_searchRequestVersion;
+        _openRequestVersion++;
+        _detailRequestVersion++;
+        _instanceRequestVersion++;
         _searching = true;
         _status = $"Searching for \"{query}\"...";
         _selectedItem = null;
         _traderSummary = null;
         _marketSummary = null;
+        _hideoutUsage = null;
+        _stashInstances = [];
+        _selectedStashInstanceKey = null;
+        _loadingInstancePrice = false;
         _saleComparisonExpanded = false;
         _marketExpanded = false;
-        _detailStatus = "Select an item to inspect trader and local flea information.";
+        _hideoutUsageExpanded = false;
+        _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
 
         try
         {
             var response = await HermesApiClient.SearchAsync(query);
+            if (requestVersion != _searchRequestVersion)
+            {
+                return;
+            }
+
             _results = response.Results ?? [];
             _resultScroll = Vector2.zero;
             _detailScroll = Vector2.zero;
@@ -651,111 +1338,272 @@ internal sealed class HermesWindow
         }
         catch (Exception ex)
         {
+            if (requestVersion != _searchRequestVersion)
+            {
+                return;
+            }
+
             _results = [];
             _selectedItem = null;
             _traderSummary = null;
             _marketSummary = null;
-            _status = "HERMES could not contact its server route. Check the BepInEx and SPT server logs.";
-            _detailStatus = "Market information unavailable.";
+            _hideoutUsage = null;
+            _stashInstances = [];
+            _selectedStashInstanceKey = null;
+            _status = HermesApiClient.DescribeFailure(ex, "Item search");
+            _detailStatus = "Market information unavailable. Retry or use Refresh current data.";
             Plugin.Log.LogError(ex);
         }
         finally
         {
-            _searching = false;
+            if (requestVersion == _searchRequestVersion)
+            {
+                _searching = false;
+            }
         }
     }
 
-    private async Task SelectItemAsync(HermesItemSummary item)
+    private async Task SelectItemAsync(
+        HermesItemSummary item,
+        HermesStashInstanceSummary? preferredInstance = null,
+        bool selectFirstMatchingStashInstance = true)
     {
         if (_loadingDetails && _selectedItem?.ItemKey == item.ItemKey)
         {
             return;
         }
 
+        var requestVersion = ++_detailRequestVersion;
+        _instanceRequestVersion++;
         _selectedItem = item;
         _traderSummary = null;
         _marketSummary = null;
+        _hideoutUsage = null;
+        _stashInstances = [];
+        _selectedStashInstanceKey = null;
+        _stashInstancesExpanded = true;
+        _loadingInstancePrice = false;
         _saleComparisonExpanded = false;
         _marketExpanded = false;
+        _hideoutUsageExpanded = false;
         _loadingDetails = true;
         _detailScroll = Vector2.zero;
-        _detailStatus = $"Analyzing traders and the local SPT flea market for {item.Name}...";
+        _detailStatus = $"Analyzing traders, the local SPT flea market, hideout upgrades, and recipes for {item.Name}...";
+
+        bool IsCurrent() => requestVersion == _detailRequestVersion
+                            && _selectedItem?.ItemKey == item.ItemKey;
 
         try
         {
+            if (preferredInstance is not null)
+            {
+                _stashInstances = [preferredInstance];
+                _selectedStashInstanceKey = preferredInstance.InstanceKey;
+            }
+            else
+            {
+                try
+                {
+                    var stashResponse = await HermesApiClient.GetStashInstancesAsync(item.ItemKey);
+                    if (!IsCurrent())
+                    {
+                        return;
+                    }
+
+                    _stashInstances = stashResponse.Instances ?? [];
+                    _selectedStashInstanceKey = selectFirstMatchingStashInstance
+                        ? _stashInstances.FirstOrDefault()?.InstanceKey
+                        : null;
+                }
+                catch (Exception ex)
+                {
+                    Plugin.Log.LogError(ex);
+                    if (IsCurrent())
+                    {
+                        _stashInstances = [];
+                        _selectedStashInstanceKey = null;
+                    }
+                }
+            }
+
+            if (!IsCurrent())
+            {
+                return;
+            }
+
+            // Start independent detail requests together. They still have their own
+            // 12-second timeout and are applied only if this selection remains current.
+            var traderTask = HermesApiClient.GetTraderSummaryAsync(
+                item.ItemKey,
+                _selectedStashInstanceKey);
+            var marketTask = HermesApiClient.GetMarketSummaryAsync(item.ItemKey);
+            var usageTask = HermesApiClient.GetItemHideoutUsageAsync(item.ItemKey);
+
             try
             {
-                var traderResponse = await HermesApiClient.GetTraderSummaryAsync(item.ItemKey);
-                if (_selectedItem?.ItemKey != item.ItemKey)
+                var traderResponse = await traderTask;
+                if (IsCurrent())
                 {
-                    return;
+                    _traderSummary = traderResponse;
                 }
-
-                _traderSummary = traderResponse;
             }
             catch (Exception ex)
             {
                 Plugin.Log.LogError(ex);
-                if (_selectedItem?.ItemKey == item.ItemKey)
+                if (IsCurrent())
                 {
                     _traderSummary = new HermesTraderSummaryResponse
                     {
                         Found = false,
-                        Message = "Trader request failed. Check the BepInEx and SPT server logs."
+                        Message = HermesApiClient.DescribeFailure(ex, "Trader analysis")
                     };
                 }
             }
 
             try
             {
-                var marketResponse = await HermesApiClient.GetMarketSummaryAsync(item.ItemKey);
-                if (_selectedItem?.ItemKey != item.ItemKey)
+                var marketResponse = await marketTask;
+                if (IsCurrent())
                 {
-                    return;
+                    _marketSummary = marketResponse;
                 }
-
-                _marketSummary = marketResponse;
             }
             catch (Exception ex)
             {
                 Plugin.Log.LogError(ex);
-                if (_selectedItem?.ItemKey == item.ItemKey)
+                if (IsCurrent())
                 {
                     _marketSummary = new HermesMarketSummaryResponse
                     {
                         Found = false,
-                        Message = "Local flea request failed. Check the BepInEx and SPT server logs."
+                        Message = HermesApiClient.DescribeFailure(ex, "Local flea analysis")
                     };
                 }
             }
 
-            if (_selectedItem?.ItemKey == item.ItemKey)
+            try
             {
-                _detailStatus = "Current profile, trader assortments, and local flea offers loaded.";
+                var usageResponse = await usageTask;
+                if (IsCurrent())
+                {
+                    _hideoutUsage = usageResponse;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError(ex);
+                if (IsCurrent())
+                {
+                    _hideoutUsage = new HermesItemHideoutUsageResponse
+                    {
+                        Found = false,
+                        Message = HermesApiClient.DescribeFailure(ex, "Quest, hideout, and crafting usage analysis")
+                    };
+                }
+            }
+
+            if (IsCurrent())
+            {
+                _detailStatus = !selectFirstMatchingStashInstance
+                    ? _stashInstances.Count > 0
+                        ? "Preview analysis uses the full-condition base item. Matching stash copies are available in the selector below."
+                        : "Preview analysis uses the full-condition base item. No matching stash copy is currently owned."
+                    : _stashInstances.Count > 0
+                        ? "Current profile loaded. Trader sale prices use the selected stash copy; flea data remains a local market comparison."
+                        : "Current profile loaded. No matching stash copy was found, so trader sale prices use the base-item estimate.";
             }
         }
         finally
         {
-            if (_selectedItem?.ItemKey == item.ItemKey)
+            if (IsCurrent())
             {
                 _loadingDetails = false;
             }
         }
     }
 
+    private async Task SelectStashInstanceAsync(string? instanceKey)
+    {
+        if (_selectedItem is null
+            || _loadingInstancePrice
+            || string.Equals(_selectedStashInstanceKey, instanceKey, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        var requestVersion = ++_instanceRequestVersion;
+        var item = _selectedItem;
+        _selectedStashInstanceKey = instanceKey;
+        _loadingInstancePrice = true;
+        _detailStatus = instanceKey is null
+            ? "Restoring the full-condition base-item trader estimate..."
+            : "Calculating trader sale prices for the selected stash copy...";
+
+        try
+        {
+            var response = await HermesApiClient.GetTraderSummaryAsync(item.ItemKey, instanceKey);
+            if (requestVersion != _instanceRequestVersion
+                || _selectedItem?.ItemKey != item.ItemKey
+                || !string.Equals(_selectedStashInstanceKey, instanceKey, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _traderSummary = response;
+            _detailStatus = response.UsesSelectedStashInstance
+                ? "Trader sale prices now use the selected stash copy."
+                : "Trader sale prices now use the full-condition base-item estimate.";
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogError(ex);
+            if (requestVersion == _instanceRequestVersion
+                && _selectedItem?.ItemKey == item.ItemKey)
+            {
+                _detailStatus = HermesApiClient.DescribeFailure(ex, "Selected stash-copy pricing");
+            }
+        }
+        finally
+        {
+            if (requestVersion == _instanceRequestVersion)
+            {
+                _loadingInstancePrice = false;
+            }
+        }
+    }
+
     private void Clear()
     {
+        _searchRequestVersion++;
+        _openRequestVersion++;
+        _detailRequestVersion++;
+        _instanceRequestVersion++;
+        _searching = false;
+        _loadingDetails = false;
         _query = string.Empty;
         _results = [];
         _selectedItem = null;
         _traderSummary = null;
         _marketSummary = null;
+        _hideoutUsage = null;
+        _stashInstances = [];
+        _selectedStashInstanceKey = null;
+        _stashInstancesExpanded = true;
+        _loadingInstancePrice = false;
         _saleComparisonExpanded = false;
         _marketExpanded = false;
+        _hideoutUsageExpanded = false;
         _resultScroll = Vector2.zero;
         _detailScroll = Vector2.zero;
         _status = "Search for an item or ask where it can be bought or sold.";
-        _detailStatus = "Select an item to inspect trader and local flea information.";
+        _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
+    }
+
+    private static string FormatCount(double count)
+    {
+        return Math.Abs(count - Math.Round(count)) < 0.0001d
+            ? Math.Round(count).ToString("N0")
+            : count.ToString("0.##");
     }
 
     private static string FormatCurrency(long amount, string currency)

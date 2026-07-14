@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0-alpha7.1</Version>
+    <Version>0.1.0-alpha10.2</Version>
     <OutputType>Library</OutputType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDependencyFile>false</GenerateDependencyFile>
@@ -26,6 +26,14 @@
     </Reference>
     <Reference Include="spt-common">
       <HintPath>$(SptClientPlugins)\spt-common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="spt-reflection">
+      <HintPath>$(SptClientPlugins)\spt-reflection.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(EftManaged)\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
@@ -57,6 +65,10 @@
            Text="Missing BepInEx.dll at '$(BepInExCore)\BepInEx.dll'. Check SptRoot in Hermes.Client.csproj." />
     <Error Condition="!Exists('$(SptClientPlugins)\spt-common.dll')"
            Text="Missing spt-common.dll at '$(SptClientPlugins)\spt-common.dll'. Check SptRoot and your SPT 4.0.13 installation." />
+    <Error Condition="!Exists('$(SptClientPlugins)\spt-reflection.dll')"
+           Text="Missing spt-reflection.dll at '$(SptClientPlugins)\spt-reflection.dll'. Check SptRoot and your SPT 4.0.13 installation." />
+    <Error Condition="!Exists('$(EftManaged)\Assembly-CSharp.dll')"
+           Text="Missing Assembly-CSharp.dll at '$(EftManaged)\Assembly-CSharp.dll'." />
     <Error Condition="!Exists('$(EftManaged)\Newtonsoft.Json.dll')"
            Text="Missing Newtonsoft.Json.dll at '$(EftManaged)\Newtonsoft.Json.dll'." />
     <Error Condition="!Exists('$(EftManaged)\UnityEngine.CoreModule.dll')"

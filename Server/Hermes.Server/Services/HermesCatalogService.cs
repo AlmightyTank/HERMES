@@ -50,13 +50,16 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
 
         return new HermesStatusResponse(
             "HERMES",
-            "0.1.0-alpha7.1",
+            "0.1.0-alpha10.2",
             "4.0.13",
             true,
             [
                 "player-facing-item-search",
                 "handbook-reference-price",
                 "trader-buy-and-sell-intelligence",
+                "selected-stash-instance-trader-valuation",
+                "ask-hermes-inventory-context-action",
+                "ask-hermes-trader-and-flea-preview-context-action",
                 "player-loyalty-awareness",
                 "cash-and-barter-offers",
                 "stock-and-purchase-limits",
@@ -67,12 +70,63 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "local-flea-market-analysis",
                 "normalized-flea-unit-prices",
                 "condition-aware-flea-comparisons",
+                "component-adjusted-flea-assembly-valuation",
+                "converted-flea-barter-valuation",
+                "market-priced-trader-barter-valuation",
                 "flea-outlier-filtering",
                 "estimated-flea-listing-fees",
                 "trader-versus-flea-recommendations",
-                "hideout-reference-detection",
-                "quest-reference-detection"
+                "player-aware-quest-item-progress",
+                "player-aware-hideout-item-progress",
+                "hideout-area-planning",
+                "hideout-upgrade-requirements",
+                "active-production-monitoring",
+                "generator-fuel-estimation",
+                "craft-readiness-analysis",
+                "inventory-aware-craft-costing",
+                "cash-and-economic-craft-profitability",
+                "trader-flea-and-owned-ingredient-sourcing",
+                "item-quest-hideout-and-craft-usage",
+                "shared-short-lived-market-cache",
+                "manual-market-cache-invalidation",
+                "generation-safe-cache-writes",
+                "client-request-timeouts",
+                "stale-response-protection",
+                "parallel-item-detail-requests",
+                "cached-stash-snapshot",
+                "stash-item-and-cell-counts",
+                "stash-handbook-valuation",
+                "stash-trader-liquidation-valuation",
+                "player-aware-stash-quest-reservations",
+                "player-aware-stash-hideout-reservations",
+                "fir-aware-stash-reservations",
+                "partial-stack-keep-and-sell-quantities",
+                "conservative-safe-to-sell-recommendations",
+                "stash-flea-net-valuation",
+                "stash-best-sale-destination",
+                "stash-duplicate-review",
+                "stash-damaged-and-depleted-report"
             ]);
+    }
+
+    public HermesItemSelectionResponse GetTemplateSelection(string? rawTemplateId)
+    {
+        var templateIdText = Uri.UnescapeDataString(rawTemplateId ?? string.Empty).Trim();
+        if (!MongoId.IsValidMongoId(templateIdText))
+        {
+            return new HermesItemSelectionResponse(
+                false,
+                "HERMES could not identify the selected preview item.",
+                null);
+        }
+
+        var summary = GetSummary(new MongoId(templateIdText));
+        return summary is null
+            ? new HermesItemSelectionResponse(
+                false,
+                "HERMES does not list this item. Quest-only and handbook-less items are excluded.",
+                null)
+            : new HermesItemSelectionResponse(true, null, summary);
     }
 
     public HermesSearchResponse Search(string? rawQuery, int maximumResults = 30)
@@ -110,6 +164,23 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
         }
 
         return _byKey!.GetValueOrDefault(itemKey.Trim());
+    }
+
+    internal HermesCatalogItem? ResolveTemplate(MongoId templateId)
+    {
+        EnsureIndex();
+        return _byTemplate!.GetValueOrDefault(templateId.ToString());
+    }
+
+    internal string? GetItemKey(MongoId templateId)
+    {
+        return ResolveTemplate(templateId)?.ItemKey;
+    }
+
+    internal HermesItemSummary? GetSummary(MongoId templateId)
+    {
+        var item = ResolveTemplate(templateId);
+        return item is null ? null : ToSummary(item);
     }
 
     internal string GetPlayerFacingName(MongoId templateId)

@@ -1,5 +1,30 @@
 namespace Hermes.Client.Models;
 
+
+public sealed class HermesCacheStatusResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public int MarketUnitValueEntryCount { get; set; }
+    public int MarketSummaryEntryCount { get; set; }
+    public long CacheHits { get; set; }
+    public long CacheMisses { get; set; }
+    public long CacheWrites { get; set; }
+    public long Generation { get; set; }
+    public int TtlSeconds { get; set; }
+    public long? OldestEntryAgeSeconds { get; set; }
+    public long? NewestEntryAgeSeconds { get; set; }
+    public string LastInvalidationReason { get; set; } = string.Empty;
+    public long? LastInvalidatedUnixTime { get; set; }
+}
+
+public sealed class HermesCacheClearResponse
+{
+    public bool Cleared { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public HermesCacheStatusResponse Status { get; set; } = new();
+}
+
 public sealed class HermesSearchResponse
 {
     public string Query { get; set; } = string.Empty;
@@ -18,6 +43,50 @@ public sealed class HermesItemSummary
     public bool AppearsInQuestData { get; set; }
 }
 
+
+public sealed class HermesItemSelectionResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public HermesItemSummary? Item { get; set; }
+}
+
+public sealed class HermesStashInstancesResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public string ItemKey { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public List<HermesStashInstanceSummary> Instances { get; set; } = [];
+}
+
+public sealed class HermesStashInstanceSelectionResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public HermesItemSummary? Item { get; set; }
+    public HermesStashInstanceSummary? Instance { get; set; }
+}
+
+public sealed class HermesStashInstanceSummary
+{
+    public string InstanceKey { get; set; } = string.Empty;
+    public string Label { get; set; } = string.Empty;
+    public double Quantity { get; set; }
+    public int ConditionPercent { get; set; }
+    public string ConditionDescription { get; set; } = string.Empty;
+    public string ConditionKind { get; set; } = string.Empty;
+    public double ConditionCurrent { get; set; }
+    public double ConditionMaximum { get; set; }
+    public bool FoundInRaid { get; set; }
+    public int ChildItemCount { get; set; }
+    public int WeaponAttachmentCount { get; set; }
+    public int ArmorInsertCount { get; set; }
+    public long RootConditionAdjustedReferenceValue { get; set; }
+    public long InstalledComponentReferenceValue { get; set; }
+    public long ConditionAdjustedReferenceValue { get; set; }
+}
+
 public sealed class HermesTraderSummaryResponse
 {
     public bool Found { get; set; }
@@ -27,6 +96,18 @@ public sealed class HermesTraderSummaryResponse
     public string ShortName { get; set; } = string.Empty;
     public long? ReferencePrice { get; set; }
     public bool HasSupportedTraderBuyer { get; set; }
+    public bool UsesSelectedStashInstance { get; set; }
+    public string? SelectedInstanceKey { get; set; }
+    public string? SelectedInstanceLabel { get; set; }
+    public int? SelectedInstanceConditionPercent { get; set; }
+    public double SelectedInstanceQuantity { get; set; } = 1d;
+    public int SelectedInstanceChildItemCount { get; set; }
+    public int SelectedInstanceWeaponAttachmentCount { get; set; }
+    public int SelectedInstanceArmorInsertCount { get; set; }
+    public long? SelectedInstanceRootReferenceValue { get; set; }
+    public long? SelectedInstanceInstalledReferenceValue { get; set; }
+    public long? SelectedInstanceReferenceValue { get; set; }
+    public string SalePriceBasis { get; set; } = string.Empty;
     public HermesSellOffer? BestSellOffer { get; set; }
     public List<HermesSellOffer> SellOffers { get; set; } = [];
     public List<HermesPurchaseOffer> PurchaseOffers { get; set; } = [];
@@ -39,6 +120,13 @@ public sealed class HermesSellOffer
     public long Amount { get; set; }
     public string Currency { get; set; } = "RUB";
     public long RoubleEquivalent { get; set; }
+    public long RootRoubleEquivalent { get; set; }
+    public long InstalledComponentRoubleEquivalent { get; set; }
+    public int IncludedInstalledItemCount { get; set; }
+    public int IncludedWeaponAttachmentCount { get; set; }
+    public int IncludedArmorInsertCount { get; set; }
+    public int IgnoredInstalledItemCount { get; set; }
+    public long IgnoredInstalledReferenceValue { get; set; }
     public bool IsBest { get; set; }
 }
 
@@ -66,6 +154,9 @@ public sealed class HermesPaymentOption
     public bool IsCash { get; set; }
     public string DisplayPrice { get; set; } = string.Empty;
     public long EstimatedRoubleValue { get; set; }
+    public string EstimateSource { get; set; } = string.Empty;
+    public bool UsedHandbookFallback { get; set; }
+    public bool EstimateAvailable { get; set; }
     public List<HermesPaymentRequirement> Requirements { get; set; } = [];
 }
 
@@ -74,6 +165,11 @@ public sealed class HermesPaymentRequirement
     public string Name { get; set; } = string.Empty;
     public double Count { get; set; }
     public string? Currency { get; set; }
+    public long? EstimatedUnitRoubleValue { get; set; }
+    public long? EstimatedSubtotalRoubleValue { get; set; }
+    public string EstimateSource { get; set; } = string.Empty;
+    public bool UsedHandbookFallback { get; set; }
+    public bool EstimateAvailable { get; set; }
 }
 
 public sealed class HermesMarketSummaryResponse
@@ -88,6 +184,8 @@ public sealed class HermesMarketSummaryResponse
     public bool CanSellOnFlea { get; set; }
     public string? SellUnavailableReason { get; set; }
     public int ValidCashOfferCount { get; set; }
+    public int ConvertedBarterOfferCount { get; set; }
+    public int BarterOffersUsingHandbookFallback { get; set; }
     public int ComparableOfferCount { get; set; }
     public int IgnoredBarterOfferCount { get; set; }
     public int IgnoredTraderOfferCount { get; set; }
@@ -95,6 +193,9 @@ public sealed class HermesMarketSummaryResponse
     public int IgnoredLowConditionOfferCount { get; set; }
     public int IgnoredOutlierCount { get; set; }
     public bool UsedLowConditionFallback { get; set; }
+    public int OffersWithInstalledComponents { get; set; }
+    public long? LowestListedPrice { get; set; }
+    public bool LowestOfferIsBarter { get; set; }
     public long? LowestPrice { get; set; }
     public long? MedianPrice { get; set; }
     public long? AveragePrice { get; set; }
@@ -113,9 +214,360 @@ public sealed class HermesMarketSummaryResponse
 
 public sealed class HermesFleaOfferSample
 {
+    public bool IsBarter { get; set; }
+    public string PriceSource { get; set; } = string.Empty;
+    public int BarterRequirementCount { get; set; }
+    public bool UsedHandbookFallback { get; set; }
     public long UnitPrice { get; set; }
+    public long ListedUnitPrice { get; set; }
+    public long InstalledComponentValue { get; set; }
+    public int WeaponAttachmentCount { get; set; }
+    public int ArmorInsertCount { get; set; }
     public int Quantity { get; set; }
     public int ConditionPercent { get; set; }
     public string ConditionLabel { get; set; } = string.Empty;
     public long SecondsRemaining { get; set; }
+}
+
+public sealed class HermesHideoutSummaryResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public int ReadyAreaCount { get; set; }
+    public int MaterialBlockedAreaCount { get; set; }
+    public int ProgressionBlockedAreaCount { get; set; }
+    public List<HermesHideoutAreaSummary> Areas { get; set; } = [];
+    public List<HermesActiveProductionSummary> ActiveProductions { get; set; } = [];
+    public HermesHideoutResourceSummary Resources { get; set; } = new();
+}
+
+public sealed class HermesHideoutAreaSummary
+{
+    public string AreaKey { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public int CurrentLevel { get; set; }
+    public int MaximumLevel { get; set; }
+    public int? TargetLevel { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
+    public bool IsConstructing { get; set; }
+    public long? SecondsUntilComplete { get; set; }
+    public int MissingItemTypes { get; set; }
+    public long EstimatedMissingHandbookCost { get; set; }
+}
+
+public sealed class HermesHideoutAreaDetailResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public HermesHideoutAreaSummary? Area { get; set; }
+    public int ConstructionSeconds { get; set; }
+    public List<HermesHideoutRequirement> Requirements { get; set; } = [];
+    public long EstimatedMissingAcquisitionCost { get; set; }
+}
+
+public sealed class HermesHideoutRequirement
+{
+    public string Type { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public double Required { get; set; }
+    public double Owned { get; set; }
+    public double Missing { get; set; }
+    public bool IsMet { get; set; }
+    public bool FoundInRaidRequired { get; set; }
+    public string? Details { get; set; }
+    public string? AcquisitionSource { get; set; }
+    public long? UnitPrice { get; set; }
+    public long? EstimatedMissingCost { get; set; }
+}
+
+public sealed class HermesActiveProductionSummary
+{
+    public string StationName { get; set; } = string.Empty;
+    public string OutputName { get; set; } = string.Empty;
+    public int OutputQuantity { get; set; }
+    public bool IsComplete { get; set; }
+    public bool IsContinuous { get; set; }
+    public long SecondsRemaining { get; set; }
+    public string Status { get; set; } = string.Empty;
+}
+
+public sealed class HermesHideoutResourceSummary
+{
+    public bool GeneratorActive { get; set; }
+    public int FuelContainerCount { get; set; }
+    public double FuelResourceRemaining { get; set; }
+    public long? EstimatedGeneratorRuntimeSeconds { get; set; }
+    public double? FuelCounter { get; set; }
+    public double? AirFilterCounter { get; set; }
+    public double? WaterFilterCounter { get; set; }
+    public int ActiveProductionCount { get; set; }
+    public int CompletedProductionCount { get; set; }
+}
+
+public sealed class HermesCraftsResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public int TotalCrafts { get; set; }
+    public List<HermesCraftSummary> Crafts { get; set; } = [];
+}
+
+public sealed class HermesCraftSummary
+{
+    public string CraftKey { get; set; } = string.Empty;
+    public string StationName { get; set; } = string.Empty;
+    public int RequiredStationLevel { get; set; }
+    public string OutputName { get; set; } = string.Empty;
+    public int OutputQuantity { get; set; }
+    public int DurationSeconds { get; set; }
+    public bool CanStartNow { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public bool AcquisitionPlanComplete { get; set; }
+    public long EstimatedAdditionalCashCost { get; set; }
+    public long EstimatedOwnedIngredientValue { get; set; }
+    public long EstimatedEconomicInputValue { get; set; }
+    public long EstimatedOutputValue { get; set; }
+    public long EstimatedCashProfit { get; set; }
+    public long EstimatedEconomicProfit { get; set; }
+    public long EstimatedEconomicProfitPerHour { get; set; }
+    public bool IsActive { get; set; }
+    public bool IsComplete { get; set; }
+}
+
+public sealed class HermesCraftDetailResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public HermesCraftSummary? Craft { get; set; }
+    public List<HermesCraftIngredient> Ingredients { get; set; } = [];
+    public string? RequiredQuestName { get; set; }
+    public bool RequiredQuestComplete { get; set; }
+    public string ValuationBasis { get; set; } = string.Empty;
+}
+
+public sealed class HermesCraftIngredient
+{
+    public string Name { get; set; } = string.Empty;
+    public string RequirementType { get; set; } = string.Empty;
+    public double Required { get; set; }
+    public double Owned { get; set; }
+    public double OwnedUsed { get; set; }
+    public double Missing { get; set; }
+    public bool IsMet { get; set; }
+    public bool FoundInRaidRequired { get; set; }
+    public bool IsReusableTool { get; set; }
+    public long? UnitHandbookValue { get; set; }
+    public long? OwnedEconomicUnitValue { get; set; }
+    public long EstimatedOwnedEconomicValue { get; set; }
+    public List<HermesCraftAcquisitionLine> AcquisitionPlan { get; set; } = [];
+    public double UnavailableQuantity { get; set; }
+    public long EstimatedPurchaseCost { get; set; }
+    public bool AcquisitionAvailable { get; set; }
+    public string? CostNote { get; set; }
+}
+
+public sealed class HermesCraftAcquisitionLine
+{
+    public string Source { get; set; } = string.Empty;
+    public double Quantity { get; set; }
+    public long UnitPrice { get; set; }
+    public long TotalCost { get; set; }
+    public bool IsFallback { get; set; }
+}
+
+public sealed class HermesItemHideoutUsageResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public string ItemKey { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public double OwnedQuantity { get; set; }
+    public double OwnedFoundInRaidQuantity { get; set; }
+    public List<HermesQuestItemUse> QuestUses { get; set; } = [];
+    public List<HermesUpgradeUse> UpgradeUses { get; set; } = [];
+    public List<HermesCraftUse> ProducedBy { get; set; } = [];
+    public List<HermesCraftUse> UsedBy { get; set; } = [];
+}
+
+public sealed class HermesQuestItemUse
+{
+    public string QuestName { get; set; } = string.Empty;
+    public string TraderName { get; set; } = string.Empty;
+    public string QuestStatus { get; set; } = string.Empty;
+    public string ConditionType { get; set; } = string.Empty;
+    public double Required { get; set; }
+    public double OwnedMatchingTargets { get; set; }
+    public double OwnedSelectedItem { get; set; }
+    public double Missing { get; set; }
+    public bool FoundInRaidRequired { get; set; }
+    public bool ConditionCompleted { get; set; }
+    public bool QuestCompleted { get; set; }
+    public bool IsActive { get; set; }
+    public string ProgressText { get; set; } = string.Empty;
+}
+
+public sealed class HermesUpgradeUse
+{
+    public string AreaName { get; set; } = string.Empty;
+    public int CurrentLevel { get; set; }
+    public int TargetLevel { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public double Required { get; set; }
+    public double Owned { get; set; }
+    public double Missing { get; set; }
+    public bool IsMet { get; set; }
+    public bool IsNextUpgrade { get; set; }
+    public bool FoundInRaidRequired { get; set; }
+    public string? AcquisitionSource { get; set; }
+    public long? EstimatedMissingCost { get; set; }
+}
+
+public sealed class HermesCraftUse
+{
+    public string CraftKey { get; set; } = string.Empty;
+    public string StationName { get; set; } = string.Empty;
+    public int CurrentStationLevel { get; set; }
+    public int RequiredStationLevel { get; set; }
+    public string OutputName { get; set; } = string.Empty;
+    public int OutputQuantity { get; set; }
+    public int DurationSeconds { get; set; }
+    public double ItemCount { get; set; }
+    public double Owned { get; set; }
+    public double Missing { get; set; }
+    public bool IsUnlocked { get; set; }
+    public bool CanStartNow { get; set; }
+    public bool IsActive { get; set; }
+    public bool IsComplete { get; set; }
+    public string Status { get; set; } = string.Empty;
+}
+
+
+internal sealed class HermesStashSummaryResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public int TotalItemInstances { get; set; }
+    public int IndependentItemCount { get; set; }
+    public int ValuedIndependentItemCount { get; set; }
+    public int UnsupportedIndependentItemCount { get; set; }
+    public int OccupiedCells { get; set; }
+    public long FullHandbookReferenceValue { get; set; }
+    public long ConditionAdjustedHandbookValue { get; set; }
+    public long BestTraderLiquidationValue { get; set; }
+    public long EstimatedFleaNetValue { get; set; }
+    public long BestDestinationLiquidationValue { get; set; }
+    public int TraderValuedItemCount { get; set; }
+    public int FleaValuedItemCount { get; set; }
+    public int NoTraderBuyerItemCount { get; set; }
+    public int NoFleaEstimateItemCount { get; set; }
+    public int SafeToSellInstanceCount { get; set; }
+    public int SellSurplusInstanceCount { get; set; }
+    public int KeepInstanceCount { get; set; }
+    public int ReviewInstanceCount { get; set; }
+    public int DuplicateGroupCount { get; set; }
+    public int DamagedOrDepletedItemCount { get; set; }
+    public double RecommendedKeepQuantity { get; set; }
+    public double PotentiallySellQuantity { get; set; }
+    public long PotentialTraderSaleValue { get; set; }
+    public long PotentialFleaNetValue { get; set; }
+    public long PotentialBestSaleValue { get; set; }
+    public long GeneratedUnixTime { get; set; }
+    public int CacheTtlSeconds { get; set; }
+    public List<HermesStashTraderBreakdown> TraderBreakdown { get; set; } = [];
+    public List<HermesStashSaleDestinationBreakdown> SaleDestinationBreakdown { get; set; } = [];
+    public List<HermesStashValuationItem> MostValuableItems { get; set; } = [];
+    public List<HermesStashValuationItem> Recommendations { get; set; } = [];
+    public List<HermesStashDuplicateGroup> DuplicateGroups { get; set; } = [];
+    public List<HermesStashConditionItem> DamagedOrDepletedItems { get; set; } = [];
+}
+
+internal sealed class HermesStashTraderBreakdown
+{
+    public string TraderName { get; set; } = string.Empty;
+    public int ItemCount { get; set; }
+    public long RoubleEquivalent { get; set; }
+}
+
+internal sealed class HermesStashSaleDestinationBreakdown
+{
+    public string Destination { get; set; } = string.Empty;
+    public int ItemCount { get; set; }
+    public long RoubleEquivalent { get; set; }
+}
+
+internal sealed class HermesStashValuationItem
+{
+    public string ItemKey { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ShortName { get; set; } = string.Empty;
+    public string InstanceKey { get; set; } = string.Empty;
+    public string InstanceLabel { get; set; } = string.Empty;
+    public double Quantity { get; set; }
+    public int ConditionPercent { get; set; }
+    public string ConditionDescription { get; set; } = string.Empty;
+    public string ConditionKind { get; set; } = string.Empty;
+    public double ConditionCurrent { get; set; }
+    public double ConditionMaximum { get; set; }
+    public int OccupiedCells { get; set; }
+    public int InstalledItemCount { get; set; }
+    public int ContainedItemCount { get; set; }
+    public long FullHandbookReferenceValue { get; set; }
+    public long ConditionAdjustedHandbookValue { get; set; }
+    public string? BestTraderName { get; set; }
+    public long? BestTraderValue { get; set; }
+    public bool FleaEstimateAvailable { get; set; }
+    public bool FleaEstimateReliable { get; set; }
+    public int FleaComparableOfferCount { get; set; }
+    public long? EstimatedFleaListPrice { get; set; }
+    public long? EstimatedFleaFee { get; set; }
+    public long? EstimatedFleaNetValue { get; set; }
+    public string FleaEstimateSource { get; set; } = string.Empty;
+    public string? BestSaleDestination { get; set; }
+    public long? BestSaleValue { get; set; }
+    public string Recommendation { get; set; } = string.Empty;
+    public double RecommendedKeepQuantity { get; set; }
+    public double PotentiallySellQuantity { get; set; }
+    public double ActiveQuestReserve { get; set; }
+    public double FutureQuestReserve { get; set; }
+    public double NextHideoutReserve { get; set; }
+    public double FutureHideoutReserve { get; set; }
+    public long PotentialTraderSaleValue { get; set; }
+    public long PotentialFleaNetValue { get; set; }
+    public long PotentialBestSaleValue { get; set; }
+    public List<string> Reasons { get; set; } = [];
+}
+
+internal sealed class HermesStashDuplicateGroup
+{
+    public string ItemKey { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ShortName { get; set; } = string.Empty;
+    public int InstanceCount { get; set; }
+    public double OwnedQuantity { get; set; }
+    public double ExplicitlyReservedQuantity { get; set; }
+    public double SuggestedReserveQuantity { get; set; }
+    public double PotentialExcessQuantity { get; set; }
+    public int OccupiedCells { get; set; }
+    public string? BestSaleDestination { get; set; }
+    public long PotentialExcessSaleValue { get; set; }
+    public string Note { get; set; } = string.Empty;
+}
+
+internal sealed class HermesStashConditionItem
+{
+    public string ItemKey { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string ShortName { get; set; } = string.Empty;
+    public string InstanceKey { get; set; } = string.Empty;
+    public string InstanceLabel { get; set; } = string.Empty;
+    public string ConditionKind { get; set; } = string.Empty;
+    public int ConditionPercent { get; set; }
+    public double ConditionCurrent { get; set; }
+    public double ConditionMaximum { get; set; }
+    public int ThresholdPercent { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string? BestSaleDestination { get; set; }
+    public long? BestSaleValue { get; set; }
+    public string Recommendation { get; set; } = string.Empty;
 }
