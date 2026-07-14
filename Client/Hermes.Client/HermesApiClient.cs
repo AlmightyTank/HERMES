@@ -46,6 +46,17 @@ internal static class HermesApiClient
             StashRequestTimeout);
     }
 
+    public static Task<HermesLoadoutSummaryResponse> GetLoadoutSummaryAsync()
+    {
+        return GetDataAsync(
+            "/hermes/loadout/summary",
+            () => new HermesLoadoutSummaryResponse
+            {
+                Found = false,
+                Message = "HERMES returned no loadout summary."
+            });
+    }
+
     public static Task<HermesStashInstanceSelectionResponse> GetStashInstanceSelectionAsync(string profileItemId)
     {
         var route = "/hermes/stash/instance/" + Uri.EscapeDataString(profileItemId);

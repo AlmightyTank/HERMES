@@ -15,7 +15,7 @@ public sealed class HermesStashAnalysisService(
     ProfileHelper profileHelper,
     JsonUtil jsonUtil)
 {
-    public const int StashCacheTtlSeconds = 5;
+    public const int StashCacheTtlSeconds = 10;
 
     private readonly object _sync = new();
     private readonly Dictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
@@ -24,10 +24,17 @@ public sealed class HermesStashAnalysisService(
     {
         var key = sessionId.ToString();
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var profileRevision = stashService.GetProfileRevision(sessionId);
+        if (string.IsNullOrWhiteSpace(profileRevision))
+        {
+            return NotFound("HERMES could not fingerprint the active PMC profile.");
+        }
 
         lock (_sync)
         {
-            if (_cache.TryGetValue(key, out var cached) && cached.ExpiresUnixTime > now)
+            if (_cache.TryGetValue(key, out var cached)
+                && cached.ExpiresUnixTime > now
+                && cached.ProfileRevision.Equals(profileRevision, StringComparison.Ordinal))
             {
                 return cached.Response;
             }
@@ -40,7 +47,10 @@ public sealed class HermesStashAnalysisService(
         {
             lock (_sync)
             {
-                _cache[key] = new CacheEntry(response, now + StashCacheTtlSeconds);
+                _cache[key] = new CacheEntry(
+                    response,
+                    now + StashCacheTtlSeconds,
+                    profileRevision);
             }
         }
 
@@ -199,6 +209,18 @@ public sealed class HermesStashAnalysisService(
             .ToList();
         var duplicates = BuildDuplicateGroups(recommendationRows);
         var damaged = BuildConditionReport(recommendationRows);
+        var allCleanupCandidates = recommendationRows
+            .Where(IsCleanupCandidate)
+            .OrderByDescending(row => row.OccupiedCells)
+            .ThenByDescending(row => row.PotentialBestSaleValue)
+            .ThenBy(row => row.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(row => row.InstanceLabel, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var cleanupCandidates = allCleanupCandidates.Take(250).ToList();
+        var recoverableCells = allCleanupCandidates.Sum(row => row.OccupiedCells);
+        var cleanupTraderValue = allCleanupCandidates.Sum(row => row.PotentialTraderSaleValue);
+        var cleanupFleaValue = allCleanupCandidates.Sum(row => row.PotentialFleaNetValue);
+        var cleanupBestValue = allCleanupCandidates.Sum(row => row.PotentialBestSaleValue);
 
         return new HermesStashSummaryResponse(
             true,
@@ -237,7 +259,13 @@ public sealed class HermesStashAnalysisService(
             valuableItems,
             orderedRecommendations,
             duplicates,
-            damaged);
+            damaged,
+            allCleanupCandidates.Count,
+            Math.Max(0, recoverableCells),
+            Math.Max(0L, cleanupTraderValue),
+            Math.Max(0L, cleanupFleaValue),
+            Math.Max(0L, cleanupBestValue),
+            cleanupCandidates);
     }
 
     private static IReadOnlyList<HermesStashValuationItem> BuildRecommendationsForTemplate(
@@ -337,6 +365,18 @@ public sealed class HermesStashAnalysisService(
         }
 
         return output;
+    }
+
+    private static bool IsCleanupCandidate(HermesStashValuationItem row)
+    {
+        return row.Recommendation == "Safe to sell"
+               && row.OccupiedCells > 0
+               && row.Quantity > 0d
+               && row.PotentiallySellQuantity + 0.001d >= row.Quantity
+               && row.InstalledItemCount == 0
+               && row.ContainedItemCount == 0
+               && !string.IsNullOrWhiteSpace(row.BestSaleDestination)
+               && row.PotentialBestSaleValue > 0L;
     }
 
     private static IReadOnlyList<HermesStashDuplicateGroup> BuildDuplicateGroups(
@@ -715,6 +755,12 @@ public sealed class HermesStashAnalysisService(
             [],
             [],
             [],
+            [],
+            0,
+            0,
+            0,
+            0,
+            0,
             []);
     }
 
@@ -786,5 +832,6 @@ public sealed class HermesStashAnalysisService(
 
     private sealed record CacheEntry(
         HermesStashSummaryResponse Response,
-        long ExpiresUnixTime);
+        long ExpiresUnixTime,
+        string ProfileRevision);
 }

@@ -50,7 +50,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
 
         return new HermesStatusResponse(
             "HERMES",
-            "0.1.0-alpha10.2.6",
+            "0.1.0-alpha11.2",
             "4.0.13",
             true,
             [
@@ -108,7 +108,25 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "stash-flea-net-valuation",
                 "stash-best-sale-destination",
                 "stash-duplicate-review",
-                "stash-damaged-and-depleted-report"
+                "stash-damaged-and-depleted-report",
+                "stash-space-recovery-estimation",
+                "profile-aware-stash-cache-invalidation",
+                "exact-equipped-loadout-analysis",
+                "weapon-ammunition-readiness",
+                "armor-insert-readiness",
+                "medical-treatment-coverage",
+                "pmc-vitals-readiness",
+                "active-quest-equipment-checks",
+                "active-quest-raid-item-checks",
+                "active-quest-map-association",
+                "quest-marker-and-plant-item-checks",
+                "fir-aware-carried-quest-item-checks",
+                "nested-quest-weapon-and-equipment-checks",
+                "map-grouped-active-quest-raid-plans",
+                "combined-raid-gear-checklists",
+                "duplicate-quest-requirement-merging",
+                "quest-objective-completion-summaries",
+                "multi-restriction-raid-plan-warnings"
             ]);
     }
 

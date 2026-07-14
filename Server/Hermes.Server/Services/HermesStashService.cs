@@ -207,6 +207,24 @@ public sealed class HermesStashService(
         return null;
     }
 
+    internal string? GetProfileRevision(MongoId sessionId)
+    {
+        var profile = profileHelper.GetPmcProfile(sessionId);
+        if (profile is null)
+        {
+            return null;
+        }
+
+        var profileJson = jsonUtil.Serialize(profile);
+        if (string.IsNullOrWhiteSpace(profileJson))
+        {
+            return null;
+        }
+
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(profileJson));
+        return Convert.ToHexString(bytes).ToLowerInvariant()[..24];
+    }
+
     internal HermesStashAnalysisSnapshot? BuildAnalysisSnapshot(MongoId sessionId)
     {
         var snapshot = BuildInventorySnapshot(sessionId);

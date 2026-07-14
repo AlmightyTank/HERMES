@@ -10,7 +10,8 @@ internal sealed class HermesWindow
         ItemSearch,
         Hideout,
         Crafts,
-        Stash
+        Stash,
+        Loadout
     }
 
     private const int WindowId = 0x4845524D;
@@ -33,6 +34,7 @@ internal sealed class HermesWindow
     private readonly HermesHideoutPanel _hideoutPanel = new();
     private readonly HermesCraftPanel _craftPanel = new();
     private readonly HermesStashPanel _stashPanel = new();
+    private readonly HermesLoadoutPanel _loadoutPanel = new();
     private IReadOnlyList<HermesItemSummary> _results = [];
     private HermesItemSummary? _selectedItem;
     private HermesTraderSummaryResponse? _traderSummary;
@@ -223,7 +225,7 @@ internal sealed class HermesWindow
             WindowId,
             _windowRect,
             DrawWindow,
-            "HERMES 0.1.0-alpha10.2.6 — Stash Sale Intelligence");
+            "HERMES 0.1.0-alpha11.2 — Loadout & Raid Planning");
     }
 
     private void DrawWindow(int windowId)
@@ -247,6 +249,9 @@ internal sealed class HermesWindow
             case HermesTab.Stash:
                 _stashPanel.Draw();
                 break;
+            case HermesTab.Loadout:
+                _loadoutPanel.Draw();
+                break;
             default:
                 DrawItemSearchTab();
                 break;
@@ -266,6 +271,7 @@ internal sealed class HermesWindow
         DrawTabButton(HermesTab.Hideout, "Hideout");
         DrawTabButton(HermesTab.Crafts, "Crafts");
         DrawTabButton(HermesTab.Stash, "Stash");
+        DrawTabButton(HermesTab.Loadout, "Loadout");
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
     }
@@ -1247,6 +1253,9 @@ internal sealed class HermesWindow
                 case HermesTab.Stash:
                     await _stashPanel.RefreshFromServerAsync(false, true);
                     break;
+                case HermesTab.Loadout:
+                    await _loadoutPanel.RefreshFromServerAsync(true);
+                    break;
                 default:
                     if (_selectedItem is not null)
                     {
@@ -1296,6 +1305,9 @@ internal sealed class HermesWindow
                 break;
             case HermesTab.Stash:
                 _stashPanel.Clear();
+                break;
+            case HermesTab.Loadout:
+                _loadoutPanel.Clear();
                 break;
             default:
                 Clear();

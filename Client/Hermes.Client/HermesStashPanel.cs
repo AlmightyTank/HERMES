@@ -9,6 +9,7 @@ internal sealed class HermesStashPanel
     {
         Overview,
         SafeToSell,
+        Cleanup,
         Keep,
         Review,
         Duplicates,
@@ -32,7 +33,7 @@ internal sealed class HermesStashPanel
         }
 
         GUILayout.BeginHorizontal();
-        GUILayout.Label("STASH INTELLIGENCE — ALPHA10.2");
+        GUILayout.Label("STASH INTELLIGENCE — ALPHA10.3");
         GUILayout.FlexibleSpace();
         GUI.enabled = !_loading;
         if (GUILayout.Button(_loading ? "Refreshing..." : "Refresh", GUILayout.Width(110f)))
@@ -42,7 +43,7 @@ internal sealed class HermesStashPanel
 
         GUI.enabled = true;
         GUILayout.EndHorizontal();
-        GUILayout.Label("Exact-instance trader and flea estimates, best sale destinations, duplicate review, and damaged/depleted-item reporting.");
+        GUILayout.Label("Exact-instance sale intelligence, conservative space-recovery estimates, duplicate review, and damaged/depleted-item reporting.");
         GUILayout.Space(4f);
         GUILayout.Label(_status);
         GUILayout.Space(6f);
@@ -68,7 +69,7 @@ internal sealed class HermesStashPanel
         var requestVersion = ++_requestVersion;
         _loading = true;
         _requested = true;
-        _status = "Building stash reservations, exact-instance trader values, flea nets, duplicate groups, and condition reports...";
+        _status = "Building reservations, sale values, space-recovery candidates, duplicate groups, and condition reports...";
 
         try
         {
@@ -87,6 +88,7 @@ internal sealed class HermesStashPanel
             _status = response.Found
                 ? $"Snapshot complete: {response.IndependentItemCount:N0} independent items; "
                   + $"{response.SafeToSellInstanceCount + response.SellSurplusInstanceCount:N0} sell recommendation(s); "
+                  + $"{response.RecoverableCells:N0} recoverable cell(s); "
                   + $"{response.DuplicateGroupCount:N0} duplicate group(s); {response.DamagedOrDepletedItemCount:N0} condition warning(s)."
                 : response.Message ?? "HERMES could not build the stash snapshot.";
         }
@@ -122,9 +124,10 @@ internal sealed class HermesStashPanel
     private void DrawViewTabs()
     {
         GUILayout.BeginHorizontal();
-        DrawViewButton("Overview", StashView.Overview, 100f);
-        DrawViewButton("Safe to Sell", StashView.SafeToSell, 115f);
-        DrawViewButton("Keep", StashView.Keep, 80f);
+        DrawViewButton("Overview", StashView.Overview, 95f);
+        DrawViewButton("Safe to Sell", StashView.SafeToSell, 110f);
+        DrawViewButton("Cleanup", StashView.Cleanup, 90f);
+        DrawViewButton("Keep", StashView.Keep, 75f);
         DrawViewButton("Review", StashView.Review, 85f);
         DrawViewButton("Duplicates", StashView.Duplicates, 100f);
         DrawViewButton("Damaged", StashView.Damaged, 95f);
@@ -161,6 +164,9 @@ internal sealed class HermesStashPanel
                     summary.Recommendations.Where(item =>
                         item.Recommendation is "Safe to sell" or "Sell surplus"));
                 break;
+            case StashView.Cleanup:
+                DrawCleanup(summary);
+                break;
             case StashView.Keep:
                 DrawRecommendationList(
                     summary,
@@ -186,7 +192,7 @@ internal sealed class HermesStashPanel
 
         var generated = DateTimeOffset.FromUnixTimeSeconds(summary.GeneratedUnixTime).ToLocalTime();
         GUILayout.Space(8f);
-        GUILayout.Label($"Snapshot generated {generated:yyyy-MM-dd HH:mm:ss} • server cache {summary.CacheTtlSeconds}s");
+        GUILayout.Label($"Snapshot generated {generated:yyyy-MM-dd HH:mm:ss} • profile-aware server cache {summary.CacheTtlSeconds}s");
     }
 
     private static void DrawOverview(HermesStashSummaryResponse summary)
@@ -223,6 +229,25 @@ internal sealed class HermesStashPanel
             $"{FormatNumber(summary.PotentiallySellQuantity)} recommended unit(s); reservations and review items excluded.");
         DrawValueCard("Trader alternative", summary.PotentialTraderSaleValue, "Best supported trader value for the same sellable quantity.");
         DrawValueCard("Flea net alternative", summary.PotentialFleaNetValue, "After estimated listing fees where a flea estimate was available.");
+        GUILayout.EndHorizontal();
+
+        GUILayout.Space(8f);
+        GUILayout.Label("POTENTIAL SPACE RECOVERY");
+        GUILayout.BeginHorizontal();
+        DrawMetric(
+            "REMOVABLE INSTANCES",
+            summary.CleanupCandidateInstanceCount.ToString("N0"),
+            "Only whole exact instances that are safe to sell are counted.");
+        DrawMetric(
+            "RECOVERABLE CELLS",
+            summary.RecoverableCells.ToString("N0"),
+            summary.OccupiedCells > 0
+                ? $"{(summary.RecoverableCells * 100d / summary.OccupiedCells):N1}% of the current estimated footprint."
+                : "No occupied-cell baseline was available.");
+        DrawValueCard(
+            "Cleanup value",
+            summary.CleanupBestSaleValue,
+            "Best reliable destination for the fully removable instances.");
         GUILayout.EndHorizontal();
 
         GUILayout.Space(8f);
@@ -304,6 +329,62 @@ internal sealed class HermesStashPanel
         foreach (var item in rows)
         {
             DrawItemRow(item);
+        }
+    }
+
+    private static void DrawCleanup(HermesStashSummaryResponse summary)
+    {
+        GUILayout.Label("SPACE RECOVERY");
+        GUILayout.Label(
+            "A cell is counted only when the entire exact item instance can be sold. Partial stacks, loaded ammunition, "
+            + "reserved quantities, filled containers, installed assemblies, and items without a reliable sale destination are excluded.");
+        GUILayout.Space(5f);
+
+        GUILayout.BeginHorizontal();
+        DrawMetric("REMOVABLE INSTANCES", summary.CleanupCandidateInstanceCount.ToString("N0"), "Fully removable exact stash instances.");
+        DrawMetric(
+            "RECOVERABLE CELLS",
+            summary.RecoverableCells.ToString("N0"),
+            summary.OccupiedCells > 0
+                ? $"{(summary.RecoverableCells * 100d / summary.OccupiedCells):N1}% of estimated occupied cells."
+                : "No occupied-cell baseline was available.");
+        DrawValueCard("BEST SALE VALUE", summary.CleanupBestSaleValue, "Combined best reliable destination value.");
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal();
+        DrawValueCard("TRADER ALTERNATIVE", summary.CleanupTraderSaleValue, "Best supported trader values for cleanup candidates.");
+        DrawValueCard("FLEA NET ALTERNATIVE", summary.CleanupFleaNetValue, "Estimated net after listing fees where available.");
+        GUILayout.EndHorizontal();
+        GUILayout.Space(6f);
+
+        if (summary.CleanupCandidates.Count == 0)
+        {
+            GUILayout.Label("No fully removable safe-sale instances were found.");
+            return;
+        }
+
+        GUILayout.Label(summary.CleanupCandidateInstanceCount > summary.CleanupCandidates.Count
+            ? $"Showing the top {summary.CleanupCandidates.Count:N0} of {summary.CleanupCandidateInstanceCount:N0} cleanup candidates."
+            : $"{summary.CleanupCandidateInstanceCount:N0} cleanup candidate(s), ordered by cells recovered and then value.");
+
+        foreach (var item in summary.CleanupCandidates)
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(item.Name);
+            GUILayout.FlexibleSpace();
+            GUILayout.Label($"{item.OccupiedCells:N0} cell(s) • {item.BestSaleDestination} • ₽{item.PotentialBestSaleValue:N0}");
+            GUILayout.EndHorizontal();
+            GUILayout.Label(item.InstanceLabel);
+            GUILayout.Label(
+                item.OccupiedCells > 0
+                    ? $"Value per recovered cell: ₽{(item.PotentialBestSaleValue / Math.Max(1, item.OccupiedCells)):N0}"
+                    : "Value per recovered cell unavailable.");
+            foreach (var reason in item.Reasons.Take(3))
+            {
+                GUILayout.Label("• " + reason);
+            }
+            GUILayout.EndVertical();
         }
     }
 

@@ -484,6 +484,12 @@ internal sealed class HermesStashSummaryResponse
     public List<HermesStashValuationItem> Recommendations { get; set; } = [];
     public List<HermesStashDuplicateGroup> DuplicateGroups { get; set; } = [];
     public List<HermesStashConditionItem> DamagedOrDepletedItems { get; set; } = [];
+    public int CleanupCandidateInstanceCount { get; set; }
+    public int RecoverableCells { get; set; }
+    public long CleanupTraderSaleValue { get; set; }
+    public long CleanupFleaNetValue { get; set; }
+    public long CleanupBestSaleValue { get; set; }
+    public List<HermesStashValuationItem> CleanupCandidates { get; set; } = [];
 }
 
 internal sealed class HermesStashTraderBreakdown
@@ -574,4 +580,175 @@ internal sealed class HermesStashConditionItem
     public string? BestSaleDestination { get; set; }
     public long? BestSaleValue { get; set; }
     public string Recommendation { get; set; } = string.Empty;
+}
+
+internal sealed class HermesLoadoutSummaryResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public string Readiness { get; set; } = string.Empty;
+    public int ReadinessScore { get; set; }
+    public int WarningCount { get; set; }
+    public int CriticalCount { get; set; }
+    public HermesVitalsSummary Vitals { get; set; } = new();
+    public List<HermesLoadoutSlotSummary> EquippedSlots { get; set; } = [];
+    public List<HermesWeaponReadiness> Weapons { get; set; } = [];
+    public List<HermesArmorReadiness> Armor { get; set; } = [];
+    public HermesMedicalReadiness Medical { get; set; } = new();
+    public List<HermesQuestLoadoutRequirement> QuestRequirements { get; set; } = [];
+    public List<HermesRaidPlanSummary> RaidPlans { get; set; } = [];
+    public List<HermesLoadoutWarning> Warnings { get; set; } = [];
+    public long GeneratedUnixTime { get; set; }
+}
+
+internal sealed class HermesVitalsSummary
+{
+    public double CurrentHealth { get; set; }
+    public double MaximumHealth { get; set; }
+    public int HealthPercent { get; set; }
+    public double CurrentHydration { get; set; }
+    public double MaximumHydration { get; set; }
+    public int HydrationPercent { get; set; }
+    public double CurrentEnergy { get; set; }
+    public double MaximumEnergy { get; set; }
+    public int EnergyPercent { get; set; }
+}
+
+internal sealed class HermesLoadoutSlotSummary
+{
+    public string SlotName { get; set; } = string.Empty;
+    public string ItemName { get; set; } = string.Empty;
+    public int ConditionPercent { get; set; }
+    public string ConditionDescription { get; set; } = string.Empty;
+    public int ChildItemCount { get; set; }
+    public string Status { get; set; } = string.Empty;
+}
+
+internal sealed class HermesWeaponReadiness
+{
+    public string SlotName { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public int DurabilityPercent { get; set; }
+    public string DurabilityDescription { get; set; } = string.Empty;
+    public string Caliber { get; set; } = string.Empty;
+    public string? MagazineName { get; set; }
+    public int MagazineCapacity { get; set; }
+    public double LoadedRounds { get; set; }
+    public int CompatibleSpareMagazineCount { get; set; }
+    public double SpareMagazineRounds { get; set; }
+    public double LooseCompatibleRounds { get; set; }
+    public string? LoadedAmmoName { get; set; }
+    public bool HasMixedAmmo { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public List<string> Warnings { get; set; } = [];
+}
+
+internal sealed class HermesArmorReadiness
+{
+    public string SlotName { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public int ConditionPercent { get; set; }
+    public string ConditionDescription { get; set; } = string.Empty;
+    public int MaximumArmorClass { get; set; }
+    public int ArmorInsertSlotCount { get; set; }
+    public int InstalledArmorInsertCount { get; set; }
+    public int MissingRequiredArmorInsertCount { get; set; }
+    public int EmptyOptionalArmorInsertCount { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public List<string> Warnings { get; set; } = [];
+}
+
+internal sealed class HermesMedicalReadiness
+{
+    public int MedicalItemCount { get; set; }
+    public double TotalHealingResource { get; set; }
+    public bool HasLightBleedTreatment { get; set; }
+    public bool HasHeavyBleedTreatment { get; set; }
+    public bool HasFractureTreatment { get; set; }
+    public bool HasPainTreatment { get; set; }
+    public bool HasSurgeryKit { get; set; }
+    public int HydrationProvisionCount { get; set; }
+    public int EnergyProvisionCount { get; set; }
+    public List<HermesCarriedMedicalItem> Items { get; set; } = [];
+}
+
+internal sealed class HermesCarriedMedicalItem
+{
+    public string Name { get; set; } = string.Empty;
+    public double CurrentResource { get; set; }
+    public double MaximumResource { get; set; }
+    public string Coverage { get; set; } = string.Empty;
+}
+
+internal sealed class HermesQuestLoadoutRequirement
+{
+    public string QuestName { get; set; } = string.Empty;
+    public string TraderName { get; set; } = string.Empty;
+    public string MapName { get; set; } = string.Empty;
+    public string RequirementKind { get; set; } = string.Empty;
+    public string ConditionType { get; set; } = string.Empty;
+    public string RequiredEquipment { get; set; } = string.Empty;
+    public double RequiredQuantity { get; set; }
+    public double CarriedQuantity { get; set; }
+    public double FoundInRaidCarriedQuantity { get; set; }
+    public bool FoundInRaidRequired { get; set; }
+    public bool IsCompleted { get; set; }
+    public bool IsRaidCritical { get; set; }
+    public bool IsSatisfied { get; set; }
+    public string Note { get; set; } = string.Empty;
+}
+
+internal sealed class HermesRaidPlanSummary
+{
+    public string MapName { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public int ActiveQuestCount { get; set; }
+    public int ObjectiveCount { get; set; }
+    public int CompletedObjectiveCount { get; set; }
+    public int RaidRequirementCount { get; set; }
+    public int MissingRequirementCount { get; set; }
+    public List<HermesRaidPlanQuest> Quests { get; set; } = [];
+    public List<HermesRaidPlanRequirement> CombinedRequirements { get; set; } = [];
+    public List<string> Notes { get; set; } = [];
+}
+
+internal sealed class HermesRaidPlanQuest
+{
+    public string QuestName { get; set; } = string.Empty;
+    public string TraderName { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public int ObjectiveCount { get; set; }
+    public int CompletedObjectiveCount { get; set; }
+    public int MissingRequirementCount { get; set; }
+    public List<HermesRaidPlanObjective> Objectives { get; set; } = [];
+}
+
+internal sealed class HermesRaidPlanObjective
+{
+    public string ConditionType { get; set; } = string.Empty;
+    public string Description { get; set; } = string.Empty;
+    public bool IsCompleted { get; set; }
+    public bool IsRaidObjective { get; set; }
+    public string Status { get; set; } = string.Empty;
+}
+
+internal sealed class HermesRaidPlanRequirement
+{
+    public string RequirementKind { get; set; } = string.Empty;
+    public string RequiredEquipment { get; set; } = string.Empty;
+    public double RequiredQuantity { get; set; }
+    public double CarriedQuantity { get; set; }
+    public double FoundInRaidCarriedQuantity { get; set; }
+    public double MissingQuantity { get; set; }
+    public bool FoundInRaidRequired { get; set; }
+    public bool IsSatisfied { get; set; }
+    public List<string> QuestNames { get; set; } = [];
+    public string Note { get; set; } = string.Empty;
+}
+
+internal sealed class HermesLoadoutWarning
+{
+    public string Severity { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
 }

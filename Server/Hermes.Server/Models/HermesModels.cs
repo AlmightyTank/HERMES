@@ -429,7 +429,13 @@ public sealed record HermesStashSummaryResponse(
     IReadOnlyList<HermesStashValuationItem> MostValuableItems,
     IReadOnlyList<HermesStashValuationItem> Recommendations,
     IReadOnlyList<HermesStashDuplicateGroup> DuplicateGroups,
-    IReadOnlyList<HermesStashConditionItem> DamagedOrDepletedItems);
+    IReadOnlyList<HermesStashConditionItem> DamagedOrDepletedItems,
+    int CleanupCandidateInstanceCount,
+    int RecoverableCells,
+    long CleanupTraderSaleValue,
+    long CleanupFleaNetValue,
+    long CleanupBestSaleValue,
+    IReadOnlyList<HermesStashValuationItem> CleanupCandidates);
 
 public sealed record HermesStashTraderBreakdown(
     string TraderName,
@@ -510,3 +516,148 @@ public sealed record HermesStashConditionItem(
     string? BestSaleDestination,
     long? BestSaleValue,
     string Recommendation);
+
+public sealed record HermesLoadoutSummaryResponse(
+    bool Found,
+    string? Message,
+    string Readiness,
+    int ReadinessScore,
+    int WarningCount,
+    int CriticalCount,
+    HermesVitalsSummary Vitals,
+    IReadOnlyList<HermesLoadoutSlotSummary> EquippedSlots,
+    IReadOnlyList<HermesWeaponReadiness> Weapons,
+    IReadOnlyList<HermesArmorReadiness> Armor,
+    HermesMedicalReadiness Medical,
+    IReadOnlyList<HermesQuestLoadoutRequirement> QuestRequirements,
+    IReadOnlyList<HermesRaidPlanSummary> RaidPlans,
+    IReadOnlyList<HermesLoadoutWarning> Warnings,
+    long GeneratedUnixTime);
+
+public sealed record HermesVitalsSummary(
+    double CurrentHealth,
+    double MaximumHealth,
+    int HealthPercent,
+    double CurrentHydration,
+    double MaximumHydration,
+    int HydrationPercent,
+    double CurrentEnergy,
+    double MaximumEnergy,
+    int EnergyPercent);
+
+public sealed record HermesLoadoutSlotSummary(
+    string SlotName,
+    string ItemName,
+    int ConditionPercent,
+    string ConditionDescription,
+    int ChildItemCount,
+    string Status);
+
+public sealed record HermesWeaponReadiness(
+    string SlotName,
+    string Name,
+    int DurabilityPercent,
+    string DurabilityDescription,
+    string Caliber,
+    string? MagazineName,
+    int MagazineCapacity,
+    double LoadedRounds,
+    int CompatibleSpareMagazineCount,
+    double SpareMagazineRounds,
+    double LooseCompatibleRounds,
+    string? LoadedAmmoName,
+    bool HasMixedAmmo,
+    string Status,
+    IReadOnlyList<string> Warnings);
+
+public sealed record HermesArmorReadiness(
+    string SlotName,
+    string Name,
+    int ConditionPercent,
+    string ConditionDescription,
+    int MaximumArmorClass,
+    int ArmorInsertSlotCount,
+    int InstalledArmorInsertCount,
+    int MissingRequiredArmorInsertCount,
+    int EmptyOptionalArmorInsertCount,
+    string Status,
+    IReadOnlyList<string> Warnings);
+
+public sealed record HermesMedicalReadiness(
+    int MedicalItemCount,
+    double TotalHealingResource,
+    bool HasLightBleedTreatment,
+    bool HasHeavyBleedTreatment,
+    bool HasFractureTreatment,
+    bool HasPainTreatment,
+    bool HasSurgeryKit,
+    int HydrationProvisionCount,
+    int EnergyProvisionCount,
+    IReadOnlyList<HermesCarriedMedicalItem> Items);
+
+public sealed record HermesCarriedMedicalItem(
+    string Name,
+    double CurrentResource,
+    double MaximumResource,
+    string Coverage);
+
+public sealed record HermesQuestLoadoutRequirement(
+    string QuestName,
+    string TraderName,
+    string MapName,
+    string RequirementKind,
+    string ConditionType,
+    string RequiredEquipment,
+    double RequiredQuantity,
+    double CarriedQuantity,
+    double FoundInRaidCarriedQuantity,
+    bool FoundInRaidRequired,
+    bool IsCompleted,
+    bool IsRaidCritical,
+    bool IsSatisfied,
+    string Note);
+
+public sealed record HermesRaidPlanSummary(
+    string MapName,
+    string Status,
+    int ActiveQuestCount,
+    int ObjectiveCount,
+    int CompletedObjectiveCount,
+    int RaidRequirementCount,
+    int MissingRequirementCount,
+    IReadOnlyList<HermesRaidPlanQuest> Quests,
+    IReadOnlyList<HermesRaidPlanRequirement> CombinedRequirements,
+    IReadOnlyList<string> Notes);
+
+public sealed record HermesRaidPlanQuest(
+    string QuestName,
+    string TraderName,
+    string Status,
+    int ObjectiveCount,
+    int CompletedObjectiveCount,
+    int MissingRequirementCount,
+    IReadOnlyList<HermesRaidPlanObjective> Objectives);
+
+public sealed record HermesRaidPlanObjective(
+    string ConditionType,
+    string Description,
+    bool IsCompleted,
+    bool IsRaidObjective,
+    string Status);
+
+public sealed record HermesRaidPlanRequirement(
+    string RequirementKind,
+    string RequiredEquipment,
+    double RequiredQuantity,
+    double CarriedQuantity,
+    double FoundInRaidCarriedQuantity,
+    double MissingQuantity,
+    bool FoundInRaidRequired,
+    bool IsSatisfied,
+    IReadOnlyList<string> QuestNames,
+    string Note);
+
+public sealed record HermesLoadoutWarning(
+    string Severity,
+    string Category,
+    string Message);

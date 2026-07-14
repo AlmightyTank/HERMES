@@ -12,6 +12,7 @@ public sealed class HermesDynamicRouter(
     HermesCatalogService catalogService,
     HermesStashService stashService,
     HermesStashAnalysisService stashAnalysisService,
+    HermesLoadoutService loadoutService,
     HermesTraderService traderService,
     HermesMarketService marketService,
     HermesHideoutService hideoutService)
@@ -39,6 +40,13 @@ public sealed class HermesDynamicRouter(
                 (_, _, sessionId, _) =>
                 {
                     var response = stashAnalysisService.GetSummary(sessionId);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
+                "/hermes/loadout/summary",
+                (_, _, sessionId, _) =>
+                {
+                    var response = loadoutService.GetSummary(sessionId);
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(
