@@ -8,7 +8,7 @@ namespace Hermes.Client;
 
 /// <summary>
 /// Adds a normal EFT dynamic interaction to supported inventory, trader, and flea item context menus.
-/// Owned stash and equipped-character items are resolved as exact PMC profile instances. Trader and flea previews are
+/// Owned inventory items are resolved as exact PMC profile instances. Trader and flea previews are
 /// resolved by template and intentionally use the full-condition base-item estimate by default.
 /// </summary>
 internal sealed class AskHermesContextMenuPatch : ModulePatch
@@ -36,7 +36,7 @@ internal sealed class AskHermesContextMenuPatch : ModulePatch
             }
 
             var viewTypeName = itemContext.ViewType.ToString();
-            var isOwnedInventoryItem = IsOwnedInventoryView(viewTypeName);
+            var isOwnedInventoryItem = IsOwnedPmcItemView(viewTypeName);
             var previewSource = GetPreviewSource(viewTypeName);
 
             // Keep raid/world-loot and unrelated context menus untouched.
@@ -92,37 +92,19 @@ internal sealed class AskHermesContextMenuPatch : ModulePatch
         }
     }
 
-    private static bool IsOwnedInventoryView(string viewTypeName)
+    private static bool IsOwnedPmcItemView(string viewTypeName)
     {
         if (viewTypeName.Equals(EItemViewType.Inventory.ToString(), StringComparison.OrdinalIgnoreCase))
         {
             return true;
         }
 
-        if (ContainsAny(viewTypeName, "ragfair", "flea", "market", "trader", "trading", "trade"))
-        {
-            return false;
-        }
-
-        // Avoid adding the action to raid/world-loot and reward preview menus.
-        if (ContainsAny(viewTypeName, "loot", "world", "raid", "reward", "mail", "insurance"))
-        {
-            return false;
-        }
-
-        return ContainsAny(
-            viewTypeName,
-            "inventory",
-            "equipment",
-            "character",
-            "gear",
-            "weaponmodding",
-            "modding");
-    }
-
-    private static bool ContainsAny(string value, params string[] terms)
-    {
-        return terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+        return viewTypeName.Contains("equipment", StringComparison.OrdinalIgnoreCase)
+               || viewTypeName.Contains("gear", StringComparison.OrdinalIgnoreCase)
+               || viewTypeName.Contains("character", StringComparison.OrdinalIgnoreCase)
+               || viewTypeName.Contains("profile", StringComparison.OrdinalIgnoreCase)
+               || viewTypeName.Contains("modding", StringComparison.OrdinalIgnoreCase)
+               || viewTypeName.Contains("weapon", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? GetPreviewSource(string viewTypeName)

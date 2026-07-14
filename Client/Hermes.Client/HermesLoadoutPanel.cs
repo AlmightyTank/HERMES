@@ -33,7 +33,7 @@ internal sealed class HermesLoadoutPanel
         }
 
         GUILayout.BeginHorizontal();
-        GUILayout.Label("LOADOUT READINESS, RAID PLANNING, VALUE, AND INSURANCE — ALPHA11.3");
+        GUILayout.Label("LOADOUT READINESS, RAID PLANNING, VALUE & INSURANCE — ALPHA11.3.3");
         GUILayout.FlexibleSpace();
         GUI.enabled = !_loading;
         if (GUILayout.Button(_loading ? "Refreshing..." : "Refresh", GUILayout.Width(110f)))
@@ -43,7 +43,7 @@ internal sealed class HermesLoadoutPanel
 
         GUI.enabled = true;
         GUILayout.EndHorizontal();
-        GUILayout.Label("Exact readiness and raid-planning analysis with per-instance replacement value, trader liquidation, protected-slot risk, and insurance coverage.");
+        GUILayout.Label("Exact loadout analysis, localized quest objectives, map-based raid plans, replacement value, raid risk, and insurance state.");
         GUILayout.Space(4f);
         GUILayout.Label(_status);
         GUILayout.Space(6f);
@@ -73,7 +73,7 @@ internal sealed class HermesLoadoutPanel
         var version = ++_requestVersion;
         _loading = true;
         _requested = true;
-        _status = "Analyzing equipment, active objectives, ammunition, armor, treatment coverage, exact replacement value, raid risk, and insurance state...";
+        _status = "Analyzing equipment, localized objectives, carried raid tools, replacement value, insurance, ammunition, armor, treatment coverage, and vitals...";
 
         try
         {
@@ -126,7 +126,7 @@ internal sealed class HermesLoadoutPanel
         DrawViewButton("Medical", LoadoutView.Medical, 85f);
         DrawViewButton("Quest Gear", LoadoutView.Quests, 100f);
         DrawViewButton("Raid Planner", LoadoutView.RaidPlanner, 110f);
-        DrawViewButton("Value & Insurance", LoadoutView.ValueInsurance, 125f);
+        DrawViewButton("Value & Insurance", LoadoutView.ValueInsurance, 130f);
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
     }
@@ -190,12 +190,7 @@ internal sealed class HermesLoadoutPanel
         DrawMetric("READINESS", summary.Readiness, $"Score: {summary.ReadinessScore}/100");
         DrawMetric("CRITICAL", summary.CriticalCount.ToString("N0"), "Must-fix loadout problems.");
         DrawMetric("WARNINGS", summary.WarningCount.ToString("N0"), "Recommended review before raid.");
-        DrawMetric(
-            "AT-RISK VALUE",
-            summary.ValueSummary.Found ? $"₽{summary.ValueSummary.AtRiskReplacementValue:N0}" : "Unavailable",
-            summary.ValueSummary.Found
-                ? $"{summary.ValueSummary.UninsuredItemCount:N0} uninsured insurable item(s)."
-                : "Open Value & Insurance for details.");
+        DrawMetric("EQUIPPED SLOTS", summary.EquippedSlots.Count.ToString("N0"), "Top-level equipment items.");
         GUILayout.EndHorizontal();
     }
 
@@ -216,21 +211,6 @@ internal sealed class HermesLoadoutPanel
                     warning.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) ? "✗" : "!",
                     $"{warning.Severity} — {warning.Category}\n{warning.Message}");
             }
-        }
-
-        GUILayout.Space(8f);
-        GUILayout.Label("LOADOUT VALUE AND INSURANCE");
-        if (!summary.ValueSummary.Found)
-        {
-            GUILayout.Label(summary.ValueSummary.Message ?? "Loadout valuation is unavailable.");
-        }
-        else
-        {
-            GUILayout.BeginHorizontal();
-            DrawMetric("RAID RISK", $"₽{summary.ValueSummary.AtRiskReplacementValue:N0}", "Best replacement value currently at risk.");
-            DrawMetric("UNINSURED", $"₽{summary.ValueSummary.UninsuredReplacementValue:N0}", $"{summary.ValueSummary.UninsuredItemCount:N0} insurable item(s).");
-            DrawMetric("PROTECTED", $"₽{summary.ValueSummary.ProtectedReplacementValue:N0}", "Secure and protected equipment slots.");
-            GUILayout.EndHorizontal();
         }
 
         GUILayout.Space(8f);
@@ -391,129 +371,19 @@ internal sealed class HermesLoadoutPanel
         }
     }
 
-    private static void DrawValueAndInsurance(HermesLoadoutValueSummary value)
-    {
-        GUILayout.Label("LOADOUT VALUE AND INSURANCE");
-        if (!value.Found)
-        {
-            GUILayout.Label(value.Message ?? "Loadout valuation is unavailable.");
-            return;
-        }
-
-        GUILayout.BeginHorizontal();
-        DrawMetric("AT-RISK VALUE", $"₽{value.AtRiskReplacementValue:N0}", $"{value.AtRiskItemCount:N0} carried item instance(s) at risk.");
-        DrawMetric("BEST REPLACEMENT", $"₽{value.BestReplacementValue:N0}", "Cheapest supported trader or market source per item.");
-        DrawMetric("TRADER LIQUIDATION", $"₽{value.TraderLiquidationValue:N0}", "Condition-adjusted current trader sale value.");
-        DrawMetric("PROTECTED VALUE", $"₽{value.ProtectedReplacementValue:N0}", $"{value.ProtectedItemCount:N0} protected item instance(s).");
-        GUILayout.EndHorizontal();
-
-        GUILayout.BeginHorizontal();
-        DrawMetric("INSURANCE", value.InsuranceStatus, $"{value.InsuredItemCount:N0} insured • {value.UninsuredItemCount:N0} uninsured.");
-        DrawMetric("INSURED VALUE", $"₽{value.InsuredReplacementValue:N0}", "At-risk replacement value currently insured.");
-        DrawMetric("UNINSURED VALUE", $"₽{value.UninsuredReplacementValue:N0}", "Insurable at-risk value without coverage.");
-        DrawMetric(
-            "EST. INSURANCE COST",
-            value.EstimatedInsuranceCost.HasValue ? $"₽{value.EstimatedInsuranceCost.Value:N0}" : "Unavailable",
-            value.InsuranceCostSource);
-        GUILayout.EndHorizontal();
-
-        GUILayout.Space(8f);
-        GUILayout.Label("VALUE BY CATEGORY");
-        if (value.Categories.Count == 0)
-        {
-            GUILayout.Label("No supported carried-item values were available.");
-        }
-        else
-        {
-            foreach (var category in value.Categories)
-            {
-                GUILayout.BeginVertical(GUI.skin.box);
-                GUILayout.BeginHorizontal();
-                GUILayout.Label(category.Category);
-                GUILayout.FlexibleSpace();
-                GUILayout.Label($"{category.ItemCount:N0} item(s)");
-                GUILayout.EndHorizontal();
-                GUILayout.Label($"At risk: ₽{category.AtRiskReplacementValue:N0} • best replacement: ₽{category.BestReplacementValue:N0} • trader liquidation: ₽{category.TraderLiquidationValue:N0}");
-                GUILayout.Label($"Market replacement: ₽{category.MarketReplacementValue:N0} • uninsured: ₽{category.UninsuredReplacementValue:N0}");
-                GUILayout.EndVertical();
-            }
-        }
-
-        GUILayout.Space(8f);
-        GUILayout.Label("CARRIED ITEMS — ASK HERMES OR REVIEW VALUE");
-        if (value.Items.Count == 0)
-        {
-            GUILayout.Label("No supported carried items were available.");
-        }
-        else
-        {
-            foreach (var item in value.Items)
-            {
-                GUILayout.BeginVertical(GUI.skin.box);
-                GUILayout.BeginHorizontal();
-                GUILayout.Label($"{(item.IsHighValueUninsured ? "! " : string.Empty)}{item.Name}");
-                GUILayout.FlexibleSpace();
-                if (!string.IsNullOrWhiteSpace(item.ProfileItemId)
-                    && GUILayout.Button("Ask HERMES", GUILayout.Width(105f)))
-                {
-                    Plugin.Instance?.OpenForInventoryItem(item.ProfileItemId);
-                }
-                GUILayout.Label(item.InsuranceStatus, GUILayout.Width(90f));
-                GUILayout.EndHorizontal();
-                GUILayout.Label($"{item.Category} • {item.SlotName} • quantity {FormatNumber(item.Quantity)} • {item.ConditionDescription}");
-                GUILayout.Label(item.BestReplacementValue.HasValue
-                    ? $"Best replacement: ₽{item.BestReplacementValue.Value:N0} via {item.BestReplacementSource}"
-                    : "Best replacement: unavailable");
-                GUILayout.Label(item.TraderLiquidationValue.HasValue
-                    ? $"Trader liquidation: ₽{item.TraderLiquidationValue.Value:N0} via {item.BestTraderName ?? "supported trader"}"
-                    : "Trader liquidation: unavailable");
-                GUILayout.Label(item.MarketReplacementValue.HasValue
-                    ? $"Market replacement: ₽{item.MarketReplacementValue.Value:N0} ({item.MarketPriceSource})"
-                    : "Market replacement: unavailable");
-                if (item.TraderReplacementValue.HasValue)
-                {
-                    GUILayout.Label($"Trader replacement: ₽{item.TraderReplacementValue.Value:N0} ({item.TraderReplacementSource})");
-                }
-
-                if (item.IsProtected)
-                {
-                    GUILayout.Label("Protected slot — excluded from estimated raid-loss value.");
-                }
-                else if (!item.IsInsurable)
-                {
-                    GUILayout.Label("This carried item is treated as non-insurable.");
-                }
-                else if (item.IsHighValueUninsured)
-                {
-                    GUILayout.Label("High-value uninsured item — review insurance before raid.");
-                }
-
-                GUILayout.EndVertical();
-                GUILayout.Space(3f);
-            }
-        }
-
-        GUILayout.Space(8f);
-        GUILayout.Label("VALUATION NOTES");
-        foreach (var note in value.Notes)
-        {
-            GUILayout.Label($"• {note}");
-        }
-    }
-
     private static void DrawQuestRequirements(IReadOnlyList<HermesQuestLoadoutRequirement> requirements)
     {
         GUILayout.Label("ACTIVE QUEST RAID GEAR");
         if (requirements.Count == 0)
         {
             GUILayout.Label("No explicit active-quest equipment, raid-item, marker, plant-item, or carried turn-in requirements were identified.");
-            GUILayout.Label("HERMES only warns about requirements encoded in the active quest data; it does not invent door-key requirements that the quest does not declare.");
+            GUILayout.Label("HERMES also adds known and inferred route-key requirements when quest data omits the locked-door access item.");
             return;
         }
 
-        var criticalMissing = requirements.Count(requirement => requirement.IsRaidCritical && !requirement.IsSatisfied);
-        var criticalReady = requirements.Count(requirement => requirement.IsRaidCritical && requirement.IsSatisfied);
-        var informational = requirements.Count(requirement => !requirement.IsRaidCritical);
+        var criticalMissing = requirements.Count(requirement => requirement.IsRaidCritical && !requirement.AcquireInRaid && !requirement.IsSatisfied);
+        var criticalReady = requirements.Count(requirement => requirement.IsRaidCritical && !requirement.AcquireInRaid && requirement.IsSatisfied);
+        var acquireInRaid = requirements.Count(requirement => requirement.AcquireInRaid);
         var maps = requirements
             .Select(requirement => requirement.MapName)
             .Where(map => !string.IsNullOrWhiteSpace(map))
@@ -523,7 +393,7 @@ internal sealed class HermesLoadoutPanel
         GUILayout.BeginHorizontal();
         DrawMetric("MISSING RAID GEAR", criticalMissing.ToString("N0"), "Missing equipment or carried items needed for raid objectives.");
         DrawMetric("READY", criticalReady.ToString("N0"), "Raid-critical quest requirements currently satisfied.");
-        DrawMetric("TURN-IN / INFO", informational.ToString("N0"), "Tracked quest items that are not mandatory for this raid loadout.");
+        DrawMetric("ACQUIRE IN RAID", acquireInRaid.ToString("N0"), "Required route items obtained after deployment; not missing pre-raid gear.");
         DrawMetric("MAPS", maps.ToString("N0"), "Maps represented by active quest requirements.");
         GUILayout.EndHorizontal();
         GUILayout.Space(8f);
@@ -541,7 +411,7 @@ internal sealed class HermesLoadoutPanel
                 GUILayout.BeginHorizontal();
                 GUILayout.Label($"{questGroup.Key.QuestName} — {questGroup.Key.TraderName}");
                 GUILayout.FlexibleSpace();
-                var missingForQuest = questGroup.Count(requirement => requirement.IsRaidCritical && !requirement.IsSatisfied);
+                var missingForQuest = questGroup.Count(requirement => requirement.IsRaidCritical && !requirement.AcquireInRaid && !requirement.IsSatisfied);
                 GUILayout.Label(missingForQuest > 0 ? $"{missingForQuest:N0} missing" : "Checked");
                 GUILayout.EndHorizontal();
 
@@ -552,7 +422,14 @@ internal sealed class HermesLoadoutPanel
                 {
                     GUILayout.Space(3f);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label($"{(requirement.IsSatisfied ? "✓" : requirement.IsRaidCritical ? "✗" : "•")} {requirement.RequirementKind}: {requirement.RequiredEquipment}");
+                    var requirementIcon = requirement.AcquireInRaid
+                        ? "↳"
+                        : requirement.IsSatisfied
+                            ? "✓"
+                            : requirement.IsRaidCritical
+                                ? "✗"
+                                : "•";
+                    GUILayout.Label($"{requirementIcon} {requirement.RequirementKind}: {requirement.RequiredEquipment}");
                     GUILayout.FlexibleSpace();
                     GUILayout.Label(requirement.ConditionType);
                     GUILayout.EndHorizontal();
@@ -562,7 +439,11 @@ internal sealed class HermesLoadoutPanel
                         GUILayout.Label($"Found in raid carried: {FormatNumber(requirement.FoundInRaidCarriedQuantity)}{(requirement.FoundInRaidRequired ? " • FIR required" : string.Empty)}");
                     }
 
-                    if (!requirement.IsRaidCritical && !requirement.IsCompleted)
+                    if (requirement.AcquireInRaid && !requirement.IsCompleted)
+                    {
+                        GUILayout.Label("Acquire during raid — this does not count as missing pre-raid gear.");
+                    }
+                    else if (!requirement.IsRaidCritical && !requirement.IsCompleted)
                     {
                         GUILayout.Label("Information only — this item is not treated as mandatory raid gear.");
                     }
@@ -609,7 +490,7 @@ internal sealed class HermesLoadoutPanel
             GUILayout.Label($"Active quests: {plan.ActiveQuestCount:N0} • objectives: {plan.CompletedObjectiveCount:N0}/{plan.ObjectiveCount:N0} complete • raid requirements: {plan.RaidRequirementCount:N0}");
 
             GUILayout.Space(5f);
-            GUILayout.Label("COMBINED BRING / EQUIP CHECKLIST");
+            GUILayout.Label("COMBINED BRING / EQUIP / ACQUIRE CHECKLIST");
             if (plan.CombinedRequirements.Count == 0)
             {
                 GUILayout.Label("No explicit raid-critical item or equipment requirements were encoded for this map.");
@@ -620,9 +501,15 @@ internal sealed class HermesLoadoutPanel
                 {
                     GUILayout.BeginVertical(GUI.skin.box);
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label($"{(requirement.IsSatisfied ? "✓" : "✗")} {requirement.RequirementKind}: {requirement.RequiredEquipment}");
+                    GUILayout.Label($"{(requirement.AcquireInRaid ? "↳" : requirement.IsSatisfied ? "✓" : "✗")} {requirement.RequirementKind}: {requirement.RequiredEquipment}");
                     GUILayout.FlexibleSpace();
-                    GUILayout.Label(requirement.IsSatisfied ? "Covered" : $"Missing {FormatNumber(requirement.MissingQuantity)}");
+                    GUILayout.Label(requirement.AcquireInRaid
+                        ? requirement.CarriedQuantity >= requirement.RequiredQuantity
+                            ? "Acquired"
+                            : "Acquire in raid"
+                        : requirement.IsSatisfied
+                            ? "Covered"
+                            : $"Missing {FormatNumber(requirement.MissingQuantity)}");
                     GUILayout.EndHorizontal();
                     GUILayout.Label($"Required: {FormatNumber(requirement.RequiredQuantity)} • carried: {FormatNumber(requirement.CarriedQuantity)}");
                     if (requirement.FoundInRaidRequired || requirement.FoundInRaidCarriedQuantity > 0d)
@@ -674,6 +561,82 @@ internal sealed class HermesLoadoutPanel
 
             GUILayout.EndVertical();
             GUILayout.Space(6f);
+        }
+    }
+
+    private static void DrawValueAndInsurance(HermesLoadoutValueSummary value)
+    {
+        GUILayout.Label("LOADOUT VALUE AND INSURANCE");
+        if (!value.Found)
+        {
+            GUILayout.Label(value.Message ?? "Loadout valuation is unavailable.");
+            return;
+        }
+
+        GUILayout.BeginHorizontal();
+        DrawMetric("AT-RISK VALUE", $"₽{value.AtRiskReplacementValue:N0}", $"{value.AtRiskItemCount:N0} carried item instance(s).");
+        DrawMetric("PROTECTED VALUE", $"₽{value.ProtectedReplacementValue:N0}", $"{value.ProtectedItemCount:N0} protected item instance(s).");
+        DrawMetric("UNINSURED VALUE", $"₽{value.UninsuredReplacementValue:N0}", $"{value.UninsuredItemCount:N0} uninsured insurable item(s).");
+        DrawMetric("INSURANCE", value.InsuranceStatus, value.EstimatedInsuranceCost.HasValue ? $"Estimated cost: ₽{value.EstimatedInsuranceCost.Value:N0}" : "Cost estimate unavailable.");
+        GUILayout.EndHorizontal();
+
+        GUILayout.Space(6f);
+        GUILayout.BeginHorizontal();
+        DrawMetric("TRADER LIQUIDATION", $"₽{value.TraderLiquidationValue:N0}", "Condition-adjusted exact carried instances.");
+        DrawMetric("MARKET REPLACEMENT", $"₽{value.MarketReplacementValue:N0}", "Shared flea-price fallback order.");
+        DrawMetric("BEST REPLACEMENT", $"₽{value.BestReplacementValue:N0}", "Cheapest supported trader or market source.");
+        GUILayout.EndHorizontal();
+
+        GUILayout.Space(8f);
+        GUILayout.Label("CATEGORY BREAKDOWN");
+        foreach (var category in value.Categories)
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(category.Category);
+            GUILayout.FlexibleSpace();
+            GUILayout.Label($"{category.ItemCount:N0} item(s)");
+            GUILayout.EndHorizontal();
+            GUILayout.Label($"Trader liquidation: ₽{category.TraderLiquidationValue:N0} • market replacement: ₽{category.MarketReplacementValue:N0}");
+            GUILayout.Label($"Best replacement: ₽{category.BestReplacementValue:N0} • at risk: ₽{category.AtRiskReplacementValue:N0} • uninsured: ₽{category.UninsuredReplacementValue:N0}");
+            GUILayout.EndVertical();
+        }
+
+        GUILayout.Space(8f);
+        GUILayout.Label("CARRIED ITEM INSTANCES");
+        if (value.Items.Count == 0)
+        {
+            GUILayout.Label("No supported carried item instances were returned.");
+        }
+        else
+        {
+            foreach (var item in value.Items)
+            {
+                GUILayout.BeginVertical(GUI.skin.box);
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"{item.Name} — {item.SlotName}");
+                GUILayout.FlexibleSpace();
+                if (!string.IsNullOrWhiteSpace(item.ProfileItemId)
+                    && GUILayout.Button("Ask HERMES", GUILayout.Width(105f)))
+                {
+                    Plugin.Instance?.OpenForInventoryItem(item.ProfileItemId);
+                }
+                GUILayout.EndHorizontal();
+                GUILayout.Label($"{item.Category} • quantity {FormatNumber(item.Quantity)} • {item.ConditionDescription}");
+                GUILayout.Label($"Best replacement: {(item.BestReplacementValue.HasValue ? $"₽{item.BestReplacementValue.Value:N0}" : "Unavailable")} — {item.BestReplacementSource}");
+                GUILayout.Label($"Trader liquidation: {(item.TraderLiquidationValue.HasValue ? $"₽{item.TraderLiquidationValue.Value:N0}" : "Unavailable")} • insurance: {item.InsuranceStatus}{(item.IsHighValueUninsured ? " • HIGH-VALUE UNINSURED" : string.Empty)}");
+                GUILayout.EndVertical();
+            }
+        }
+
+        if (value.Notes.Count > 0)
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("VALUATION NOTES");
+            foreach (var note in value.Notes)
+            {
+                GUILayout.Label("• " + note);
+            }
         }
     }
 

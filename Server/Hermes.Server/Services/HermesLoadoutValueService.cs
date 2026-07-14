@@ -152,7 +152,7 @@ public sealed class HermesLoadoutValueService(
                 : null;
             var traderLiquidation = bestTraderSale?.RoubleEquivalent ?? 0L;
             var isInsurable = IsInsurable(category, template, isAtRisk);
-            var isInsured = isInsurable && IsItemInsured(item, insuredIds);
+            var isInsured = isInsurable && IsItemInsured(item, insuredIds, byId, equipmentId);
             var insuranceStatus = isProtected
                 ? "Protected"
                 : !isInsurable
@@ -470,10 +470,12 @@ public sealed class HermesLoadoutValueService(
         var isArmor = ReadInt(props, 0, "ArmorClass", "armorClass") > 0
                       || serialized.Contains("ArmorType", StringComparison.OrdinalIgnoreCase);
         var maximumMedicalResource = ReadDouble(props, 0d, "MaxHpResource", "maxHpResource");
+        var damageEffects = GetProperty(props, "effects_damage", "EffectsDamage");
+        var stimulatorBuffs = GetProperty(props, "StimulatorBuffs", "stimulatorBuffs", "Buffs", "buffs");
         var isMedical = maximumMedicalResource > 0d
-                        || serialized.Contains("effects_damage", StringComparison.OrdinalIgnoreCase)
-                        || serialized.Contains("EffectsDamage", StringComparison.OrdinalIgnoreCase)
-                        || serialized.Contains("MedUseType", StringComparison.OrdinalIgnoreCase);
+                        || HasEntries(damageEffects)
+                        || ReadBool(props, false, "UseStimulatorBuffs", "useStimulatorBuffs")
+                        || HasEntries(stimulatorBuffs);
         var maximumResource = ReadDouble(props, 0d, "MaxResource", "maxResource");
         var maximumKeyUses = ReadDouble(props, 0d, "MaximumNumberOfUsage", "maximumNumberOfUsage");
         var isProvision = maximumResource > 0d
@@ -512,16 +514,6 @@ public sealed class HermesLoadoutValueService(
             return "Ammunition & magazines";
         }
 
-        if (template.IsMedical)
-        {
-            return "Medical";
-        }
-
-        if (template.IsProvision)
-        {
-            return "Provisions";
-        }
-
         if (template.IsWeapon || ancestors.Any(ancestor => ancestor.IsWeapon))
         {
             return "Weapons & attachments";
@@ -534,6 +526,16 @@ public sealed class HermesLoadoutValueService(
             return "Armor & plates";
         }
 
+        if (template.IsMedical)
+        {
+            return "Medical";
+        }
+
+        if (template.IsProvision)
+        {
+            return "Provisions";
+        }
+
         return "Other equipment";
     }
 
@@ -542,13 +544,17 @@ public sealed class HermesLoadoutValueService(
         ValueTemplateInfo template,
         bool isAtRisk)
     {
-        if (!isAtRisk || template.IsAmmo || template.IsMedical || template.IsProvision)
+        if (!isAtRisk || template.IsAmmo)
         {
             return false;
         }
 
-        return category is "Weapons & attachments" or "Armor & plates" or "Other equipment"
-               || template.IsMagazine;
+        if (category is "Medical" or "Provisions" or "Ammunition & magazines")
+        {
+            return template.IsMagazine;
+        }
+
+        return category is "Weapons & attachments" or "Armor & plates" or "Other equipment";
     }
 
     private static ConditionValue GetCondition(
@@ -670,20 +676,37 @@ public sealed class HermesLoadoutValueService(
 
     private static bool IsItemInsured(
         LoadoutInventoryItem item,
-        IReadOnlySet<string> insuredIds)
+        IReadOnlySet<string> insuredIds,
+        IReadOnlyDictionary<string, LoadoutInventoryItem> byId,
+        string equipmentId)
     {
-        if (insuredIds.Contains(item.Id))
+        var current = item;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        while (visited.Add(current.Id))
         {
-            return true;
+            if (insuredIds.Contains(current.Id))
+            {
+                return true;
+            }
+
+            var insuredBy = ReadString(current.Upd, "InsuredBy", "insuredBy", "Insurance", "insurance");
+            if (!string.IsNullOrWhiteSpace(insuredBy)
+                || ReadBool(current.Upd, false, "Insured", "insured", "IsInsured", "isInsured"))
+            {
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(current.ParentId)
+                || current.ParentId.Equals(equipmentId, StringComparison.OrdinalIgnoreCase)
+                || !byId.TryGetValue(current.ParentId, out var parent))
+            {
+                break;
+            }
+
+            current = parent;
         }
 
-        var insuredBy = ReadString(item.Upd, "InsuredBy", "insuredBy", "Insurance", "insurance");
-        if (!string.IsNullOrWhiteSpace(insuredBy))
-        {
-            return true;
-        }
-
-        return ReadBool(item.Upd, false, "Insured", "insured", "IsInsured", "isInsured");
+        return false;
     }
 
     private static bool IsDescendantOfEquipment(
@@ -952,6 +975,18 @@ public sealed class HermesLoadoutValueService(
         }
 
         return new string(output.ToArray());
+    }
+
+    private static bool HasEntries(JsonNode? node)
+    {
+        return node switch
+        {
+            JsonArray array => array.Count > 0,
+            JsonObject obj => obj.Count > 0,
+            JsonValue value when value.TryGetValue<bool>(out var boolean) => boolean,
+            JsonValue value when value.TryGetValue<string>(out var text) => !string.IsNullOrWhiteSpace(text),
+            _ => false
+        };
     }
 
     private static JsonNode? GetProperty(JsonNode? node, params string[] names)

@@ -50,7 +50,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
 
         return new HermesStatusResponse(
             "HERMES",
-            "0.1.0-alpha11.3.1",
+            "0.1.0-alpha11.3.5",
             "4.0.13",
             true,
             [
@@ -59,8 +59,6 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "trader-buy-and-sell-intelligence",
                 "selected-stash-instance-trader-valuation",
                 "ask-hermes-inventory-context-action",
-                "ask-hermes-equipped-character-context-action",
-                "ask-hermes-loadout-item-buttons",
                 "ask-hermes-trader-and-flea-preview-context-action",
                 "player-loyalty-awareness",
                 "cash-and-barter-offers",
@@ -91,6 +89,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "trader-flea-and-owned-ingredient-sourcing",
                 "item-quest-hideout-and-craft-usage",
                 "named-quest-locked-craft-detection",
+                "in-raid-route-key-requirements",
                 "active-hideout-station-recipe-filtering",
                 "shared-short-lived-market-cache",
                 "manual-market-cache-invalidation",
@@ -129,15 +128,18 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "duplicate-quest-requirement-merging",
                 "quest-objective-completion-summaries",
                 "multi-restriction-raid-plan-warnings",
+                "localized-quest-objective-text",
+                "custom-quest-condition-locale-support",
                 "exact-carried-item-valuation",
                 "loadout-market-replacement-cost",
                 "loadout-trader-liquidation-value",
-                "loadout-best-replacement-source",
                 "loadout-insurance-state-detection",
                 "protected-slot-risk-separation",
-                "loadout-value-category-breakdown",
-                "high-value-uninsured-warnings",
-                "configured-insurance-cost-estimate"
+                "ask-hermes-equipped-item-context-action",
+                "exact-pmc-inventory-instance-analysis",
+                "meaningful-medical-template-classification",
+                "attachment-insurance-classification",
+                "insured-parent-assembly-inheritance"
             ]);
     }
 

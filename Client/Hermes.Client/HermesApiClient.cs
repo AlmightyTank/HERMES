@@ -66,7 +66,7 @@ internal static class HermesApiClient
             () => new HermesStashInstanceSelectionResponse
             {
                 Found = false,
-                Message = "HERMES could not resolve the selected PMC inventory item."
+                Message = "HERMES could not resolve the selected inventory item."
             });
     }
 

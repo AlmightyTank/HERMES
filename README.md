@@ -1,106 +1,74 @@
-# HERMES 0.1.0-alpha11.3.1
+# HERMES 0.1.0-alpha11.3.5
 
-## Alpha11.3.1 — Ground Zero and equipped-item Ask HERMES fix
+## Alpha11.3.5 — Insurance classification correction
 
-- Raid Planner now resolves location id `653e6760052C01c1c805532F` as **Ground Zero**.
-- Ask HERMES now supports exact PMC-owned items rooted in either the stash or equipped-character inventory.
-- Items inside an equipped backpack, tactical rig, pockets, secure container, weapon assembly, armor, helmet, or other equipped tree can be analyzed by exact profile item id.
-- The **Value & Insurance** view now includes an **Ask HERMES** button on every carried item row.
-- The right-click context action recognizes inventory, equipment, character-gear, and weapon-modding item views while continuing to exclude raid/world loot menus.
-- Exact trader analysis now accepts equipped and carried instances, not only stash-rooted instances.
-- HERMES displays where the selected item is located, such as `Carried in backpack`, `Equipped on primary weapon`, or `PMC stash`.
+- Weapon attachments no longer become Medical merely because the serialized template exposes a default `MedUseType` field.
+- Medical classification now requires a real medical resource, non-empty damage-treatment effects, or meaningful stimulator buffs.
+- Weapon and armor ancestry takes priority when categorizing installed attachments and plates.
+- Insurability now follows the final item category instead of the unreliable raw `IsMedical` flag.
+- Attached items inherit insured status from an insured parent weapon, armor, rig, backpack, or other parent assembly when SPT stores insurance on the parent instance.
+- Retains Alpha11.3.4 Saving the Mole and localized Raid Planner objective support.
+
+## Alpha11.3.4 — Saving the Mole in-raid key route
+
+- Raid Planner now adds the TerraGroup science office key to **Saving the Mole** on Ground Zero.
+- The requirement is labeled **Acquire route key in raid**, not Bring.
+- The planner instructs the player to loot the key from the lab scientist's body and use it on office no. 4.
+- In-raid acquisition requirements appear in the combined checklist but do not count as missing pre-raid gear or change a prepared plan to Missing Gear.
+- When the key is currently carried, the checklist changes to Acquired.
+- After the localized “Access the lab scientist's office” objective is complete, the key requirement is removed from the remaining route plan.
 
 HERMES is a read-only SPT 4.0.13 personal operations assistant.
 
-## Alpha11.3 — Loadout Value and Insurance
+## Alpha11.3.3 — Localized Raid Planner objectives
 
-Alpha11.3 adds a **Value & Insurance** view to the Loadout tab. HERMES values every carried inventory instance separately instead of hiding ammunition, magazines, attachments, armor plates, medical supplies, and provisions inside one assembly total.
+Raid Planner now resolves objective text from SPT's loaded English locale database using each quest condition ID before it attempts to synthesize a description from the raw condition type.
 
-### Value totals
+This replaces generic lines such as:
 
-HERMES now reports:
+```text
+Complete 1 progress toward location conditions.
+```
 
-- Exact condition-adjusted trader liquidation value
-- Market replacement value
-- Cheapest supported replacement value per item
-- Total carried replacement value
-- At-risk raid replacement value
-- Protected-slot replacement value
-- Insured replacement value
-- Uninsured insurable replacement value
-- Estimated insurance cost when a configured insurer coefficient can be resolved
+with the same player-facing objective text used by EFT/SPT, for example:
 
-### Shared replacement-price order
+```text
+Locate the machine gun on Ground Zero.
+Find the wine bottle in the store.
+Eliminate Scavs on Ground Zero.
+```
 
-Market replacement uses the same project-wide order:
+### Locale lookup behavior
 
-1. Active local cash flea offer
-2. Converted active flea barter offer
-3. SPT dynamic flea-market price
-4. Handbook fallback only when no market price exists
+HERMES checks:
 
-Available trader cash and barter purchases are also checked. The **best replacement** total chooses the cheaper supported trader or market source for each carried item.
+1. Explicit locale keys encoded on the condition
+2. The exact condition ID used by vanilla and custom quest locales
+3. Common condition-ID description/objective suffixes
+4. Nested CounterCreator condition locales
+5. Structured condition-data fallback only when no objective locale exists
 
-### Value categories
+All loaded English locale branches are merged, so VCQL and other custom quests can provide objective text through their own condition-ID locale entries.
 
-The Value & Insurance view separates:
+HTML/color tags and line breaks are cleaned before objective text is displayed in the overlay.
 
-- Weapons and attachments
-- Armor and plates
-- Ammunition and magazines
-- Medical supplies
-- Provisions
-- Other equipment
+## Alpha11.3 features retained
 
-Each category shows trader liquidation, market replacement, best replacement, at-risk value, and uninsured value.
-
-### Insurance and raid risk
-
-Insurance is evaluated per exact profile item instance.
-
-- Insured equipment is counted separately from uninsured equipment.
-- High-value uninsured items generate Loadout warnings.
-- Secure-container contents, melee/scabbard equipment, armbands, compass items, and special-slot items are shown as protected and excluded from estimated raid-loss value.
-- Pocket, rig, backpack, weapon, armor, and other normal carried contents remain part of raid risk.
-- Ammunition, medical supplies, and provisions are valued but marked non-insurable.
-
-The default high-value uninsured threshold is ₽100,000 per item instance.
-
-### Insurance-cost estimate
-
-HERMES attempts to read the lowest enabled insurer price coefficient from the current server trader data. When available, it provides an estimated insurance budget for currently uninsured insurable equipment. The UI clearly labels this as an estimate because loyalty levels and server mods can change the final checkout cost.
-
-When no supported insurer coefficient is found, insurance state and uninsured value still work; only the insurance-cost estimate is unavailable.
-
-### Alpha11 features retained
-
-- Exact equipped-loadout readiness
-- Weapon, magazine, and ammunition compatibility
-- Armor and insert checks
-- Medical and sustenance coverage
-- Active quest gear and carried raid-item checks
-- Map-based raid planner
-- Inferred route keys
-- Multi-map quest stages
-- QuestRaidItems support
+- Ground Zero mapping for `653e6760052C01c1c805532F`
+- Ask HERMES for exact stash and equipped PMC items
+- Loadout market replacement value
+- Condition-adjusted trader liquidation
+- At-risk and protected-slot value separation
+- Exact item-instance insurance state
+- High-value uninsured warnings
+- Value & Insurance Loadout view
 
 ## Build and deploy
 
-Open `HERMES.sln` in Visual Studio and choose:
+Open `HERMES.sln` and choose **Build → Build Solution**.
+
+The build deploys to `C:\RealSPT` and creates:
 
 ```text
-Build -> Build Solution
-```
-
-The build deploys:
-
-```text
-C:\RealSPT\SPT\user\mods\HERMES\Hermes.Server.dll
-C:\RealSPT\BepInEx\plugins\HERMES\Hermes.Client.dll
-```
-
-It also creates:
-
-```text
-HERMES-0.1.0-alpha11.3.1.zip
+HERMES-0.1.0-alpha11.3.5.zip
 ```

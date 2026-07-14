@@ -62,7 +62,7 @@ public sealed class HermesDynamicRouter(
                 (url, _, sessionId, _) =>
                 {
                     var profileItemId = GetTail(url, "/hermes/stash/instance/");
-                    var response = stashService.GetInventoryInstanceSelection(profileItemId, sessionId);
+                    var response = stashService.GetInstanceSelection(profileItemId, sessionId);
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(

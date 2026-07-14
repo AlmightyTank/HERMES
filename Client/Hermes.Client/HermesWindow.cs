@@ -185,7 +185,7 @@ internal sealed class HermesWindow
 
             _query = response.Item.Name;
             _results = [response.Item];
-            _status = $"Selected exact PMC copy: {response.Item.Name} — {response.InventoryLocation}.";
+            _status = $"Selected exact PMC copy: {response.Item.Name} • {response.InventoryLocation ?? "PMC inventory"}.";
             await SelectItemAsync(response.Item, response.Instance);
         }
         catch (Exception ex)
@@ -230,7 +230,7 @@ internal sealed class HermesWindow
             WindowId,
             _windowRect,
             DrawWindow,
-            "HERMES 0.1.0-alpha11.3.1 — Loadout Value & Insurance");
+            "HERMES 0.1.0-alpha11.3.5 — Loadout & Raid Planning");
     }
 
     private void DrawWindow(int windowId)
@@ -238,7 +238,7 @@ internal sealed class HermesWindow
         GUILayout.BeginVertical();
 
         GUILayout.Label("READ-ONLY PERSONAL OPERATIONS ASSISTANT");
-        GUILayout.Label("Right-click stash or equipped-character items and choose Ask HERMES. The Loadout Value view also has Ask HERMES buttons. Owned items use the exact PMC instance; trader and flea previews use the base item.");
+        GUILayout.Label("Right-click owned, equipped, trader, or flea items and choose Ask HERMES. PMC items use the exact profile instance; previews use the base item.");
         GUILayout.Space(6f);
         DrawTabs();
         GUILayout.Space(6f);
@@ -449,10 +449,10 @@ internal sealed class HermesWindow
         var selectedLabel = _selectedStashInstanceKey is null
             ? "Base item estimate"
             : _stashInstances.FirstOrDefault(instance => instance.InstanceKey == _selectedStashInstanceKey)?.Label
-              ?? "Selected PMC inventory copy";
+              ?? "Selected stash copy";
 
         if (GUILayout.Button(
-                $"{arrow}  PMC INVENTORY COPY FOR TRADER SALE — {selectedLabel}",
+                $"{arrow}  STASH COPY FOR TRADER SALE — {selectedLabel}",
                 GUILayout.Height(30f),
                 GUILayout.ExpandWidth(true)))
         {
@@ -461,13 +461,13 @@ internal sealed class HermesWindow
 
         if (_loadingInstancePrice)
         {
-            GUILayout.Label("Recalculating trader prices for the selected PMC inventory copy...");
+            GUILayout.Label("Recalculating trader prices for the selected stash copy...");
         }
 
         if (_stashInstancesExpanded)
         {
             GUILayout.Space(4f);
-            GUILayout.Label("Select the exact PMC inventory copy HERMES should value.");
+            GUILayout.Label("Select the exact stash copy HERMES should value.");
 
             GUI.enabled = !_loadingInstancePrice && !_loadingDetails;
             var baseSelected = _selectedStashInstanceKey is null;
@@ -577,7 +577,7 @@ internal sealed class HermesWindow
     {
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.Label(summary.UsesSelectedStashInstance
-            ? "BEST ESTIMATED SALE FOR SELECTED PMC INVENTORY COPY"
+            ? "BEST ESTIMATED SALE FOR SELECTED STASH COPY"
             : "BEST ESTIMATED SALE FOR BASE ITEM");
 
         var best = summary.BestSellOffer;
@@ -1539,7 +1539,7 @@ internal sealed class HermesWindow
                         ? "Preview analysis uses the full-condition base item. Matching stash copies are available in the selector below."
                         : "Preview analysis uses the full-condition base item. No matching stash copy is currently owned."
                     : _stashInstances.Count > 0
-                        ? "Current profile loaded. Trader sale prices use the selected PMC inventory copy; flea data remains a local market comparison."
+                        ? "Current profile loaded. Trader sale prices use the selected stash copy; flea data remains a local market comparison."
                         : "Current profile loaded. No matching stash copy was found, so trader sale prices use the base-item estimate.";
             }
         }
@@ -1567,7 +1567,7 @@ internal sealed class HermesWindow
         _loadingInstancePrice = true;
         _detailStatus = instanceKey is null
             ? "Restoring the full-condition base-item trader estimate..."
-            : "Calculating trader sale prices for the selected PMC inventory copy...";
+            : "Calculating trader sale prices for the selected stash copy...";
 
         try
         {
@@ -1581,7 +1581,7 @@ internal sealed class HermesWindow
 
             _traderSummary = response;
             _detailStatus = response.UsesSelectedStashInstance
-                ? "Trader sale prices now use the selected PMC inventory copy."
+                ? "Trader sale prices now use the selected stash copy."
                 : "Trader sale prices now use the full-condition base-item estimate.";
         }
         catch (Exception ex)
@@ -1590,7 +1590,7 @@ internal sealed class HermesWindow
             if (requestVersion == _instanceRequestVersion
                 && _selectedItem?.ItemKey == item.ItemKey)
             {
-                _detailStatus = HermesApiClient.DescribeFailure(ex, "Selected PMC inventory-copy pricing");
+                _detailStatus = HermesApiClient.DescribeFailure(ex, "Selected stash-copy pricing");
             }
         }
         finally
