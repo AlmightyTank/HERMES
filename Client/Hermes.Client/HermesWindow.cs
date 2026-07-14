@@ -223,7 +223,7 @@ internal sealed class HermesWindow
             WindowId,
             _windowRect,
             DrawWindow,
-            "HERMES 0.1.0-alpha10.2.1 — Stash Sale Intelligence");
+            "HERMES 0.1.0-alpha10.2.4 — Stash Sale Intelligence");
     }
 
     private void DrawWindow(int windowId)
@@ -643,8 +643,10 @@ internal sealed class HermesWindow
 
         var arrow = _marketExpanded ? "▼" : "▶";
         var headline = summary.MedianPrice.HasValue
-            ? $"Adjusted median ₽{summary.MedianPrice.Value:N0} • {summary.ValidCashOfferCount:N0} cash + {summary.ConvertedBarterOfferCount:N0} barter"
-            : "No comparable flea offers";
+            ? summary.MarketPriceFromActiveOffers
+                ? $"Adjusted median ₽{summary.MedianPrice.Value:N0} • {summary.ValidCashOfferCount:N0} cash + {summary.ConvertedBarterOfferCount:N0} barter"
+                : $"Market reference ₽{summary.MedianPrice.Value:N0} • {summary.MarketPriceSource}"
+            : "No flea or fallback market value";
 
         if (GUILayout.Button(
                 $"{arrow}  LOCAL FLEA MARKET — {headline}",
@@ -696,13 +698,13 @@ internal sealed class HermesWindow
     private static void DrawFleaStatistics(HermesMarketSummaryResponse summary)
     {
         GUILayout.BeginVertical(GUI.skin.box);
-        GUILayout.Label("CURRENT LOCAL OFFERS");
+        GUILayout.Label("CURRENT MARKET VALUE");
 
         if (!summary.LowestPrice.HasValue)
         {
-            GUILayout.Label("No valid comparable flea offer was found.");
+            GUILayout.Label("No active flea offer, converted barter, SPT dynamic price, or handbook fallback could be valued.");
         }
-        else
+        else if (summary.MarketPriceFromActiveOffers)
         {
             if (summary.LowestListedPrice.HasValue)
             {
@@ -713,6 +715,17 @@ internal sealed class HermesWindow
             GUILayout.Label($"Component-adjusted median: ₽{summary.MedianPrice.GetValueOrDefault():N0}");
             GUILayout.Label($"Component-adjusted average: ₽{summary.AveragePrice.GetValueOrDefault():N0}");
             GUILayout.Label($"Component-adjusted highest reasonable: ₽{summary.HighestReasonablePrice.GetValueOrDefault():N0}");
+            GUILayout.Label($"Source: {summary.MarketPriceSource}");
+        }
+        else
+        {
+            GUILayout.Label($"Market reference: ₽{summary.LowestPrice.Value:N0}");
+            GUILayout.Label($"Source: {summary.MarketPriceSource}");
+            if (summary.MarketPriceUsedHandbookFallback)
+            {
+                GUILayout.Label("Fallback note: No active cash offer, convertible barter offer, or SPT dynamic flea-market price was available.");
+            }
+            GUILayout.Label("No active comparable offer was available. This reference is not treated as a reliable listing recommendation.");
         }
 
         GUILayout.Label($"Valid cash offers found: {summary.ValidCashOfferCount:N0}");
@@ -725,7 +738,7 @@ internal sealed class HermesWindow
         GUILayout.Label($"Offers with installed attachments or armor inserts: {summary.OffersWithInstalledComponents:N0}");
 
         GUILayout.Label(
-            "Valuation note: HERMES evaluates cash and barter flea offers together. Barter requirements are converted using the lowest current local cash-flea price for each required item, with handbook value only when no cash offer exists. The root item's condition is evaluated separately; installed weapon attachments and armor inserts are condition-adjusted and subtracted to estimate a base-item-equivalent value. Stored container contents and loaded ammunition are ignored.");
+            "Valuation order: active local cash flea offer → converted flea barter offer → SPT dynamic flea-market price → handbook fallback. The same chain is used for barter requirements, installed weapon attachments, armor inserts, stash values, crafts, and hideout estimates. Stored container contents and loaded ammunition are ignored when decomposing an assembly.");
 
         if (summary.UsedLowConditionFallback)
         {
@@ -777,7 +790,9 @@ internal sealed class HermesWindow
         }
         else if (!summary.SuggestedListPrice.HasValue)
         {
-            GUILayout.Label("A suggested listing price is unavailable because no comparable flea offer was found.");
+            GUILayout.Label(summary.LowestPrice.HasValue
+                ? $"No active comparable offer was found. Reference only: ₽{summary.LowestPrice.Value:N0} ({summary.MarketPriceSource})."
+                : "A suggested listing price is unavailable because no market value could be resolved.");
         }
         else
         {
@@ -811,8 +826,10 @@ internal sealed class HermesWindow
             : "Best comparable flea assembly value: unavailable");
 
         GUILayout.Label(summary.LowestPrice.HasValue
-            ? $"Component-adjusted base-item value: ₽{summary.LowestPrice.Value:N0}"
-            : "Component-adjusted base-item value: unavailable");
+            ? summary.MarketPriceFromActiveOffers
+                ? $"Component-adjusted active-market value: ₽{summary.LowestPrice.Value:N0}"
+                : $"Fallback market reference: ₽{summary.LowestPrice.Value:N0} ({summary.MarketPriceSource})"
+            : "Component-adjusted market value: unavailable");
 
         GUILayout.Label(summary.CheapestAvailableTraderBuyPrice.HasValue
             ? $"Cheapest available cash trader: {summary.CheapestAvailableTraderName} — ₽{summary.CheapestAvailableTraderBuyPrice.Value:N0}"
@@ -970,7 +987,7 @@ internal sealed class HermesWindow
 
                         if (payment.UsedHandbookFallback)
                         {
-                            GUILayout.Label("Fallback note: One or more required items had no current local market offer, so HERMES used their handbook value.");
+                            GUILayout.Label("Fallback note: One or more required items had no active cash offer, convertible barter offer, or SPT dynamic flea-market price, so HERMES used handbook value.");
                         }
 
                         if (payment.Requirements.Count > 0)
@@ -987,15 +1004,9 @@ internal sealed class HermesWindow
                                     continue;
                                 }
 
-                                var sourceLabel = requirement.UsedHandbookFallback
-                                    ? "handbook fallback"
-                                    : requirement.EstimateSource.Contains("dynamic flea", StringComparison.OrdinalIgnoreCase)
-                                        ? "SPT dynamic flea price"
-                                        : requirement.EstimateSource.Contains("barter", StringComparison.OrdinalIgnoreCase)
-                                            ? "converted local flea barter"
-                                            : requirement.Currency is not null
-                                                ? "currency conversion"
-                                                : "local flea market";
+                                var sourceLabel = requirement.Currency is not null
+                                    ? "Trader currency conversion"
+                                    : requirement.EstimateSource;
 
                                 GUILayout.Label(
                                     $"• {FormatCount(requirement.Count)} × {requirement.Name} — " +

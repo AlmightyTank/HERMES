@@ -9,14 +9,16 @@ using SPTarkov.Server.Core.Services;
 namespace Hermes.Server.Services;
 
 /// <summary>
-/// Produces a current local-market unit value for an item template.
-/// Cash flea offers are used directly. Barter flea offers are recursively
-/// converted from their requirements. Handbook value is only a fallback.
+/// Produces one authoritative current-market unit value for an item template.
+/// Every flea-backed HERMES calculation uses the same fallback order:
+/// 1. active local cash flea offer;
+/// 2. converted active flea barter offer;
+/// 3. SPT dynamic flea-market price;
+/// 4. handbook value.
 /// </summary>
 [Injectable(InjectionType.Singleton)]
 public sealed class HermesMarketPriceService(
     RagfairOfferService ragfairOfferService,
-    DatabaseService databaseService,
     HandbookHelper handbookHelper,
     RagfairPriceService ragfairPriceService,
     ItemHelper itemHelper,
@@ -67,13 +69,126 @@ public sealed class HermesMarketPriceService(
 
         if (depth > MaximumBarterDepth || !recursionPath.Add(key))
         {
-            return GetMarketOrHandbookFallback(
-                templateId,
-                "SPT dynamic flea price (barter cycle or depth limit)",
-                "Handbook fallback (barter cycle or depth limit)");
+            return GetDynamicOrHandbookFallback(templateId);
         }
 
-        var candidates = new List<HermesMarketUnitValuation>();
+        var activeOffers = GetActiveLocalOffers(templateId, now);
+        var cashCandidates = new List<HermesMarketUnitValuation>();
+        var barterOffers = new List<(RagfairOffer Offer, Item Root, IReadOnlyList<OfferRequirement> Requirements)>();
+
+        foreach (var offer in activeOffers)
+        {
+            var rootItem = offer.Items!.FirstOrDefault(item => item.Id == offer.Root) ?? offer.Items[0];
+            var requirements = offer.Requirements?.ToList() ?? [];
+            if (requirements.Count == 0)
+            {
+                continue;
+            }
+
+            if (requirements.Count == 1 && IsSupportedCashCurrency(requirements[0].TemplateId))
+            {
+                if (!TryConvertOffer(
+                        offer,
+                        requirements,
+                        now,
+                        cache,
+                        recursionPath,
+                        cacheGeneration,
+                        depth,
+                        out var cashValue))
+                {
+                    continue;
+                }
+
+                var adjustment = AdjustForInstalledComponents(
+                    rootItem,
+                    offer.Items,
+                    cashValue.UnitValue,
+                    now,
+                    cache,
+                    recursionPath,
+                    cacheGeneration,
+                    depth);
+                if (adjustment.AdjustedUnitValue <= 0L)
+                {
+                    continue;
+                }
+
+                cashCandidates.Add(cashValue with
+                {
+                    UnitValue = adjustment.AdjustedUnitValue,
+                    UsedHandbookFallback = cashValue.UsedHandbookFallback || adjustment.UsedHandbookFallback
+                });
+            }
+            else
+            {
+                barterOffers.Add((offer, rootItem, requirements));
+            }
+        }
+
+        HermesMarketUnitValuation result;
+        if (cashCandidates.Count > 0)
+        {
+            result = cashCandidates
+                .OrderBy(candidate => candidate.UnitValue)
+                .ThenBy(candidate => candidate.UsedHandbookFallback)
+                .First();
+        }
+        else
+        {
+            var barterCandidates = new List<HermesMarketUnitValuation>();
+            foreach (var barter in barterOffers)
+            {
+                if (!TryConvertOffer(
+                        barter.Offer,
+                        barter.Requirements,
+                        now,
+                        cache,
+                        recursionPath,
+                        cacheGeneration,
+                        depth,
+                        out var barterValue))
+                {
+                    continue;
+                }
+
+                var adjustment = AdjustForInstalledComponents(
+                    barter.Root,
+                    barter.Offer.Items!,
+                    barterValue.UnitValue,
+                    now,
+                    cache,
+                    recursionPath,
+                    cacheGeneration,
+                    depth);
+                if (adjustment.AdjustedUnitValue <= 0L)
+                {
+                    continue;
+                }
+
+                barterCandidates.Add(barterValue with
+                {
+                    UnitValue = adjustment.AdjustedUnitValue,
+                    UsedHandbookFallback = barterValue.UsedHandbookFallback || adjustment.UsedHandbookFallback
+                });
+            }
+
+            result = barterCandidates.Count > 0
+                ? barterCandidates
+                    .OrderBy(candidate => candidate.UnitValue)
+                    .ThenBy(candidate => candidate.UsedHandbookFallback)
+                    .First()
+                : GetDynamicOrHandbookFallback(templateId);
+        }
+
+        recursionPath.Remove(key);
+        cache[key] = result;
+        cacheService.SetMarketUnitValue(templateId, result, cacheGeneration);
+        return result;
+    }
+
+    private IReadOnlyList<RagfairOffer> GetActiveLocalOffers(MongoId templateId, long now)
+    {
         IEnumerable<RagfairOffer> offers;
         try
         {
@@ -81,77 +196,22 @@ public sealed class HermesMarketPriceService(
         }
         catch
         {
-            offers = [];
+            return [];
         }
 
-        foreach (var offer in offers)
-        {
-            if (IsTraderOfferSafe(offer)
-                || offer.Locked == true
-                || offer.Quantity <= 0
-                || offer.EndTime is null
-                || offer.EndTime <= now
-                || offer.Items is null
-                || offer.Items.Count == 0)
+        return offers
+            .Where(offer => !IsTraderOfferSafe(offer)
+                            && offer.Locked != true
+                            && offer.Quantity > 0
+                            && offer.EndTime.HasValue
+                            && offer.EndTime.Value > now
+                            && offer.Items is { Count: > 0 })
+            .Where(offer =>
             {
-                continue;
-            }
-
-            var rootItem = offer.Items.FirstOrDefault(item => item.Id == offer.Root) ?? offer.Items[0];
-            if (rootItem.Template != templateId)
-            {
-                continue;
-            }
-
-            var requirements = offer.Requirements?.ToList() ?? [];
-            if (requirements.Count == 0)
-            {
-                continue;
-            }
-
-            if (!TryConvertOffer(
-                    offer,
-                    requirements,
-                    now,
-                    cache,
-                    recursionPath,
-                    cacheGeneration,
-                    depth,
-                    out var converted))
-            {
-                continue;
-            }
-
-            var adjusted = AdjustForInstalledComponents(rootItem, offer.Items, converted.UnitValue);
-            if (adjusted <= 0L)
-            {
-                continue;
-            }
-
-            candidates.Add(converted with { UnitValue = adjusted });
-        }
-
-        recursionPath.Remove(key);
-
-        HermesMarketUnitValuation result;
-        if (candidates.Count > 0)
-        {
-            result = candidates
-                .OrderBy(candidate => candidate.UnitValue)
-                .ThenBy(candidate => candidate.UsedHandbookFallback)
-                .First();
-        }
-        else
-        {
-            result = GetMarketOrHandbookFallback(
-                templateId,
-                "SPT dynamic flea price (no active local flea offer)",
-                "Handbook fallback (no active or dynamic flea price)");
-        }
-
-        cache[key] = result;
-        cacheService.SetMarketUnitValue(templateId, result, cacheGeneration);
-        return result;
+                var root = offer.Items!.FirstOrDefault(item => item.Id == offer.Root) ?? offer.Items[0];
+                return root.Template == templateId;
+            })
+            .ToList();
     }
 
     private bool TryConvertOffer(
@@ -170,7 +230,7 @@ public sealed class HermesMarketPriceService(
             var unitValue = GetRoubleUnitPrice(offer, requirements[0]);
             valuation = new HermesMarketUnitValuation(
                 unitValue,
-                "Current local flea cash offer",
+                "Active local flea offer",
                 false,
                 false);
             return unitValue > 0L;
@@ -178,7 +238,7 @@ public sealed class HermesMarketPriceService(
 
         double totalValue = 0d;
         var usedHandbookFallback = false;
-        var usedConvertedBarter = false;
+        var usedDynamicPrice = false;
 
         foreach (var requirement in requirements)
         {
@@ -217,7 +277,9 @@ public sealed class HermesMarketPriceService(
 
             totalValue += requirementValue.UnitValue * count;
             usedHandbookFallback |= requirementValue.UsedHandbookFallback;
-            usedConvertedBarter = true;
+            usedDynamicPrice |= requirementValue.Source.Contains(
+                "dynamic flea",
+                StringComparison.OrdinalIgnoreCase);
         }
 
         if (offer.SellInOnePiece == true && offer.Quantity > 1)
@@ -227,14 +289,15 @@ public sealed class HermesMarketPriceService(
 
         var rounded = Math.Max(0L, Convert.ToInt64(Math.Round(totalValue)));
         var source = usedHandbookFallback
-            ? "Converted local flea barter with handbook fallback"
-            : "Converted local flea barter";
-
+            ? "Converted flea barter offer with handbook fallback"
+            : usedDynamicPrice
+                ? "Converted flea barter offer using SPT dynamic flea-market price"
+                : "Converted flea barter offer";
         valuation = new HermesMarketUnitValuation(
             rounded,
             source,
             usedHandbookFallback,
-            usedConvertedBarter);
+            true);
         return rounded > 0L;
     }
 
@@ -260,10 +323,15 @@ public sealed class HermesMarketPriceService(
         return Math.Max(0L, Convert.ToInt64(Math.Round(roubles)));
     }
 
-    private long AdjustForInstalledComponents(
+    private ComponentAdjustment AdjustForInstalledComponents(
         Item rootItem,
         IReadOnlyCollection<Item> offerItems,
-        long listedUnitValue)
+        long listedUnitValue,
+        long now,
+        IDictionary<string, HermesMarketUnitValuation> cache,
+        ISet<string> recursionPath,
+        long cacheGeneration,
+        int depth)
     {
         var childrenByParent = offerItems
             .Where(item => !string.IsNullOrWhiteSpace(item.ParentId))
@@ -277,6 +345,7 @@ public sealed class HermesMarketPriceService(
             rootItem.Id.ToString()
         };
         double installedValue = 0d;
+        var usedHandbookFallback = false;
 
         while (queue.Count > 0)
         {
@@ -295,8 +364,14 @@ public sealed class HermesMarketPriceService(
 
                 queue.Enqueue(child);
 
-                var referencePrice = catalogService.GetReferencePrice(child.Template) ?? 0L;
-                if (referencePrice <= 0L)
+                var componentValue = GetBestUnitValueInternal(
+                    child.Template,
+                    now,
+                    cache,
+                    recursionPath,
+                    cacheGeneration,
+                    depth + 1);
+                if (componentValue.UnitValue <= 0L)
                 {
                     continue;
                 }
@@ -312,18 +387,18 @@ public sealed class HermesMarketPriceService(
                     quality = 1d;
                 }
 
-                installedValue += referencePrice * quantity * quality;
+                installedValue += componentValue.UnitValue * quantity * quality;
+                usedHandbookFallback |= componentValue.UsedHandbookFallback;
             }
         }
 
         var roundedInstalledValue = Math.Max(0L, Convert.ToInt64(Math.Floor(installedValue)));
-        return Math.Max(1L, listedUnitValue - roundedInstalledValue);
+        return new ComponentAdjustment(
+            Math.Max(1L, listedUnitValue - roundedInstalledValue),
+            usedHandbookFallback);
     }
 
-    private HermesMarketUnitValuation GetMarketOrHandbookFallback(
-        MongoId templateId,
-        string dynamicMarketSource,
-        string handbookSource)
+    private HermesMarketUnitValuation GetDynamicOrHandbookFallback(MongoId templateId)
     {
         double? dynamicPrice;
         try
@@ -339,22 +414,17 @@ public sealed class HermesMarketPriceService(
         {
             return new HermesMarketUnitValuation(
                 Math.Max(1L, Convert.ToInt64(Math.Round(dynamicPrice.Value))),
-                dynamicMarketSource,
+                "SPT dynamic flea-market price",
                 false,
                 false);
         }
 
-        return GetHandbookFallback(templateId, handbookSource);
-    }
-
-    private HermesMarketUnitValuation GetHandbookFallback(MongoId templateId, string source)
-    {
         var handbookValue = catalogService.GetReferencePrice(templateId)
                             ?? Math.Max(0L, Convert.ToInt64(Math.Round(
                                 handbookHelper.GetTemplatePrice(templateId))));
         return new HermesMarketUnitValuation(
             handbookValue,
-            source,
+            "Handbook fallback",
             handbookValue > 0L,
             false);
     }
@@ -390,6 +460,10 @@ public sealed class HermesMarketPriceService(
     {
         return templateId == RoublesTpl || templateId == DollarsTpl || templateId == EurosTpl;
     }
+
+    private sealed record ComponentAdjustment(
+        long AdjustedUnitValue,
+        bool UsedHandbookFallback);
 }
 
 public sealed record HermesMarketUnitValuation(

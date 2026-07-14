@@ -365,8 +365,6 @@ public sealed class HermesTraderService(
             var allCurrency = true;
             var estimateAvailable = true;
             var usedHandbookFallback = false;
-            var usedMarketPrice = false;
-            var usedConvertedBarterPrice = false;
 
             foreach (var requirement in scheme)
             {
@@ -432,8 +430,6 @@ public sealed class HermesTraderService(
                 {
                     estimatedRoubles += marketValue.UnitValue * count;
                     usedHandbookFallback |= marketValue.UsedHandbookFallback;
-                    usedConvertedBarterPrice |= marketValue.IsConvertedBarter;
-                    usedMarketPrice |= !marketValue.UsedHandbookFallback || marketValue.IsConvertedBarter;
                 }
 
                 requirements.Add(new HermesPaymentRequirement(
@@ -463,17 +459,21 @@ public sealed class HermesTraderService(
             {
                 estimateSource = "Market estimate unavailable for one or more requirements";
             }
-            else if (usedHandbookFallback)
-            {
-                estimateSource = "Current local flea market, with handbook fallback";
-            }
-            else if (usedMarketPrice || usedConvertedBarterPrice)
-            {
-                estimateSource = "Current local flea market";
-            }
             else
             {
-                estimateSource = "Current local flea market, with handbook fallback";
+                var marketSources = requirements
+                    .Where(requirement => requirement.Currency is null && requirement.EstimateAvailable)
+                    .Select(requirement => requirement.EstimateSource)
+                    .Where(source => !string.IsNullOrWhiteSpace(source))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                estimateSource = marketSources.Count switch
+                {
+                    0 => usedHandbookFallback ? "Handbook fallback" : "Market-value chain",
+                    1 => marketSources[0],
+                    _ => "Mixed market sources — " + string.Join(" + ", marketSources)
+                };
             }
 
             output.Add(new HermesPaymentOption(

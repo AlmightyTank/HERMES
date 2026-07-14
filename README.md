@@ -1,70 +1,82 @@
-# HERMES 0.1.0-alpha10.2.1
+# HERMES 0.1.0-alpha10.2.4
 
 HERMES is a read-only SPT 4.0.13 personal operations assistant.
 
-Alpha10.2.1 fixes trader-barter requirement valuation so missing live offers use SPT's dynamic flea-market price before handbook fallback. It retains the Alpha10.2 stash intelligence features.
+Alpha10.2.4 adds live hideout-station availability filtering and keeps the Alpha10.2.3 quest-lock fix.
 
-## Alpha10.2.1 fix
+## Hideout station availability
 
-- Trader barter requirements now use this valuation order:
-  1. Active local flea cash or converted barter offer
-  2. SPT dynamic flea price from `templates/prices`
-  3. Handbook value only when neither market source is available
-- The per-requirement market calculation identifies dynamic values as `SPT dynamic flea price`.
-- The handbook fallback note appears only when both live and dynamic market pricing are unavailable.
-- The same corrected market valuation flows into converted flea barters, hideout costs, craft costs, and stash sale analysis.
+HERMES now hides recipes when their station is not currently available to the active profile/server state. This applies to:
 
-## Alpha10.2 additions
+- Crafts tab recipe lists
+- Craft detail requests
+- Item **Produced By** entries
+- Item **Used As an Ingredient** entries
+- Hideout area summaries and details
 
-- Exact-instance flea listing estimates for stash items
-  - Current local flea comparisons
-  - Converted barter offers
-  - Stack and resource condition adjustment
-  - Installed attachment and armor-insert market values
-  - Estimated listing fee and net proceeds
-- Conservative best sale destination
-  - Flea is selected automatically only with at least three comparable offers
-  - Otherwise HERMES retains the best supported trader or marks the item for review
-- Complete-stash estimates
-  - Best trader liquidation
-  - Estimated flea net
-  - Best reliable destination selected per item
-- Sellable-quantity estimates
-  - Trader alternative
-  - Flea net alternative
-  - Best-destination value after quest/hideout reservations
+The Christmas Tree station (`ChristmasIllumination`) is shown only while SPT reports the Christmas event active. HERMES also honors server mods that enable the Christmas hideout through the global event list. Recipes remain hidden when the event is inactive even though their static database definitions are still loaded.
+
+Standard stations remain visible at level 0 so HERMES can still show future crafts and station requirements; the station only needs to exist in the player profile and be enabled in the hideout database.
+
+## Quest-locked craft detection
+
+HERMES now builds a reverse index from quest completion rewards to hideout production recipes. When a locked recipe is unlocked by a quest, the item usage and craft panels show the exact localized quest name:
+
+```text
+Locked by quest: "<quest name>"
+```
+
+The generic `Locked by progression` label is now reserved for locked recipes that have no identifiable quest unlock in the loaded database.
+
+Completed quest unlocks are also accepted even if the profile's unlocked-recipe list has not refreshed yet.
+
+## Unified market-price order
+
+Every flea-price lookup now uses this exact fallback chain:
+
+1. Active local cash flea offer
+2. Converted active flea barter offer
+3. SPT dynamic flea-market price
+4. Handbook fallback only when no market price exists
+
+This order is now used by:
+
+- Main item flea analysis
+- Trader barter requirement estimates
+- Flea barter conversion
+- Weapon attachment and armor-insert decomposition
+- Exact stash flea references
+- Stash sale comparisons
+- Hideout material estimates
+- Detailed craft acquisition and opportunity-value calculations
+
+Explicit handbook statistics, such as the separate stash handbook-reference total and fast craft-list reference estimates, remain handbook-only by design. They are not flea-price lookups.
+
+## Source and availability behavior
+
+- Active cash offers are preferred over converted barter offers.
+- Converted barter requirements recursively use the same four-step chain.
+- SPT dynamic and handbook values are marked as reference estimates, not active purchase sources.
+- A fallback reference is not used as a reliable flea-listing recommendation.
+- Trader and craft breakdowns display the actual source used for each requirement.
+- Installed components use market values before handbook fallback when calculating base-item-equivalent flea prices.
+
+## Alpha10.2 stash intelligence
+
+- Exact-instance flea listing estimates
+- Trader-versus-flea sale destination
+- Quest and hideout reservations
+- Safe-to-sell and keep quantities
 - Duplicate review
-  - Exact-template groups
-  - Owned quantity and instance count
-  - Explicit quest/hideout reserve
-  - One-instance advisory baseline when no reserve exists
-  - Potential excess quantity and sale value
-- Damaged/depleted report
-  - Weapons below 70% durability
-  - Armor and generic repairables below 50%
-  - Medical, consumable, fuel/resource, and repair-kit resources below 20%
-  - Keys with one use remaining
-- New Stash subviews
-  - Overview
-  - Safe to Sell
-  - Keep
-  - Review
-  - Duplicates
-  - Damaged
+- Damaged and depleted item reporting
+- Complete-stash trader, flea, and best-destination estimates
 
 ## Reliability
 
-- Normal HERMES requests retain the 12-second timeout.
-- The full stash-analysis request uses a 30-second timeout because the first scan may warm many unique market-price entries.
-- Market and stash snapshots continue to use Alpha9 cache generation and stale-response protections.
-
-## Important behavior
-
-HERMES remains read-only. It does not sell items, create flea listings, move inventory, repair equipment, or alter the active profile.
-
-Flea estimates are advisory. Listing fees are scaled from SPT's fee calculation for the base item, and built or filled items remain manual-review items even when a market value can be estimated.
-
-Duplicate reporting does not create a new hard reservation. Quest and hideout reservations remain authoritative; the one-instance baseline is shown only inside the advisory duplicate view.
+- Normal HERMES requests use a 12-second timeout.
+- Full stash analysis uses a 30-second timeout.
+- Shared market values use Alpha9 cache generation and refresh protection.
+- Press **Refresh current data** after a trader restock or major flea change.
 
 ## Build and deploy
 
@@ -84,7 +96,7 @@ C:\RealSPT\BepInEx\plugins\HERMES\Hermes.Client.dll
 It also creates:
 
 ```text
-HERMES-0.1.0-alpha10.2.1.zip
+HERMES-0.1.0-alpha10.2.4.zip
 ```
 
 Change `SptRoot` in the client project if the development installation moves.

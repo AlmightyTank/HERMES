@@ -168,7 +168,16 @@ public sealed class HermesMarketService(
                 quality = 1d;
             }
 
-            var assembly = AnalyzeOfferAssembly(rootItem, offer.Items, unitPrice);
+            var assembly = AnalyzeOfferAssembly(
+                rootItem,
+                offer.Items,
+                unitPrice,
+                requirementPriceCache);
+            var offerUsedHandbookFallback =
+                offerValue.UsedHandbookFallback || assembly.UsedHandbookFallback;
+            var priceSource = assembly.UsedHandbookFallback && !offerValue.UsedHandbookFallback
+                ? offerValue.PriceSource + " with handbook fallback for installed components"
+                : offerValue.PriceSource;
 
             candidates.Add(new FleaCandidate(
                 rootItem,
@@ -181,21 +190,29 @@ public sealed class HermesMarketService(
                 quality,
                 Math.Max(0L, offer.EndTime.Value - now),
                 offerValue.IsBarter,
-                offerValue.PriceSource,
+                priceSource,
                 offerValue.RequirementCount,
-                offerValue.UsedHandbookFallback));
+                offerUsedHandbookFallback));
         }
 
-        var highCondition = candidates
+        // The shared market-price policy is a true source fallback chain.
+        // Active cash offers are compared first. Converted barter offers become
+        // the active comparison pool only when no cash offer could be valued.
+        var sourceCandidates = candidates.Any(candidate => !candidate.IsBarter)
+            ? candidates.Where(candidate => !candidate.IsBarter).ToList()
+            : candidates.Where(candidate => candidate.IsBarter).ToList();
+        var highCondition = sourceCandidates
             .Where(candidate => candidate.Quality >= MinimumComparableCondition)
             .OrderBy(candidate => candidate.ComponentAdjustedUnitPrice)
             .ToList();
 
-        var usedLowConditionFallback = highCondition.Count == 0 && candidates.Count > 0;
+        var usedLowConditionFallback = highCondition.Count == 0 && sourceCandidates.Count > 0;
         var comparisonPool = usedLowConditionFallback
-            ? candidates.OrderBy(candidate => candidate.ComponentAdjustedUnitPrice).ToList()
+            ? sourceCandidates.OrderBy(candidate => candidate.ComponentAdjustedUnitPrice).ToList()
             : highCondition;
-        var ignoredLowCondition = usedLowConditionFallback ? 0 : candidates.Count - highCondition.Count;
+        var ignoredLowCondition = usedLowConditionFallback
+            ? 0
+            : sourceCandidates.Count - highCondition.Count;
 
         var withoutOutliers = RemoveHighOutliers(comparisonPool, out var ignoredOutliers);
         var prices = withoutOutliers
@@ -208,16 +225,32 @@ public sealed class HermesMarketService(
             .FirstOrDefault();
         var offersWithInstalledComponents = candidates.Count(candidate =>
             candidate.WeaponAttachmentCount > 0 || candidate.ArmorInsertCount > 0);
+        var marketPriceFromActiveOffers = bestComparableOffer is not null;
+        HermesMarketUnitValuation? fallbackMarketValue = marketPriceFromActiveOffers
+            ? null
+            : marketPriceService.GetBestUnitValue(item.TemplateId, requirementPriceCache);
+        var marketPriceSource = bestComparableOffer?.PriceSource
+                                ?? fallbackMarketValue?.Source
+                                ?? "Unavailable";
+        var marketPriceUsedHandbookFallback = bestComparableOffer?.UsedHandbookFallback
+                                              ?? fallbackMarketValue?.UsedHandbookFallback
+                                              ?? false;
         var lowestOfferIsBarter = bestComparableOffer?.IsBarter ?? false;
 
-        long? lowestPrice = prices.Count > 0 ? prices[0] : null;
+        long? lowestPrice = prices.Count > 0
+            ? prices[0]
+            : fallbackMarketValue is { UnitValue: > 0 }
+                ? fallbackMarketValue.UnitValue
+                : null;
         long? lowestListedPrice = bestComparableOffer?.ListedUnitPrice;
-        long? medianPrice = prices.Count > 0 ? CalculateMedian(prices) : null;
+        long? medianPrice = prices.Count > 0
+            ? CalculateMedian(prices)
+            : lowestPrice;
         long? averagePrice = prices.Count > 0
             ? Convert.ToInt64(Math.Round(prices.Average(price => (double)price)))
-            : null;
-        long? highestReasonablePrice = prices.Count > 0 ? prices[^1] : null;
-        long? suggestedListPrice = lowestPrice.HasValue
+            : lowestPrice;
+        long? highestReasonablePrice = prices.Count > 0 ? prices[^1] : lowestPrice;
+        long? suggestedListPrice = marketPriceFromActiveOffers && lowestPrice.HasValue
             ? Math.Max(1L, lowestPrice.Value - SuggestedUndercutAmount)
             : null;
 
@@ -247,6 +280,8 @@ public sealed class HermesMarketService(
             lowestPrice,
             lowestListedPrice,
             lowestOfferIsBarter,
+            marketPriceSource,
+            marketPriceFromActiveOffers,
             cheapestTraderBuy?.Price,
             cheapestTraderBuy?.TraderName,
             prices.Count);
@@ -299,6 +334,9 @@ public sealed class HermesMarketService(
             ignoredOutliers,
             usedLowConditionFallback,
             offersWithInstalledComponents,
+            marketPriceSource,
+            marketPriceFromActiveOffers,
+            marketPriceUsedHandbookFallback,
             lowestListedPrice,
             lowestOfferIsBarter,
             lowestPrice,
@@ -359,8 +397,21 @@ public sealed class HermesMarketService(
             || !summary.EstimatedListingFee.HasValue
             || summary.ComparableOfferCount <= 0)
         {
+            if (summary.LowestPrice is > 0)
+            {
+                return new HermesStashFleaValuation(
+                    true,
+                    false,
+                    Math.Max(0, summary.ComparableOfferCount),
+                    summary.LowestPrice,
+                    null,
+                    null,
+                    summary.MarketPriceSource,
+                    $"No active comparable offer was available for a fee-backed estimate. {summary.MarketPriceSource} is shown as an informational market reference only.");
+            }
+
             return UnavailableStashEstimate(
-                "HERMES could not produce a fee-backed flea estimate for this item.",
+                "HERMES could not resolve an active flea offer, converted barter, SPT dynamic price, or handbook fallback for this item.",
                 summary.ComparableOfferCount);
         }
 
@@ -411,9 +462,9 @@ public sealed class HermesMarketService(
         var reliable = summary.ComparableOfferCount >= MinimumOffersForRecommendation;
         var source = pricedInstalledComponents > 0
             ? usedHandbookFallback
-                ? "Current local flea market with installed-component values and handbook fallback"
-                : "Current local flea market with installed-component values"
-            : "Current local flea market";
+                ? summary.MarketPriceSource + " with installed-component handbook fallback"
+                : summary.MarketPriceSource + " with installed-component market values"
+            : summary.MarketPriceSource;
 
         return new HermesStashFleaValuation(
             true,
@@ -456,7 +507,7 @@ public sealed class HermesMarketService(
             valuation = new OfferValue(
                 cashValue,
                 false,
-                "Cash",
+                "Active local flea offer",
                 1,
                 false);
             return cashValue > 0;
@@ -464,6 +515,7 @@ public sealed class HermesMarketService(
 
         double totalRequirementValue = 0d;
         var usedHandbookFallback = false;
+        var usedDynamicPrice = false;
         foreach (var requirement in requirements)
         {
             var count = requirement.Count ?? 0d;
@@ -497,6 +549,9 @@ public sealed class HermesMarketService(
 
             totalRequirementValue += requirementValue.UnitValue * count;
             usedHandbookFallback |= requirementValue.UsedHandbookFallback;
+            usedDynamicPrice |= requirementValue.Source.Contains(
+                "dynamic flea",
+                StringComparison.OrdinalIgnoreCase);
         }
 
         if (offer.SellInOnePiece == true && offer.Quantity > 1)
@@ -506,8 +561,10 @@ public sealed class HermesMarketService(
 
         var roundedValue = Math.Max(0L, Convert.ToInt64(Math.Round(totalRequirementValue)));
         var source = usedHandbookFallback
-            ? "Barter converted from local flea prices with handbook fallback"
-            : "Barter converted from local flea prices";
+            ? "Converted flea barter offer with handbook fallback"
+            : usedDynamicPrice
+                ? "Converted flea barter offer using SPT dynamic flea-market price"
+                : "Converted flea barter offer";
 
         valuation = new OfferValue(
             roundedValue,
@@ -543,7 +600,8 @@ public sealed class HermesMarketService(
     private OfferAssemblyValuation AnalyzeOfferAssembly(
         Item rootItem,
         IReadOnlyCollection<Item> offerItems,
-        long listedUnitPrice)
+        long listedUnitPrice,
+        IDictionary<string, HermesMarketUnitValuation> componentPriceCache)
     {
         var childrenByParent = offerItems
             .Where(item => !string.IsNullOrWhiteSpace(item.ParentId))
@@ -556,6 +614,7 @@ public sealed class HermesMarketService(
         double installedValue = 0d;
         var weaponAttachmentCount = 0;
         var armorInsertCount = 0;
+        var usedHandbookFallback = false;
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             rootItem.Id.ToString()
@@ -588,8 +647,10 @@ public sealed class HermesMarketService(
                     weaponAttachmentCount++;
                 }
 
-                var referencePrice = catalogService.GetReferencePrice(child.Template) ?? 0L;
-                if (referencePrice <= 0)
+                var componentValue = marketPriceService.GetBestUnitValue(
+                    child.Template,
+                    componentPriceCache);
+                if (componentValue.UnitValue <= 0L)
                 {
                     continue;
                 }
@@ -605,7 +666,8 @@ public sealed class HermesMarketService(
                     quality = 1d;
                 }
 
-                installedValue += referencePrice * quantity * quality;
+                installedValue += componentValue.UnitValue * quantity * quality;
+                usedHandbookFallback |= componentValue.UsedHandbookFallback;
             }
         }
 
@@ -617,7 +679,8 @@ public sealed class HermesMarketService(
             adjustedUnitPrice,
             roundedInstalledValue,
             weaponAttachmentCount,
-            armorInsertCount);
+            armorInsertCount,
+            usedHandbookFallback);
     }
 
     private bool IsArmorInsert(Item item)
@@ -703,6 +766,8 @@ public sealed class HermesMarketService(
         long? componentAdjustedFleaPrice,
         long? listedFleaPrice,
         bool lowestOfferIsBarter,
+        string marketPriceSource,
+        bool marketPriceFromActiveOffers,
         long? traderPrice,
         string? traderName,
         int comparableOfferCount)
@@ -715,8 +780,22 @@ public sealed class HermesMarketService(
         if (!componentAdjustedFleaPrice.HasValue)
         {
             return traderPrice.HasValue
-                ? $"Buy from {traderName}; no valid local flea offer could be valued."
+                ? $"Buy from {traderName}; no flea or fallback market value could be resolved."
                 : "No current purchase source could be valued.";
+        }
+
+        if (!marketPriceFromActiveOffers)
+        {
+            var marketText = $"Market reference: ₽{componentAdjustedFleaPrice.Value:N0} ({marketPriceSource}).";
+            if (!traderPrice.HasValue)
+            {
+                return marketText + " No currently available cash trader offer was found.";
+            }
+
+            var difference = Math.Abs(traderPrice.Value - componentAdjustedFleaPrice.Value);
+            return traderPrice.Value <= componentAdjustedFleaPrice.Value
+                ? $"{marketText} Buy from {traderName}; the trader is about ₽{difference:N0} cheaper or equal."
+                : $"{marketText} It is about ₽{difference:N0} below {traderName}, but it is a fallback reference rather than an active listing.";
         }
 
         var offerKind = lowestOfferIsBarter ? "converted barter offer" : "cash offer";
@@ -870,6 +949,9 @@ public sealed class HermesMarketService(
             0,
             false,
             0,
+            string.Empty,
+            false,
+            false,
             null,
             false,
             null,
@@ -915,7 +997,8 @@ public sealed class HermesMarketService(
         long ComponentAdjustedUnitPrice,
         long InstalledComponentValue,
         int WeaponAttachmentCount,
-        int ArmorInsertCount);
+        int ArmorInsertCount,
+        bool UsedHandbookFallback);
 
     private sealed record CashTraderOffer(string TraderName, long Price);
 }

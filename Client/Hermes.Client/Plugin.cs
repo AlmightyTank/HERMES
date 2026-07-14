@@ -32,7 +32,7 @@ public sealed class Plugin : BaseUnityPlugin
             Logger.LogError($"Ask HERMES context action could not be enabled: {ex}");
         }
 
-        Logger.LogInfo("HERMES 0.1.0-alpha10.2.1 loaded. Press F8 in the main menu.");
+        Logger.LogInfo("HERMES 0.1.0-alpha10.2.4 loaded. Press F8 in the main menu.");
     }
 
     internal void OpenForStashItem(string profileItemId)

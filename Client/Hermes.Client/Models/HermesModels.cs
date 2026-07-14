@@ -194,6 +194,9 @@ public sealed class HermesMarketSummaryResponse
     public int IgnoredOutlierCount { get; set; }
     public bool UsedLowConditionFallback { get; set; }
     public int OffersWithInstalledComponents { get; set; }
+    public string MarketPriceSource { get; set; } = string.Empty;
+    public bool MarketPriceFromActiveOffers { get; set; }
+    public bool MarketPriceUsedHandbookFallback { get; set; }
     public long? LowestListedPrice { get; set; }
     public bool LowestOfferIsBarter { get; set; }
     public long? LowestPrice { get; set; }

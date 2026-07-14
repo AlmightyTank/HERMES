@@ -34,7 +34,9 @@ public sealed class HermesHideoutService(
     JsonUtil jsonUtil,
     HermesCatalogService catalogService,
     HermesTraderService traderService,
-    HermesMarketService marketService)
+    HermesMarketService marketService,
+    HermesMarketPriceService marketPriceService,
+    SeasonalEventService seasonalEventService)
 {
     private readonly object _sync = new();
     private Dictionary<string, AreaDefinition>? _areasByKey;
@@ -64,7 +66,7 @@ public sealed class HermesHideoutService(
 
         var areaSummaries = _areasByType!
             .Values
-            .Where(area => area.Enabled)
+            .Where(area => IsAreaAvailable(area, snapshot))
             .Select(area => BuildAreaEvaluation(area, snapshot, false, sessionId).Summary)
             .OrderBy(area => AreaStatusRank(area.Status))
             .ThenBy(area => area.Name, StringComparer.OrdinalIgnoreCase)
@@ -111,6 +113,17 @@ public sealed class HermesHideoutService(
                 0);
         }
 
+        if (!IsAreaAvailable(area, snapshot))
+        {
+            return new HermesHideoutAreaDetailResponse(
+                false,
+                "The selected hideout area is not currently available.",
+                null,
+                0,
+                [],
+                0);
+        }
+
         var evaluation = BuildAreaEvaluation(area, snapshot, true, sessionId);
         return new HermesHideoutAreaDetailResponse(
             true,
@@ -133,6 +146,7 @@ public sealed class HermesHideoutService(
         var valuationCache = new Dictionary<string, ItemValuation>(StringComparer.OrdinalIgnoreCase);
         var crafts = _craftsByKey!
             .Values
+            .Where(craft => IsCraftStationAvailable(craft, snapshot))
             .Select(craft => BuildCraftEvaluation(craft, snapshot, sessionId, valuationCache, includeLivePricing: false))
             .OrderByDescending(craft => craft.CanStartNow)
             .ThenByDescending(craft => craft.EstimatedEconomicProfitPerHour)
@@ -164,6 +178,18 @@ public sealed class HermesHideoutService(
             return new HermesCraftDetailResponse(
                 false,
                 "HERMES could not read the active PMC hideout profile.",
+                null,
+                [],
+                null,
+                false,
+                "Inventory-aware values");
+        }
+
+        if (!IsCraftStationAvailable(craft, snapshot))
+        {
+            return new HermesCraftDetailResponse(
+                false,
+                "The selected craft's hideout station is not currently available.",
                 null,
                 [],
                 null,
@@ -235,6 +261,11 @@ public sealed class HermesHideoutService(
 
         foreach (var craft in _craftsByKey!.Values)
         {
+            if (!IsCraftStationAvailable(craft, snapshot))
+            {
+                continue;
+            }
+
             var producesItem = string.Equals(craft.OutputTemplateId, templateText, StringComparison.OrdinalIgnoreCase);
             var matchingRequirements = craft.Requirements
                 .Where(requirement => string.Equals(requirement.TemplateId, templateText, StringComparison.OrdinalIgnoreCase))
@@ -919,12 +950,7 @@ public sealed class HermesHideoutService(
         MongoId sessionId,
         long? referencePrice)
     {
-        var candidates = new List<AcquisitionEstimate>();
-
-        if (referencePrice is > 0)
-        {
-            candidates.Add(new AcquisitionEstimate("Handbook reference", referencePrice.Value));
-        }
+        var currentSources = new List<AcquisitionEstimate>();
 
         try
         {
@@ -933,36 +959,45 @@ public sealed class HermesHideoutService(
             {
                 foreach (var payment in offer.PaymentOptions.Where(payment => payment.EstimatedRoubleValue > 0))
                 {
-                    candidates.Add(new AcquisitionEstimate(
+                    currentSources.Add(new AcquisitionEstimate(
                         payment.IsCash ? offer.TraderName : $"{offer.TraderName} barter",
                         payment.EstimatedRoubleValue));
                 }
             }
 
             var market = marketService.GetSummary(item.ItemKey, sessionId);
-            if (market.FleaUnlocked && market.LowestPrice is > 0)
+            if (market.FleaUnlocked
+                && market.MarketPriceFromActiveOffers
+                && market.LowestPrice is > 0)
             {
-                candidates.Add(new AcquisitionEstimate("Local flea market", market.LowestPrice.Value));
-            }
-
-            if (market.CheapestAvailableTraderBuyPrice is > 0)
-            {
-                var source = string.IsNullOrWhiteSpace(market.CheapestAvailableTraderName)
-                    ? "Vanilla trader"
-                    : market.CheapestAvailableTraderName;
-                candidates.Add(new AcquisitionEstimate(source!, market.CheapestAvailableTraderBuyPrice.Value));
+                currentSources.Add(new AcquisitionEstimate(
+                    market.MarketPriceSource,
+                    market.LowestPrice.Value));
             }
         }
         catch
         {
-            // Handbook fallback remains available when market analysis fails.
+            // The shared market resolver below still provides dynamic/handbook fallback.
         }
 
-        return candidates
+        var current = currentSources
             .Where(candidate => candidate.UnitPrice > 0)
             .OrderBy(candidate => candidate.UnitPrice)
-            .FirstOrDefault()
-            ?? new AcquisitionEstimate(null, null);
+            .FirstOrDefault();
+        if (current is not null)
+        {
+            return current;
+        }
+
+        var fallback = marketPriceService.GetBestUnitValue(item.TemplateId);
+        if (fallback.UnitValue > 0L)
+        {
+            return new AcquisitionEstimate(fallback.Source, fallback.UnitValue);
+        }
+
+        return referencePrice is > 0
+            ? new AcquisitionEstimate("Handbook fallback", referencePrice.Value)
+            : new AcquisitionEstimate(null, null);
     }
 
     private HermesCraftSummary BuildCraftEvaluation(
@@ -980,7 +1015,10 @@ public sealed class HermesHideoutService(
         var ingredientsReady = ingredients.All(ingredient => ingredient.IsMet);
         var questReady = string.IsNullOrWhiteSpace(craft.QuestId)
                          || snapshot.CompletedQuests.Contains(craft.QuestId);
-        var unlocked = !craft.Locked || snapshot.UnlockedRecipes.Contains(craft.Id);
+        var unlocked = !craft.Locked
+                       || snapshot.UnlockedRecipes.Contains(craft.Id)
+                       || (!string.IsNullOrWhiteSpace(craft.QuestId)
+                           && snapshot.CompletedQuests.Contains(craft.QuestId));
         var activeProduction = snapshot.Productions.FirstOrDefault(production =>
             string.Equals(production.RecipeId, craft.Id, StringComparison.OrdinalIgnoreCase));
         var stationBusy = snapshot.Productions.Any(production =>
@@ -1003,14 +1041,18 @@ public sealed class HermesHideoutService(
         {
             status = $"Requires {craft.StationName} Level {craft.RequiredStationLevel}";
         }
-        else if (!questReady || !unlocked)
+        else if (!questReady)
         {
             var questName = craft.QuestId is not null && MongoId.IsValidMongoId(craft.QuestId)
                 ? catalogService.GetQuestName(new MongoId(craft.QuestId))
                 : null;
             status = string.IsNullOrWhiteSpace(questName)
-                ? "Locked by progression"
-                : $"Complete quest \"{questName}\"";
+                ? "Locked by quest"
+                : $"Locked by quest: \"{questName}\"";
+        }
+        else if (!unlocked)
+        {
+            status = "Locked by progression";
         }
         else if (stationBusy)
         {
@@ -1176,20 +1218,25 @@ public sealed class HermesHideoutService(
                 if (remaining > 0d)
                 {
                     unavailableQuantity = remaining;
-                    if (valuation.HandbookUnitValue is > 0)
+                    var fallbackUnit = valuation.FallbackMarketUnitValue
+                                       ?? valuation.HandbookUnitValue;
+                    if (fallbackUnit is > 0)
                     {
+                        var fallbackSource = string.IsNullOrWhiteSpace(valuation.FallbackMarketSource)
+                            ? "Handbook fallback"
+                            : valuation.FallbackMarketSource;
                         acquisitionPlan.Add(new HermesCraftAcquisitionLine(
-                            "Handbook fallback — no current purchase source",
+                            $"{fallbackSource} — no current purchase source",
                             remaining,
-                            valuation.HandbookUnitValue.Value,
-                            RoundCost(valuation.HandbookUnitValue, remaining),
+                            fallbackUnit.Value,
+                            RoundCost(fallbackUnit, remaining),
                             true));
                     }
                 }
 
                 note = unavailableQuantity <= 0d
-                    ? "Missing quantity is allocated across the cheapest currently available trader, barter, and local flea sources."
-                    : "Part of the missing quantity has no current trader or flea source; handbook value is shown only as a fallback estimate.";
+                    ? "Missing quantity is allocated across the cheapest currently available trader, barter, and active local flea sources."
+                    : "Part of the missing quantity has no current purchase source; HERMES shows the shared flea-price fallback chain as an estimate only.";
             }
 
             var purchaseCost = acquisitionPlan.Sum(line => line.TotalCost);
@@ -1239,6 +1286,8 @@ public sealed class HermesHideoutService(
             var lightweight = new ItemValuation(
                 handbook,
                 [],
+                handbook is > 0 ? "Handbook reference" : null,
+                handbook,
                 handbook is > 0 ? "handbook reference" : null,
                 handbook);
             cache[item.ItemKey] = lightweight;
@@ -1247,6 +1296,8 @@ public sealed class HermesHideoutService(
 
         var acquisitionQuotes = new List<AcquisitionQuote>();
         var economicCandidates = new List<ValueEstimate>();
+        string? fallbackMarketSource = null;
+        long? fallbackMarketUnitValue = null;
 
         HermesTraderSummaryResponse? traderSummary = null;
         try
@@ -1313,15 +1364,22 @@ public sealed class HermesHideoutService(
         try
         {
             var market = marketService.GetSummary(item.ItemKey, sessionId);
-            if (market.FleaUnlocked)
+            if (market.FleaUnlocked && market.MarketPriceFromActiveOffers)
             {
                 foreach (var offer in market.LowestOffers.Where(offer => offer.UnitPrice > 0 && offer.Quantity > 0))
                 {
                     acquisitionQuotes.Add(new AcquisitionQuote(
-                        "Local flea",
+                        offer.PriceSource,
                         offer.UnitPrice,
                         offer.Quantity));
                 }
+            }
+
+            var resolvedMarket = marketPriceService.GetBestUnitValue(item.TemplateId);
+            if (resolvedMarket.UnitValue > 0L)
+            {
+                fallbackMarketSource = resolvedMarket.Source;
+                fallbackMarketUnitValue = resolvedMarket.UnitValue;
             }
 
             if (market.FleaUnlocked
@@ -1332,16 +1390,32 @@ public sealed class HermesHideoutService(
                     "local flea net",
                     market.EstimatedNetSale.Value));
             }
+            else if (resolvedMarket.UnitValue > 0L)
+            {
+                economicCandidates.Add(new ValueEstimate(
+                    resolvedMarket.Source,
+                    resolvedMarket.UnitValue));
+            }
         }
         catch
         {
-            // Trader and handbook values remain available.
+            var resolvedMarket = marketPriceService.GetBestUnitValue(item.TemplateId);
+            if (resolvedMarket.UnitValue > 0L)
+            {
+                fallbackMarketSource = resolvedMarket.Source;
+                fallbackMarketUnitValue = resolvedMarket.UnitValue;
+                economicCandidates.Add(new ValueEstimate(
+                    resolvedMarket.Source,
+                    resolvedMarket.UnitValue));
+            }
         }
 
         if (economicCandidates.Count == 0 && handbook is > 0)
         {
+            fallbackMarketSource ??= "Handbook fallback";
+            fallbackMarketUnitValue ??= handbook.Value;
             economicCandidates.Add(new ValueEstimate(
-                "handbook fallback",
+                "Handbook fallback",
                 handbook.Value));
         }
 
@@ -1356,11 +1430,46 @@ public sealed class HermesHideoutService(
                 .OrderBy(quote => quote.UnitPrice)
                 .ThenBy(quote => quote.Source, StringComparer.OrdinalIgnoreCase)
                 .ToList(),
+            fallbackMarketSource,
+            fallbackMarketUnitValue,
             economic?.Source,
             economic?.UnitPrice);
 
         cache[item.ItemKey] = value;
         return value;
+    }
+
+    private bool IsCraftStationAvailable(CraftDefinition craft, ProfileSnapshot snapshot)
+    {
+        return _areasByType!.TryGetValue(craft.AreaType, out var area)
+               && IsAreaAvailable(area, snapshot);
+    }
+
+    private bool IsAreaAvailable(AreaDefinition area, ProfileSnapshot snapshot)
+    {
+        if (!area.Enabled || !snapshot.Areas.ContainsKey(area.Type))
+        {
+            return false;
+        }
+
+        if (area.Type == (int)HideoutAreas.ChristmasIllumination)
+        {
+            return IsChristmasHideoutActive();
+        }
+
+        return true;
+    }
+
+    private bool IsChristmasHideoutActive()
+    {
+        if (seasonalEventService.ChristmasEventEnabled())
+        {
+            return true;
+        }
+
+        // Also honor server mods that enable the Christmas hideout directly through globals.
+        return databaseService.GetGlobals().Configuration.EventType.Any(eventType =>
+            eventType.ToString().Equals("Christmas", StringComparison.OrdinalIgnoreCase));
     }
 
     private static long RoundCost(long? unitPrice, double quantity)
@@ -1695,6 +1804,7 @@ public sealed class HermesHideoutService(
 
             var craftsByKey = new Dictionary<string, CraftDefinition>(StringComparer.OrdinalIgnoreCase);
             var craftsById = new Dictionary<string, CraftDefinition>(StringComparer.OrdinalIgnoreCase);
+            var recipeUnlockQuestIds = BuildRecipeUnlockQuestIndex();
             var production = GetProperty(root, "production", "Production");
             foreach (var node in GetArray(GetProperty(production, "recipes", "Recipes")))
             {
@@ -1736,9 +1846,16 @@ public sealed class HermesHideoutService(
                     .Select(requirement => requirement.RequiredLevel)
                     .DefaultIfEmpty(0)
                     .Max();
+                var locked = ReadBool(recipe, false, "locked", "Locked");
                 var questId = requirements
                     .Select(requirement => requirement.QuestId)
                     .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+                if (locked
+                    && string.IsNullOrWhiteSpace(questId)
+                    && recipeUnlockQuestIds.TryGetValue(id, out var rewardQuestId))
+                {
+                    questId = rewardQuestId;
+                }
 
                 var definition = new CraftDefinition(
                     id,
@@ -1751,7 +1868,7 @@ public sealed class HermesHideoutService(
                     Math.Max(1, ReadInt(recipe, 1, "count", "Count")),
                     Math.Max(0, Convert.ToInt32(Math.Round(ReadDouble(recipe, 0d,
                         "productionTime", "ProductionTime")))),
-                    ReadBool(recipe, false, "locked", "Locked"),
+                    locked,
                     ReadBool(recipe, false, "continuous", "Continuous"),
                     requirements,
                     questId);
@@ -1785,6 +1902,66 @@ public sealed class HermesHideoutService(
             _traderNames = traderNames;
             _questUsesByTemplate = questUsesByTemplate;
         }
+    }
+
+    private Dictionary<string, string> BuildRecipeUnlockQuestIndex()
+    {
+        var output = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        JsonNode? root;
+        try
+        {
+            root = JsonNode.Parse(jsonUtil.Serialize(databaseService.GetQuests()) ?? "{}");
+        }
+        catch
+        {
+            return output;
+        }
+
+        foreach (var node in GetArray(root))
+        {
+            if (node is not JsonObject quest)
+            {
+                continue;
+            }
+
+            var questId = ReadString(quest, "_id", "Id", "id");
+            if (string.IsNullOrWhiteSpace(questId))
+            {
+                continue;
+            }
+
+            var rewards = GetProperty(quest, "rewards", "Rewards");
+            foreach (var rewardNode in GetArray(GetProperty(rewards, "Success", "success")))
+            {
+                if (rewardNode is not JsonObject reward)
+                {
+                    continue;
+                }
+
+                var rewardType = ReadString(reward, "type", "Type", "rewardType", "RewardType")
+                                 ?? string.Empty;
+                if (!rewardType.Contains("Production", StringComparison.OrdinalIgnoreCase)
+                    && !rewardType.Contains("Recipe", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var targets = ReadMongoIdList(GetProperty(
+                    reward,
+                    "target", "Target",
+                    "recipeId", "RecipeId",
+                    "productionId", "ProductionId",
+                    "schemeId", "SchemeId"));
+                foreach (var target in targets)
+                {
+                    // Keep the first quest found for a recipe. Vanilla production rewards
+                    // should be unique, while this also remains deterministic for modded data.
+                    output.TryAdd(target, questId);
+                }
+            }
+        }
+
+        return output;
     }
 
     private Dictionary<string, List<QuestItemUseDefinition>> BuildQuestUsageIndex(
@@ -2394,6 +2571,8 @@ public sealed class HermesHideoutService(
     private sealed record ItemValuation(
         long? HandbookUnitValue,
         IReadOnlyList<AcquisitionQuote> AcquisitionQuotes,
+        string? FallbackMarketSource,
+        long? FallbackMarketUnitValue,
         string? EconomicSource,
         long? EconomicUnitValue);
 }

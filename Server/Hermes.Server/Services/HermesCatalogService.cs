@@ -50,7 +50,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
 
         return new HermesStatusResponse(
             "HERMES",
-            "0.1.0-alpha10.2.1",
+            "0.1.0-alpha10.2.4",
             "4.0.13",
             true,
             [
@@ -87,6 +87,8 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "cash-and-economic-craft-profitability",
                 "trader-flea-and-owned-ingredient-sourcing",
                 "item-quest-hideout-and-craft-usage",
+                "named-quest-locked-craft-detection",
+                "active-hideout-station-recipe-filtering",
                 "shared-short-lived-market-cache",
                 "manual-market-cache-invalidation",
                 "generation-safe-cache-writes",
