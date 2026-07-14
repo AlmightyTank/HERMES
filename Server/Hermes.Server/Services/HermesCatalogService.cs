@@ -50,7 +50,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
 
         return new HermesStatusResponse(
             "HERMES",
-            "0.1.0-alpha10.2.4",
+            "0.1.0-alpha10.2.6",
             "4.0.13",
             true,
             [
@@ -83,6 +83,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "active-production-monitoring",
                 "generator-fuel-estimation",
                 "craft-readiness-analysis",
+                "available-crafts-filter",
                 "inventory-aware-craft-costing",
                 "cash-and-economic-craft-profitability",
                 "trader-flea-and-owned-ingredient-sourcing",

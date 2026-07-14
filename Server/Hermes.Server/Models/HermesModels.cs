@@ -286,6 +286,7 @@ public sealed record HermesCraftSummary(
     string OutputName,
     int OutputQuantity,
     int DurationSeconds,
+    bool IsAvailable,
     bool CanStartNow,
     string Status,
     bool AcquisitionPlanComplete,

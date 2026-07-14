@@ -324,6 +324,7 @@ public sealed class HermesCraftSummary
     public string OutputName { get; set; } = string.Empty;
     public int OutputQuantity { get; set; }
     public int DurationSeconds { get; set; }
+    public bool IsAvailable { get; set; }
     public bool CanStartNow { get; set; }
     public string Status { get; set; } = string.Empty;
     public bool AcquisitionPlanComplete { get; set; }

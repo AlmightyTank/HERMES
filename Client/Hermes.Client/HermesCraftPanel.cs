@@ -8,6 +8,7 @@ internal sealed class HermesCraftPanel
     private enum CraftFilter
     {
         All,
+        Available,
         Ready,
         Profitable,
         Overnight
@@ -95,11 +96,6 @@ internal sealed class HermesCraftPanel
         GUILayout.Label("CRAFTING INTELLIGENCE", GUILayout.Width(190f));
         _search = GUILayout.TextField(_search, GUILayout.MinWidth(180f), GUILayout.ExpandWidth(true), GUILayout.Height(28f));
 
-        DrawFilterButton(CraftFilter.All, "All", 60f);
-        DrawFilterButton(CraftFilter.Ready, "Ready", 65f);
-        DrawFilterButton(CraftFilter.Profitable, "Profit", 65f);
-        DrawFilterButton(CraftFilter.Overnight, "Overnight", 85f);
-
         GUI.enabled = !_loading;
         if (GUILayout.Button(_loading ? "Refreshing..." : "Refresh", GUILayout.Width(105f), GUILayout.Height(28f)))
         {
@@ -107,6 +103,16 @@ internal sealed class HermesCraftPanel
         }
 
         GUI.enabled = true;
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("SHOW", GUILayout.Width(48f));
+        DrawFilterButton(CraftFilter.All, "All", 72f);
+        DrawFilterButton(CraftFilter.Available, "Available Crafts", 132f);
+        DrawFilterButton(CraftFilter.Ready, "Ready", 82f);
+        DrawFilterButton(CraftFilter.Profitable, "Profit", 82f);
+        DrawFilterButton(CraftFilter.Overnight, "Overnight", 105f);
+        GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
     }
 
@@ -318,6 +324,7 @@ internal sealed class HermesCraftPanel
 
             var visible = _filter switch
             {
+                CraftFilter.Available => craft.IsAvailable,
                 CraftFilter.Ready => craft.CanStartNow,
                 CraftFilter.Profitable => craft.EstimatedEconomicProfit > 0,
                 CraftFilter.Overnight => craft.DurationSeconds >= 4 * 60 * 60

@@ -149,6 +149,7 @@ public sealed class HermesHideoutService(
             .Where(craft => IsCraftStationAvailable(craft, snapshot))
             .Select(craft => BuildCraftEvaluation(craft, snapshot, sessionId, valuationCache, includeLivePricing: false))
             .OrderByDescending(craft => craft.CanStartNow)
+            .ThenByDescending(craft => craft.IsAvailable)
             .ThenByDescending(craft => craft.EstimatedEconomicProfitPerHour)
             .ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -1027,7 +1028,11 @@ public sealed class HermesHideoutService(
             && activeCraft.AreaType == craft.AreaType
             && !string.Equals(activeCraft.Id, craft.Id, StringComparison.OrdinalIgnoreCase));
 
-        var canStart = stationReady && ingredientsReady && questReady && unlocked && !stationBusy && activeProduction is null;
+        // "Available Crafts" means the recipe is unlocked, the station level is met,
+        // and the player currently owns every required ingredient. Station occupancy
+        // remains separate so "Ready" can mean the craft can be started immediately.
+        var isAvailable = stationReady && questReady && unlocked && ingredientsReady;
+        var canStart = isAvailable && !stationBusy && activeProduction is null;
         string status;
         if (activeProduction?.IsComplete == true)
         {
@@ -1117,6 +1122,7 @@ public sealed class HermesHideoutService(
             craft.OutputName,
             craft.OutputQuantity,
             craft.DurationSeconds,
+            isAvailable,
             canStart,
             status,
             acquisitionPlanComplete,

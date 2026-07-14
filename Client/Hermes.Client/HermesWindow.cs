@@ -223,7 +223,7 @@ internal sealed class HermesWindow
             WindowId,
             _windowRect,
             DrawWindow,
-            "HERMES 0.1.0-alpha10.2.4 — Stash Sale Intelligence");
+            "HERMES 0.1.0-alpha10.2.6 — Stash Sale Intelligence");
     }
 
     private void DrawWindow(int windowId)

@@ -792,10 +792,10 @@ public sealed class HermesMarketService(
                 return marketText + " No currently available cash trader offer was found.";
             }
 
-            var difference = Math.Abs(traderPrice.Value - componentAdjustedFleaPrice.Value);
+            var traderDifference = Math.Abs(traderPrice.Value - componentAdjustedFleaPrice.Value);
             return traderPrice.Value <= componentAdjustedFleaPrice.Value
-                ? $"{marketText} Buy from {traderName}; the trader is about ₽{difference:N0} cheaper or equal."
-                : $"{marketText} It is about ₽{difference:N0} below {traderName}, but it is a fallback reference rather than an active listing.";
+                ? $"{marketText} Buy from {traderName}; the trader is about ₽{traderDifference:N0} cheaper or equal."
+                : $"{marketText} It is about ₽{traderDifference:N0} below {traderName}, but it is a fallback reference rather than an active listing.";
         }
 
         var offerKind = lowestOfferIsBarter ? "converted barter offer" : "cash offer";
@@ -811,17 +811,17 @@ public sealed class HermesMarketService(
                 : $"{fleaPriceText} There are too few comparable offers for a strong recommendation.";
         }
 
-        var difference = Math.Abs(traderPrice.Value - componentAdjustedFleaPrice.Value);
+        var fleaDifference = Math.Abs(traderPrice.Value - componentAdjustedFleaPrice.Value);
         if (componentAdjustedFleaPrice.Value < traderPrice.Value)
         {
             return comparableOfferCount >= MinimumOffersForRecommendation
-                ? $"{fleaPriceText} Its base-item equivalent is about ₽{difference:N0} cheaper than {traderName}."
-                : $"{fleaPriceText} Its base-item equivalent is about ₽{difference:N0} cheaper than {traderName}, but there are too few comparable offers for a strong recommendation.";
+                ? $"{fleaPriceText} Its base-item equivalent is about ₽{fleaDifference:N0} cheaper than {traderName}."
+                : $"{fleaPriceText} Its base-item equivalent is about ₽{fleaDifference:N0} cheaper than {traderName}, but there are too few comparable offers for a strong recommendation.";
         }
 
         if (traderPrice.Value < componentAdjustedFleaPrice.Value)
         {
-            return $"{fleaPriceText} Buy from {traderName}; the trader is about ₽{difference:N0} cheaper than the component-adjusted flea value.";
+            return $"{fleaPriceText} Buy from {traderName}; the trader is about ₽{fleaDifference:N0} cheaper than the component-adjusted flea value.";
         }
 
         return $"{fleaPriceText} The component-adjusted flea value and {traderName} are approximately equal.";

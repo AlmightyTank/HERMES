@@ -1,8 +1,23 @@
-# HERMES 0.1.0-alpha10.2.4
+# HERMES 0.1.0-alpha10.2.6
+
+## Alpha10.2.6 — Available Crafts ingredient fix
+
+The **Available Crafts** filter now excludes recipes with missing ingredients.
+
+- **Available Crafts** requires an enabled station, sufficient station level, completed quest/unlock requirements, and all required ingredients currently owned.
+- **Ready** requires everything above and also requires the station to be free with no matching production already active.
 
 HERMES is a read-only SPT 4.0.13 personal operations assistant.
 
-Alpha10.2.4 adds live hideout-station availability filtering and keeps the Alpha10.2.3 quest-lock fix.
+## Available Crafts filter
+
+The Crafts tab now has a dedicated **Available Crafts** button in addition to **All**, **Ready**, **Profit**, and **Overnight**.
+
+- **Available Crafts** shows recipes whose station level is met, whose quest/unlock requirements are complete, and whose required ingredients are currently owned. A busy station does not hide the recipe.
+- **Ready** remains stricter and shows only available recipes that can be started immediately because the station is free and no matching production is active.
+- Event-only stations are still filtered before either list is built, so Christmas Tree crafts remain hidden while the Christmas event is inactive.
+
+The filter toolbar is split onto its own row so the new button does not crowd the recipe search and Refresh controls.
 
 ## Hideout station availability
 
@@ -96,7 +111,7 @@ C:\RealSPT\BepInEx\plugins\HERMES\Hermes.Client.dll
 It also creates:
 
 ```text
-HERMES-0.1.0-alpha10.2.4.zip
+HERMES-0.1.0-alpha10.2.6.zip
 ```
 
 Change `SptRoot` in the client project if the development installation moves.
