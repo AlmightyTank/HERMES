@@ -1,0 +1,101 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <OutputType>Library</OutputType>
+    <AssemblyName>Hermes.Build</AssemblyName>
+    <RootNamespace>Hermes.Build</RootNamespace>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <IsPackable>false</IsPackable>
+
+    <!-- Shared development and testing SPT path. -->
+    <SptRoot Condition="'$(SptRoot)' == ''">C:\RealSPT</SptRoot>
+
+    <!-- Set DeployToTestEnvironment=false to package without installing. -->
+    <DeployToTestEnvironment Condition="'$(DeployToTestEnvironment)' == ''">true</DeployToTestEnvironment>
+    <TestSptRoot Condition="'$(TestSptRoot)' == ''">$(SptRoot)</TestSptRoot>
+    <TestServerDir>$(TestSptRoot)\SPT\user\mods\HERMES</TestServerDir>
+    <TestClientDir>$(TestSptRoot)\BepInEx\plugins\HERMES</TestClientDir>
+
+    <HermesRoot>$(MSBuildProjectDirectory)</HermesRoot>
+    <DistRoot>$(HermesRoot)\dist</DistRoot>
+    <ServerDist>$(DistRoot)\SPT\user\mods\HERMES</ServerDist>
+    <ClientDist>$(DistRoot)\BepInEx\plugins\HERMES</ClientDist>
+    <PackagePath>$(HermesRoot)\HERMES-0.1.0-alpha7.1.zip</PackagePath>
+
+    <ServerOutput>$(HermesRoot)\Server\Hermes.Server\bin\$(Configuration)\Hermes.Server.dll</ServerOutput>
+    <ClientOutput>$(HermesRoot)\Client\Hermes.Client\bin\$(Configuration)\Hermes.Client.dll</ClientOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="Server\Hermes.Server\Hermes.Server.csproj"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="Client\Hermes.Client\Hermes.Client.csproj"
+                      ReferenceOutputAssembly="false"
+                      AdditionalProperties="SptRoot=$(SptRoot)" />
+  </ItemGroup>
+
+  <Target Name="ValidateHermesOutputs" AfterTargets="Build" BeforeTargets="PackageHermes">
+    <Error Condition="!Exists('$(ServerOutput)')"
+           Text="Hermes.Server.dll was not found at '$(ServerOutput)'." />
+    <Error Condition="!Exists('$(ClientOutput)')"
+           Text="Hermes.Client.dll was not found at '$(ClientOutput)'." />
+  </Target>
+
+  <Target Name="PackageHermes" AfterTargets="ValidateHermesOutputs">
+    <RemoveDir Directories="$(DistRoot)" Condition="Exists('$(DistRoot)')" />
+    <MakeDir Directories="$(ServerDist);$(ClientDist)" />
+
+    <Copy SourceFiles="$(ServerOutput)"
+          DestinationFolder="$(ServerDist)"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="$(ClientOutput)"
+          DestinationFolder="$(ClientDist)"
+          SkipUnchangedFiles="true" />
+
+    <Delete Files="$(PackagePath)" Condition="Exists('$(PackagePath)')" />
+    <ZipDirectory SourceDirectory="$(DistRoot)"
+                  DestinationFile="$(PackagePath)"
+                  Overwrite="true" />
+
+    <Message Importance="high" Text="HERMES package created: $(PackagePath)" />
+    <Message Importance="high" Text="HERMES install layout: $(DistRoot)" />
+  </Target>
+
+  <Target Name="ValidateHermesTestEnvironment"
+          Condition="'$(DeployToTestEnvironment)' == 'true'">
+    <Error Condition="!Exists('$(TestSptRoot)')"
+           Text="HERMES test SPT root was not found at '$(TestSptRoot)'. Set TestSptRoot or SptRoot in Hermes.Build.csproj." />
+    <Error Condition="!Exists('$(TestSptRoot)\EscapeFromTarkov_Data')"
+           Text="'$(TestSptRoot)' does not appear to be an SPT installation because EscapeFromTarkov_Data is missing." />
+    <Error Condition="!Exists('$(TestSptRoot)\BepInEx')"
+           Text="'$(TestSptRoot)' does not appear to be an SPT installation because BepInEx is missing." />
+    <Error Condition="!Exists('$(TestSptRoot)\SPT')"
+           Text="'$(TestSptRoot)' does not appear to be an SPT installation because the SPT folder is missing." />
+  </Target>
+
+  <Target Name="DeployHermesToTestEnvironment"
+          AfterTargets="PackageHermes"
+          DependsOnTargets="ValidateHermesTestEnvironment"
+          Condition="'$(DeployToTestEnvironment)' == 'true'">
+    <MakeDir Directories="$(TestServerDir);$(TestClientDir)" />
+
+    <Copy SourceFiles="$(ServerOutput)"
+          DestinationFiles="$(TestServerDir)\Hermes.Server.dll"
+          SkipUnchangedFiles="true"
+          OverwriteReadOnlyFiles="true"
+          Retries="3"
+          RetryDelayMilliseconds="500" />
+
+    <Copy SourceFiles="$(ClientOutput)"
+          DestinationFiles="$(TestClientDir)\Hermes.Client.dll"
+          SkipUnchangedFiles="true"
+          OverwriteReadOnlyFiles="true"
+          Retries="3"
+          RetryDelayMilliseconds="500" />
+
+    <Message Importance="high" Text="HERMES deployed to test SPT root: $(TestSptRoot)" />
+    <Message Importance="high" Text="Server DLL: $(TestServerDir)\Hermes.Server.dll" />
+    <Message Importance="high" Text="Client DLL: $(TestClientDir)\Hermes.Client.dll" />
+  </Target>
+</Project>

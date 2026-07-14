@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <RootNamespace>Hermes.Client</RootNamespace>
+    <AssemblyName>Hermes.Client</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Version>0.1.0-alpha7.1</Version>
+    <OutputType>Library</OutputType>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <IsPackable>false</IsPackable>
+
+    <!-- Change this value if your development SPT installation moves. -->
+    <SptRoot Condition="'$(SptRoot)' == ''">C:\RealSPT</SptRoot>
+    <EftManaged>$(SptRoot)\EscapeFromTarkov_Data\Managed</EftManaged>
+    <BepInExCore>$(SptRoot)\BepInEx\core</BepInExCore>
+    <SptClientPlugins>$(SptRoot)\BepInEx\plugins\spt</SptClientPlugins>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="BepInEx">
+      <HintPath>$(BepInExCore)\BepInEx.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="spt-common">
+      <HintPath>$(SptClientPlugins)\spt-common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(EftManaged)\Newtonsoft.Json.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(EftManaged)\UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(EftManaged)\UnityEngine.CoreModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule">
+      <HintPath>$(EftManaged)\UnityEngine.IMGUIModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(EftManaged)\UnityEngine.InputLegacyModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="ValidateSptClientReferences" BeforeTargets="ResolveReferences" Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(SptRoot)')"
+           Text="SPT root was not found at '$(SptRoot)'. Edit SptRoot in Hermes.Client.csproj." />
+    <Error Condition="!Exists('$(BepInExCore)\BepInEx.dll')"
+           Text="Missing BepInEx.dll at '$(BepInExCore)\BepInEx.dll'. Check SptRoot in Hermes.Client.csproj." />
+    <Error Condition="!Exists('$(SptClientPlugins)\spt-common.dll')"
+           Text="Missing spt-common.dll at '$(SptClientPlugins)\spt-common.dll'. Check SptRoot and your SPT 4.0.13 installation." />
+    <Error Condition="!Exists('$(EftManaged)\Newtonsoft.Json.dll')"
+           Text="Missing Newtonsoft.Json.dll at '$(EftManaged)\Newtonsoft.Json.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.CoreModule.dll')"
+           Text="Missing UnityEngine.CoreModule.dll at '$(EftManaged)\UnityEngine.CoreModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.IMGUIModule.dll')"
+           Text="Missing UnityEngine.IMGUIModule.dll at '$(EftManaged)\UnityEngine.IMGUIModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.InputLegacyModule.dll')"
+           Text="Missing UnityEngine.InputLegacyModule.dll at '$(EftManaged)\UnityEngine.InputLegacyModule.dll'." />
+  </Target>
+</Project>

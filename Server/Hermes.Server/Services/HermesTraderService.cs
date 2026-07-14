@@ -1,0 +1,734 @@
+using System.Text.Json.Nodes;
+using Hermes.Server.Models;
+using SPTarkov.DI.Annotations;
+using SPTarkov.Server.Core.Helpers;
+using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Eft.Common.Tables;
+using SPTarkov.Server.Core.Models.Enums;
+using SPTarkov.Server.Core.Services;
+using SPTarkov.Server.Core.Utils;
+
+namespace Hermes.Server.Services;
+
+[Injectable(InjectionType.Singleton)]
+public sealed class HermesTraderService(
+    DatabaseService databaseService,
+    ProfileHelper profileHelper,
+    TraderAssortHelper traderAssortHelper,
+    HandbookHelper handbookHelper,
+    ItemHelper itemHelper,
+    HermesCatalogService catalogService,
+    JsonUtil jsonUtil)
+{
+    private static readonly HashSet<string> VanillaTraderNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "prapor",
+        "therapist",
+        "fence",
+        "skier",
+        "peacekeeper",
+        "mechanic",
+        "ragman",
+        "jaeger",
+        "lightkeeper",
+        "ref"
+    };
+
+    private static readonly MongoId RoublesTpl = new("5449016a4bdc2d6f028b456f");
+    private static readonly MongoId DollarsTpl = new("5696686a4bdc2da3298b456a");
+    private static readonly MongoId EurosTpl = new("569668774bdc2da2298b4568");
+    private static readonly MongoId GpCoinTpl = new("5d235b4d86f7742e017bc88a");
+
+    public HermesTraderSummaryResponse GetSummary(string? itemKey, MongoId sessionId)
+    {
+        var item = catalogService.ResolveItem(itemKey);
+        if (item is null)
+        {
+            return NotFound(itemKey, "The selected HERMES item is no longer available. Search for it again.");
+        }
+
+        var pmcProfile = profileHelper.GetPmcProfile(sessionId);
+        if (pmcProfile is null)
+        {
+            return NotFound(item.ItemKey, "HERMES could not read the active PMC profile.");
+        }
+
+        var profileJson = jsonUtil.Serialize(pmcProfile) ?? "{}";
+        var referencePrice = catalogService.GetReferencePrice(item.TemplateId);
+        var sellOffers = BuildSellOffers(item.TemplateId, referencePrice, profileJson);
+        var purchaseOffers = BuildPurchaseOffers(item.TemplateId, sessionId, profileJson);
+
+        var best = sellOffers.FirstOrDefault();
+        if (best is not null)
+        {
+            sellOffers = sellOffers
+                .Select((offer, index) => offer with { IsBest = index == 0 })
+                .ToList();
+            best = sellOffers[0];
+        }
+
+        return new HermesTraderSummaryResponse(
+            true,
+            null,
+            item.ItemKey,
+            item.Name,
+            item.ShortName,
+            referencePrice,
+            item.AcceptedBySupportedTrader,
+            best,
+            sellOffers,
+            purchaseOffers);
+    }
+
+    private List<HermesSellOffer> BuildSellOffers(
+        MongoId itemTpl,
+        long? referencePrice,
+        string profileJson)
+    {
+        if (referencePrice is null or <= 0)
+        {
+            return [];
+        }
+
+        var output = new List<HermesSellOffer>();
+
+        foreach (var (traderId, trader) in databaseService.GetTraders())
+        {
+            var traderBase = trader.Base;
+            if (!IsVanillaTrader(traderBase) || !CanTraderBuyItem(traderBase, itemTpl))
+            {
+                continue;
+            }
+
+            var playerState = ReadPlayerTraderState(profileJson, traderId, traderBase.UnlockedByDefault ?? true);
+            if (!playerState.Unlocked)
+            {
+                continue;
+            }
+
+            var loyaltyLevels = traderBase.LoyaltyLevels;
+            if (loyaltyLevels is null || loyaltyLevels.Count == 0)
+            {
+                continue;
+            }
+
+            var playerLoyalty = Math.Clamp(playerState.LoyaltyLevel, 1, loyaltyLevels.Count);
+            var coefficient = loyaltyLevels[playerLoyalty - 1].BuyPriceCoefficient ?? 100d;
+            var roubleEquivalent = Math.Max(
+                0L,
+                Convert.ToInt64(Math.Floor(referencePrice.Value * Math.Max(0d, 100d - coefficient) / 100d)));
+
+            if (roubleEquivalent <= 0)
+            {
+                continue;
+            }
+
+            var currency = GetTraderCurrency(traderBase.Currency);
+            var amount = ConvertFromRoubles(roubleEquivalent, currency);
+
+            output.Add(new HermesSellOffer(
+                GetTraderName(traderBase),
+                playerLoyalty,
+                amount,
+                currency,
+                roubleEquivalent,
+                false));
+        }
+
+        return output
+            .OrderByDescending(offer => offer.RoubleEquivalent)
+            .ThenBy(offer => offer.TraderName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private List<HermesPurchaseOffer> BuildPurchaseOffers(
+        MongoId itemTpl,
+        MongoId sessionId,
+        string profileJson)
+    {
+        var output = new List<HermesPurchaseOffer>();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        foreach (var (traderId, trader) in databaseService.GetTraders())
+        {
+            var traderBase = trader.Base;
+            if (!IsVanillaTrader(traderBase))
+            {
+                continue;
+            }
+
+            TraderAssort allAssort;
+            TraderAssort availableAssort;
+
+            try
+            {
+                allAssort = traderAssortHelper.GetAssort(sessionId, traderId, true);
+                availableAssort = traderAssortHelper.GetAssort(sessionId, traderId, false);
+            }
+            catch
+            {
+                continue;
+            }
+
+            var roots = allAssort.Items
+                .Where(assortItem => string.Equals(assortItem.SlotId, "hideout", StringComparison.OrdinalIgnoreCase)
+                                     && assortItem.Template == itemTpl)
+                .ToList();
+
+            if (roots.Count == 0)
+            {
+                continue;
+            }
+
+            var availableRootIds = availableAssort.Items
+                .Where(assortItem => string.Equals(assortItem.SlotId, "hideout", StringComparison.OrdinalIgnoreCase))
+                .Select(assortItem => assortItem.Id)
+                .ToHashSet();
+
+            var questUnlocks = BuildQuestUnlockLookup(allAssort);
+            var playerState = ReadPlayerTraderState(profileJson, traderId, traderBase.UnlockedByDefault ?? true);
+
+            foreach (var root in roots)
+            {
+                var requiredLoyalty = allAssort.LoyalLevelItems.TryGetValue(root.Id, out var loyalty)
+                    ? Math.Max(1, loyalty)
+                    : 1;
+
+                var unlimited = root.Upd?.UnlimitedCount ?? false;
+                int? stock = unlimited
+                    ? null
+                    : ToNullableInt(root.Upd?.StackObjectsCount);
+
+                var purchaseLimit = root.Upd?.BuyRestrictionMax;
+                var purchaseCurrent = root.Upd?.BuyRestrictionCurrent ?? 0;
+                int? purchaseRemaining = purchaseLimit.HasValue
+                    ? Math.Max(0, purchaseLimit.Value - purchaseCurrent)
+                    : null;
+
+                var visibleToPlayer = availableRootIds.Contains(root.Id);
+                questUnlocks.TryGetValue(root.Id.ToString(), out var questUnlock);
+                var hasStock = unlimited || (stock ?? 0) > 0;
+                var underLimit = !purchaseRemaining.HasValue || purchaseRemaining.Value > 0;
+                var loyaltyMet = playerState.LoyaltyLevel >= requiredLoyalty;
+                var isAvailable = playerState.Unlocked && loyaltyMet && visibleToPlayer && hasStock && underLimit;
+
+                var reason = GetAvailabilityReason(
+                    playerState.Unlocked,
+                    loyaltyMet,
+                    visibleToPlayer,
+                    hasStock,
+                    underLimit,
+                    requiredLoyalty,
+                    questUnlock);
+
+                long? secondsUntilRestock = allAssort.NextResupply.HasValue
+                    ? Math.Max(0L, Convert.ToInt64(Math.Floor(allAssort.NextResupply.Value)) - now)
+                    : null;
+
+                output.Add(new HermesPurchaseOffer(
+                    GetTraderName(traderBase),
+                    requiredLoyalty,
+                    Math.Max(1, playerState.LoyaltyLevel),
+                    isAvailable,
+                    reason,
+                    questUnlock?.QuestName,
+                    questUnlock?.RequiredState,
+                    questUnlock?.RequirementText,
+                    unlimited,
+                    stock,
+                    purchaseLimit,
+                    purchaseRemaining,
+                    1,
+                    secondsUntilRestock,
+                    BuildPaymentOptions(allAssort, root.Id)));
+            }
+        }
+
+        return output
+            .OrderByDescending(offer => offer.IsAvailable)
+            .ThenBy(offer => offer.RequiredLoyaltyLevel)
+            .ThenBy(offer => offer.TraderName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private IReadOnlyList<HermesPaymentOption> BuildPaymentOptions(TraderAssort assort, MongoId assortId)
+    {
+        if (!assort.BarterScheme.TryGetValue(assortId, out var schemes) || schemes is null)
+        {
+            return [];
+        }
+
+        var output = new List<HermesPaymentOption>();
+
+        foreach (var scheme in schemes)
+        {
+            if (scheme is null || scheme.Count == 0)
+            {
+                continue;
+            }
+
+            var requirements = new List<HermesPaymentRequirement>();
+            var estimatedRoubles = 0d;
+            var allCurrency = true;
+
+            foreach (var requirement in scheme)
+            {
+                var count = requirement.Count ?? 0d;
+                var currency = GetCurrencyCode(requirement.Template);
+                var isCurrency = currency is not null;
+                allCurrency &= isCurrency;
+
+                requirements.Add(new HermesPaymentRequirement(
+                    isCurrency ? GetCurrencyName(currency!) : catalogService.GetPlayerFacingName(requirement.Template),
+                    count,
+                    currency));
+
+                estimatedRoubles += isCurrency
+                    ? handbookHelper.InRoubles(count, requirement.Template)
+                    : count * (catalogService.GetReferencePrice(requirement.Template) ?? 0L);
+            }
+
+            var displayPrice = allCurrency && requirements.Count == 1
+                ? FormatCurrency(requirements[0].Count, requirements[0].Currency ?? "RUB")
+                : string.Join(" + ", requirements.Select(requirement =>
+                    $"{FormatCount(requirement.Count)} × {requirement.Name}"));
+
+            output.Add(new HermesPaymentOption(
+                allCurrency,
+                displayPrice,
+                Convert.ToInt64(Math.Round(estimatedRoubles)),
+                requirements));
+        }
+
+        return output;
+    }
+
+    private IReadOnlyDictionary<string, QuestUnlockInfo> BuildQuestUnlockLookup(TraderAssort assort)
+    {
+        var output = new Dictionary<string, QuestUnlockInfo>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var root = JsonNode.Parse(jsonUtil.Serialize(assort) ?? "{}");
+            var questAssort = FindProperty(root, "QuestAssort") as JsonObject;
+            if (questAssort is null)
+            {
+                return output;
+            }
+
+            AddQuestUnlockState(questAssort, "Success", "Completed", "Complete", output);
+            AddQuestUnlockState(questAssort, "Started", "Started", "Start", output);
+            AddQuestUnlockState(questAssort, "Fail", "Failed", "Fail", output);
+        }
+        catch
+        {
+            // A missing or malformed quest-assort section should not break trader lookup.
+        }
+
+        return output;
+    }
+
+    private void AddQuestUnlockState(
+        JsonObject questAssort,
+        string stateProperty,
+        string requiredState,
+        string instructionVerb,
+        IDictionary<string, QuestUnlockInfo> output)
+    {
+        var stateNode = ReadProperty(questAssort, stateProperty) as JsonObject;
+        if (stateNode is null)
+        {
+            return;
+        }
+
+        foreach (var pair in stateNode)
+        {
+            AddQuestUnlockEntry(pair.Key, pair.Value, requiredState, instructionVerb, output);
+        }
+    }
+
+    private void AddQuestUnlockEntry(
+        string key,
+        JsonNode? valueNode,
+        string requiredState,
+        string instructionVerb,
+        IDictionary<string, QuestUnlockInfo> output)
+    {
+        var valueIds = ReadMongoIds(valueNode).ToList();
+        var keyQuestName = TryGetQuestName(key);
+
+        // Standard SPT layout: offer ID -> quest ID.
+        foreach (var valueId in valueIds)
+        {
+            var valueQuestName = TryGetQuestName(valueId);
+            if (!string.IsNullOrWhiteSpace(valueQuestName))
+            {
+                output[key] = CreateQuestUnlockInfo(valueQuestName, requiredState, instructionVerb);
+                return;
+            }
+        }
+
+        // Defensive support for reverse layouts: quest ID -> offer ID or offer ID array.
+        if (!string.IsNullOrWhiteSpace(keyQuestName))
+        {
+            foreach (var offerId in valueIds)
+            {
+                output[offerId] = CreateQuestUnlockInfo(keyQuestName, requiredState, instructionVerb);
+            }
+        }
+    }
+
+    private string? TryGetQuestName(string? questId)
+    {
+        if (string.IsNullOrWhiteSpace(questId) || !MongoId.IsValidMongoId(questId))
+        {
+            return null;
+        }
+
+        return catalogService.GetQuestName(new MongoId(questId));
+    }
+
+    private static QuestUnlockInfo CreateQuestUnlockInfo(
+        string questName,
+        string requiredState,
+        string instructionVerb)
+    {
+        return new QuestUnlockInfo(
+            questName,
+            requiredState,
+            $"{instructionVerb} quest \"{questName}\"");
+    }
+
+    private static IEnumerable<string> ReadMongoIds(JsonNode? node)
+    {
+        if (node is JsonValue value
+            && value.TryGetValue<string>(out var text)
+            && MongoId.IsValidMongoId(text))
+        {
+            yield return text;
+            yield break;
+        }
+
+        if (node is JsonArray array)
+        {
+            foreach (var child in array)
+            {
+                foreach (var id in ReadMongoIds(child))
+                {
+                    yield return id;
+                }
+            }
+
+            yield break;
+        }
+
+        if (node is JsonObject obj)
+        {
+            foreach (var name in new[] { "Id", "id", "_id", "QuestId", "questId", "OfferId", "offerId" })
+            {
+                var nested = ReadProperty(obj, name);
+                foreach (var id in ReadMongoIds(nested))
+                {
+                    yield return id;
+                }
+            }
+        }
+    }
+
+    private static JsonNode? ReadProperty(JsonObject obj, params string[] names)
+    {
+        foreach (var pair in obj)
+        {
+            if (names.Any(name => pair.Key.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                return pair.Value;
+            }
+        }
+
+        return null;
+    }
+
+    private bool CanTraderBuyItem(TraderBase traderBase, MongoId itemTpl)
+    {
+        if (!MatchesRules(traderBase.ItemsBuy, itemTpl))
+        {
+            return false;
+        }
+
+        return !MatchesRules(traderBase.ItemsBuyProhibited, itemTpl);
+    }
+
+    private bool MatchesRules(ItemBuyData? rules, MongoId itemTpl)
+    {
+        if (rules is null)
+        {
+            return false;
+        }
+
+        if (rules.IdList.Contains(itemTpl))
+        {
+            return true;
+        }
+
+        return rules.Category.Count > 0 && itemHelper.IsOfBaseclasses(itemTpl, rules.Category);
+    }
+
+    private static bool IsVanillaTrader(TraderBase traderBase)
+    {
+        var nickname = traderBase.Nickname?.Trim();
+        var name = traderBase.Name?.Trim();
+        return (!string.IsNullOrWhiteSpace(nickname) && VanillaTraderNames.Contains(nickname))
+               || (!string.IsNullOrWhiteSpace(name) && VanillaTraderNames.Contains(name));
+    }
+
+    private static string GetTraderName(TraderBase traderBase)
+    {
+        return !string.IsNullOrWhiteSpace(traderBase.Nickname)
+            ? traderBase.Nickname
+            : traderBase.Name;
+    }
+
+    private long ConvertFromRoubles(long roubles, string currency)
+    {
+        var currencyTpl = currency switch
+        {
+            "USD" => DollarsTpl,
+            "EUR" => EurosTpl,
+            "GP" => GpCoinTpl,
+            _ => RoublesTpl
+        };
+
+        return Convert.ToInt64(Math.Floor(handbookHelper.FromRoubles(roubles, currencyTpl)));
+    }
+
+    private static string GetTraderCurrency(CurrencyType? currency)
+    {
+        return currency?.ToString() switch
+        {
+            "USD" => "USD",
+            "EUR" => "EUR",
+            "GP" => "GP",
+            _ => "RUB"
+        };
+    }
+
+    private static string? GetCurrencyCode(MongoId templateId)
+    {
+        if (templateId == RoublesTpl)
+        {
+            return "RUB";
+        }
+
+        if (templateId == DollarsTpl)
+        {
+            return "USD";
+        }
+
+        if (templateId == EurosTpl)
+        {
+            return "EUR";
+        }
+
+        if (templateId == GpCoinTpl)
+        {
+            return "GP";
+        }
+
+        return null;
+    }
+
+    private static string GetCurrencyName(string currency)
+    {
+        return currency switch
+        {
+            "USD" => "US dollars",
+            "EUR" => "Euros",
+            "GP" => "GP coins",
+            _ => "Roubles"
+        };
+    }
+
+    private static string FormatCurrency(double value, string currency)
+    {
+        var rounded = Math.Round(value);
+        return currency switch
+        {
+            "USD" => $"${rounded:N0}",
+            "EUR" => $"€{rounded:N0}",
+            "GP" => $"{rounded:N0} GP",
+            _ => $"₽{rounded:N0}"
+        };
+    }
+
+    private static string FormatCount(double value)
+    {
+        return Math.Abs(value - Math.Round(value)) < 0.001
+            ? Math.Round(value).ToString("N0")
+            : value.ToString("N2");
+    }
+
+    private static string GetAvailabilityReason(
+        bool traderUnlocked,
+        bool loyaltyMet,
+        bool visibleToPlayer,
+        bool hasStock,
+        bool underLimit,
+        int requiredLoyalty,
+        QuestUnlockInfo? questUnlock)
+    {
+        if (!traderUnlocked)
+        {
+            return "Trader is locked";
+        }
+
+        if (!loyaltyMet)
+        {
+            return $"Requires loyalty level {requiredLoyalty}";
+        }
+
+        if (!visibleToPlayer)
+        {
+            return questUnlock?.RequirementText ?? "Locked by trader progression";
+        }
+
+        if (!hasStock)
+        {
+            return "Out of stock";
+        }
+
+        if (!underLimit)
+        {
+            return "Purchase limit reached";
+        }
+
+        return "Available now";
+    }
+
+    private static int? ToNullableInt(double? value)
+    {
+        return value.HasValue
+            ? Math.Max(0, Convert.ToInt32(Math.Floor(value.Value)))
+            : null;
+    }
+
+    private static PlayerTraderState ReadPlayerTraderState(
+        string profileJson,
+        MongoId traderId,
+        bool unlockedByDefault)
+    {
+        var state = new PlayerTraderState(1, unlockedByDefault);
+
+        try
+        {
+            var root = JsonNode.Parse(profileJson);
+            var tradersInfo = FindProperty(root, "TradersInfo") as JsonObject;
+            if (tradersInfo is null
+                || !tradersInfo.TryGetPropertyValue(traderId.ToString(), out var traderNode)
+                || traderNode is not JsonObject traderObject)
+            {
+                return state;
+            }
+
+            var loyalty = ReadInt(traderObject, "loyaltyLevel", "LoyaltyLevel") ?? 1;
+            var unlocked = ReadBool(traderObject, "unlocked", "Unlocked") ?? unlockedByDefault;
+            return new PlayerTraderState(Math.Max(1, loyalty), unlocked);
+        }
+        catch
+        {
+            return state;
+        }
+    }
+
+    private static JsonNode? FindProperty(JsonNode? node, string propertyName)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var pair in obj)
+            {
+                if (pair.Key.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return pair.Value;
+                }
+
+                var nested = FindProperty(pair.Value, propertyName);
+                if (nested is not null)
+                {
+                    return nested;
+                }
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var child in array)
+            {
+                var nested = FindProperty(child, propertyName);
+                if (nested is not null)
+                {
+                    return nested;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static int? ReadInt(JsonObject obj, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!obj.TryGetPropertyValue(name, out var node) || node is not JsonValue value)
+            {
+                continue;
+            }
+
+            if (value.TryGetValue<int>(out var intValue))
+            {
+                return intValue;
+            }
+
+            if (value.TryGetValue<double>(out var doubleValue))
+            {
+                return Convert.ToInt32(doubleValue);
+            }
+        }
+
+        return null;
+    }
+
+    private static bool? ReadBool(JsonObject obj, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (obj.TryGetPropertyValue(name, out var node)
+                && node is JsonValue value
+                && value.TryGetValue<bool>(out var boolValue))
+            {
+                return boolValue;
+            }
+        }
+
+        return null;
+    }
+
+    private static HermesTraderSummaryResponse NotFound(string? itemKey, string message)
+    {
+        return new HermesTraderSummaryResponse(
+            false,
+            message,
+            itemKey ?? string.Empty,
+            string.Empty,
+            string.Empty,
+            null,
+            false,
+            null,
+            [],
+            []);
+    }
+
+    private sealed record PlayerTraderState(int LoyaltyLevel, bool Unlocked);
+
+    private sealed record QuestUnlockInfo(
+        string QuestName,
+        string RequiredState,
+        string RequirementText);
+}
