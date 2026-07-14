@@ -18,6 +18,7 @@ public sealed class HermesMarketPriceService(
     RagfairOfferService ragfairOfferService,
     DatabaseService databaseService,
     HandbookHelper handbookHelper,
+    RagfairPriceService ragfairPriceService,
     ItemHelper itemHelper,
     HermesCatalogService catalogService,
     HermesCacheService cacheService)
@@ -66,7 +67,10 @@ public sealed class HermesMarketPriceService(
 
         if (depth > MaximumBarterDepth || !recursionPath.Add(key))
         {
-            return GetHandbookFallback(templateId, "Handbook fallback (barter cycle or depth limit)");
+            return GetMarketOrHandbookFallback(
+                templateId,
+                "SPT dynamic flea price (barter cycle or depth limit)",
+                "Handbook fallback (barter cycle or depth limit)");
         }
 
         var candidates = new List<HermesMarketUnitValuation>();
@@ -139,7 +143,10 @@ public sealed class HermesMarketPriceService(
         }
         else
         {
-            result = GetHandbookFallback(templateId, "Handbook fallback (no current local flea offer)");
+            result = GetMarketOrHandbookFallback(
+                templateId,
+                "SPT dynamic flea price (no active local flea offer)",
+                "Handbook fallback (no active or dynamic flea price)");
         }
 
         cache[key] = result;
@@ -311,6 +318,33 @@ public sealed class HermesMarketPriceService(
 
         var roundedInstalledValue = Math.Max(0L, Convert.ToInt64(Math.Floor(installedValue)));
         return Math.Max(1L, listedUnitValue - roundedInstalledValue);
+    }
+
+    private HermesMarketUnitValuation GetMarketOrHandbookFallback(
+        MongoId templateId,
+        string dynamicMarketSource,
+        string handbookSource)
+    {
+        double? dynamicPrice;
+        try
+        {
+            dynamicPrice = ragfairPriceService.GetDynamicPriceForItem(templateId);
+        }
+        catch
+        {
+            dynamicPrice = null;
+        }
+
+        if (dynamicPrice is > 0d)
+        {
+            return new HermesMarketUnitValuation(
+                Math.Max(1L, Convert.ToInt64(Math.Round(dynamicPrice.Value))),
+                dynamicMarketSource,
+                false,
+                false);
+        }
+
+        return GetHandbookFallback(templateId, handbookSource);
     }
 
     private HermesMarketUnitValuation GetHandbookFallback(MongoId templateId, string source)

@@ -50,7 +50,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
 
         return new HermesStatusResponse(
             "HERMES",
-            "0.1.0-alpha10.2",
+            "0.1.0-alpha10.2.1",
             "4.0.13",
             true,
             [

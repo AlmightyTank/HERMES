@@ -223,7 +223,7 @@ internal sealed class HermesWindow
             WindowId,
             _windowRect,
             DrawWindow,
-            "HERMES 0.1.0-alpha10.2 — Stash Sale Intelligence");
+            "HERMES 0.1.0-alpha10.2.1 — Stash Sale Intelligence");
     }
 
     private void DrawWindow(int windowId)
@@ -989,11 +989,13 @@ internal sealed class HermesWindow
 
                                 var sourceLabel = requirement.UsedHandbookFallback
                                     ? "handbook fallback"
-                                    : requirement.EstimateSource.Contains("barter", StringComparison.OrdinalIgnoreCase)
-                                        ? "converted local flea barter"
-                                        : requirement.Currency is not null
-                                            ? "currency conversion"
-                                            : "local flea market";
+                                    : requirement.EstimateSource.Contains("dynamic flea", StringComparison.OrdinalIgnoreCase)
+                                        ? "SPT dynamic flea price"
+                                        : requirement.EstimateSource.Contains("barter", StringComparison.OrdinalIgnoreCase)
+                                            ? "converted local flea barter"
+                                            : requirement.Currency is not null
+                                                ? "currency conversion"
+                                                : "local flea market";
 
                                 GUILayout.Label(
                                     $"• {FormatCount(requirement.Count)} × {requirement.Name} — " +

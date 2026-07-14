@@ -1,8 +1,18 @@
-# HERMES 0.1.0-alpha10.2
+# HERMES 0.1.0-alpha10.2.1
 
 HERMES is a read-only SPT 4.0.13 personal operations assistant.
 
-Alpha10.2 extends the player-aware stash reservation system with current flea net estimates, per-instance best sale destinations, duplicate review, and damaged/depleted-item reporting.
+Alpha10.2.1 fixes trader-barter requirement valuation so missing live offers use SPT's dynamic flea-market price before handbook fallback. It retains the Alpha10.2 stash intelligence features.
+
+## Alpha10.2.1 fix
+
+- Trader barter requirements now use this valuation order:
+  1. Active local flea cash or converted barter offer
+  2. SPT dynamic flea price from `templates/prices`
+  3. Handbook value only when neither market source is available
+- The per-requirement market calculation identifies dynamic values as `SPT dynamic flea price`.
+- The handbook fallback note appears only when both live and dynamic market pricing are unavailable.
+- The same corrected market valuation flows into converted flea barters, hideout costs, craft costs, and stash sale analysis.
 
 ## Alpha10.2 additions
 
@@ -74,7 +84,7 @@ C:\RealSPT\BepInEx\plugins\HERMES\Hermes.Client.dll
 It also creates:
 
 ```text
-HERMES-0.1.0-alpha10.2.zip
+HERMES-0.1.0-alpha10.2.1.zip
 ```
 
 Change `SptRoot` in the client project if the development installation moves.
