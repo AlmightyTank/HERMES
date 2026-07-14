@@ -59,7 +59,10 @@ public sealed record HermesStashInstanceSelectionResponse(
     bool Found,
     string? Message,
     HermesItemSummary? Item,
-    HermesStashInstanceSummary? Instance);
+    HermesStashInstanceSummary? Instance,
+    string InventoryLocation,
+    bool IsEquipped,
+    bool IsInStash);
 
 public sealed record HermesStashInstanceSummary(
     string InstanceKey,
@@ -531,6 +534,7 @@ public sealed record HermesLoadoutSummaryResponse(
     HermesMedicalReadiness Medical,
     IReadOnlyList<HermesQuestLoadoutRequirement> QuestRequirements,
     IReadOnlyList<HermesRaidPlanSummary> RaidPlans,
+    HermesLoadoutValueSummary ValueSummary,
     IReadOnlyList<HermesLoadoutWarning> Warnings,
     long GeneratedUnixTime);
 
@@ -656,6 +660,61 @@ public sealed record HermesRaidPlanRequirement(
     bool IsSatisfied,
     IReadOnlyList<string> QuestNames,
     string Note);
+
+public sealed record HermesLoadoutValueSummary(
+    bool Found,
+    string? Message,
+    long TraderLiquidationValue,
+    long MarketReplacementValue,
+    long BestReplacementValue,
+    long AtRiskReplacementValue,
+    long ProtectedReplacementValue,
+    long InsuredReplacementValue,
+    long UninsuredReplacementValue,
+    long? EstimatedInsuranceCost,
+    string InsuranceCostSource,
+    int ValuedItemCount,
+    int UnsupportedItemCount,
+    int AtRiskItemCount,
+    int ProtectedItemCount,
+    int InsuredItemCount,
+    int UninsuredItemCount,
+    string InsuranceStatus,
+    IReadOnlyList<HermesLoadoutValueCategory> Categories,
+    IReadOnlyList<HermesLoadoutValueItem> Items,
+    IReadOnlyList<string> Notes);
+
+public sealed record HermesLoadoutValueCategory(
+    string Category,
+    int ItemCount,
+    long TraderLiquidationValue,
+    long MarketReplacementValue,
+    long BestReplacementValue,
+    long AtRiskReplacementValue,
+    long UninsuredReplacementValue);
+
+public sealed record HermesLoadoutValueItem(
+    string ProfileItemId,
+    string Name,
+    string Category,
+    string SlotName,
+    double Quantity,
+    int ConditionPercent,
+    string ConditionDescription,
+    long? TraderLiquidationValue,
+    string? BestTraderName,
+    long? MarketReplacementValue,
+    string MarketPriceSource,
+    bool MarketPriceUsedHandbookFallback,
+    long? TraderReplacementValue,
+    string TraderReplacementSource,
+    long? BestReplacementValue,
+    string BestReplacementSource,
+    bool IsAtRisk,
+    bool IsProtected,
+    bool IsInsurable,
+    string InsuranceStatus,
+    bool IsHighValueUninsured);
 
 public sealed record HermesLoadoutWarning(
     string Severity,

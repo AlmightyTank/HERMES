@@ -54,19 +54,25 @@ internal static class HermesApiClient
             {
                 Found = false,
                 Message = "HERMES returned no loadout summary."
-            });
+            },
+            StashRequestTimeout);
     }
 
-    public static Task<HermesStashInstanceSelectionResponse> GetStashInstanceSelectionAsync(string profileItemId)
+    public static Task<HermesStashInstanceSelectionResponse> GetInventoryInstanceSelectionAsync(string profileItemId)
     {
-        var route = "/hermes/stash/instance/" + Uri.EscapeDataString(profileItemId);
+        var route = "/hermes/inventory/instance/" + Uri.EscapeDataString(profileItemId);
         return GetDataAsync(
             route,
             () => new HermesStashInstanceSelectionResponse
             {
                 Found = false,
-                Message = "HERMES could not resolve the selected inventory item."
+                Message = "HERMES could not resolve the selected PMC inventory item."
             });
+    }
+
+    public static Task<HermesStashInstanceSelectionResponse> GetStashInstanceSelectionAsync(string profileItemId)
+    {
+        return GetInventoryInstanceSelectionAsync(profileItemId);
     }
 
     public static Task<HermesStashInstancesResponse> GetStashInstancesAsync(string itemKey)

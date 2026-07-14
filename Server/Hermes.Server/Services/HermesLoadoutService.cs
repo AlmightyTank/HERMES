@@ -14,9 +14,45 @@ public sealed class HermesLoadoutService(
     DatabaseService databaseService,
     ProfileHelper profileHelper,
     HermesCatalogService catalogService,
+    HermesLoadoutValueService loadoutValueService,
     JsonUtil jsonUtil)
 {
     private const string Ms2000MarkerTemplateId = "5991b51486f77447b112d44f";
+
+    // SPT quest conditions do not always declare access keys or per-objective maps.
+    // These rules cover known vanilla gaps; the runtime inference layer below also
+    // matches localized quest text against the local key catalog for modded quests.
+    private static readonly IReadOnlyList<QuestRouteKeyRule> QuestRouteKeyRules =
+    [
+        new(
+            "5936da9e86f7742d65037edf",
+            "Customs",
+            "5937ee6486f77408994ba448",
+            "FindItem",
+            ["bronze pocket watch", "pocket watch"],
+            "Required to reach the bronze pocket watch objective."),
+        new(
+            "59674eb386f774539f14813a",
+            "Customs",
+            "5780d0532459777a5108b9a2",
+            "FindItem",
+            ["secure folder 0022", "secure case for documents 0022", "folder 0022"],
+            "Required to enter the Tarcone Director's office for the Secure Folder 0022 pickup."),
+        new(
+            "5967530a86f77462ba22226b",
+            "Customs",
+            "5938144586f77473c2087145",
+            "FindItem",
+            ["secure case for documents 0031", "documents 0031"],
+            "Required to reach the Secure Folder 0031 objective."),
+        new(
+            "5967725e86f774601a446662",
+            "Customs",
+            "5938504186f7740991483f30",
+            "FindItem",
+            ["bank case"],
+            "Required to reach the bank case objective.")
+    ];
 
     private static readonly string[] EquipmentSlotOrder =
     [
@@ -63,6 +99,8 @@ public sealed class HermesLoadoutService(
     private readonly Dictionary<string, TemplateInfo> _templateCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _localeSync = new();
     private Dictionary<string, string>? _localeStrings;
+    private readonly object _keyTemplateSync = new();
+    private IReadOnlyList<TemplateInfo>? _keyTemplates;
 
     public HermesLoadoutSummaryResponse GetSummary(MongoId sessionId)
     {
@@ -105,6 +143,17 @@ public sealed class HermesLoadoutService(
             .ThenBy(item => item.SlotId, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var equippedItems = CollectDescendants(equippedRoots, children);
+        var questRaidItemsId = ReadString(inventoryNode, "QuestRaidItems", "questRaidItems");
+        IReadOnlyList<InventoryNode> questRaidRoots = string.IsNullOrWhiteSpace(questRaidItemsId)
+            ? []
+            : items
+                .Where(item => string.Equals(item.ParentId, questRaidItemsId, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        var carriedQuestItems = equippedItems
+            .Concat(CollectDescendants(questRaidRoots, children))
+            .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
 
         var warnings = new List<HermesLoadoutWarning>();
         var vitals = BuildVitals(root, warnings);
@@ -112,8 +161,9 @@ public sealed class HermesLoadoutService(
         var weapons = BuildWeaponReadiness(equippedRoots, equippedItems, children, warnings);
         var armor = BuildArmorReadiness(equippedRoots, children, warnings);
         var medical = BuildMedicalReadiness(equippedItems, warnings);
-        var questRequirements = BuildQuestRequirements(root, equippedRoots, equippedItems, warnings);
+        var questRequirements = BuildQuestRequirements(root, equippedRoots, carriedQuestItems, warnings);
         var raidPlans = BuildRaidPlans(root, questRequirements);
+        var valueSummary = loadoutValueService.GetSummary(sessionId, warnings);
 
         if (weapons.Count == 0)
         {
@@ -146,6 +196,7 @@ public sealed class HermesLoadoutService(
             medical,
             questRequirements,
             raidPlans,
+            valueSummary,
             warnings
                 .OrderBy(warning => SeverityRank(warning.Severity))
                 .ThenBy(warning => warning.Category, StringComparer.OrdinalIgnoreCase)
@@ -643,7 +694,7 @@ public sealed class HermesLoadoutService(
             questName ??= ReadString(quest, "QuestName", "questName", "name", "Name") ?? "Active quest";
             var traderId = ReadString(quest, "traderId", "TraderId") ?? string.Empty;
             var traderName = traderNames.GetValueOrDefault(traderId, "Trader");
-            var mapName = FriendlyMapName(ReadString(quest, "location", "Location"));
+            var questMapName = FriendlyMapName(ReadString(quest, "location", "Location"));
             var conditions = GetProperty(quest, "conditions", "Conditions");
 
             foreach (var group in new[] { "AvailableForFinish", "Success" })
@@ -657,6 +708,7 @@ public sealed class HermesLoadoutService(
 
                     var conditionType = ReadString(condition, "conditionType", "ConditionType", "type", "Type") ?? string.Empty;
                     var conditionId = ReadString(condition, "id", "Id") ?? $"{group}:{conditionType}:{output.Count}";
+                    var mapName = ResolveObjectiveMap(questId, questMapName, conditionId, conditionType, condition);
                     var completed = state.CompletedConditions.Contains(conditionId);
                     var required = Math.Max(1d, ReadDouble(condition, 1d, "value", "Value"));
                     var foundInRaidRequired = ReadBool(condition, false, "onlyFoundInRaid", "OnlyFoundInRaid");
@@ -765,6 +817,18 @@ public sealed class HermesLoadoutService(
                     }
                 }
             }
+
+            AddInferredRouteKeyRequirements(
+                output,
+                warnings,
+                seen,
+                questId,
+                questName,
+                traderName,
+                questMapName,
+                quest,
+                state,
+                carriedItems);
         }
 
         return output
@@ -774,6 +838,410 @@ public sealed class HermesLoadoutService(
             .ThenBy(requirement => requirement.QuestName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(requirement => requirement.RequiredEquipment, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private void AddInferredRouteKeyRequirements(
+        ICollection<HermesQuestLoadoutRequirement> output,
+        ICollection<HermesLoadoutWarning> warnings,
+        ISet<string> seen,
+        string questId,
+        string questName,
+        string traderName,
+        string questMapName,
+        JsonObject quest,
+        ActiveQuestState state,
+        IReadOnlyList<InventoryNode> carriedItems)
+    {
+        var candidates = InferRouteKeys(questId, questName, questMapName, quest, state);
+        foreach (var candidate in candidates)
+        {
+            if (output.Any(requirement =>
+                    requirement.QuestName.Equals(questName, StringComparison.OrdinalIgnoreCase)
+                    && requirement.RequiredEquipment.Equals(candidate.Key.Name, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
+
+            var carried = carriedItems
+                .Where(item => item.TemplateId.Equals(candidate.Key.TemplateId, StringComparison.OrdinalIgnoreCase))
+                .Sum(GetStackCount);
+            AddTextRequirement(
+                output,
+                warnings,
+                seen,
+                $"{questId}:inferred-route-key:{candidate.Key.TemplateId}:{candidate.MapName}",
+                questName,
+                traderName,
+                candidate.MapName,
+                "Inferred route key",
+                "Inferred access requirement",
+                candidate.Key.Name,
+                1d,
+                carried,
+                completed: false,
+                isRaidCritical: true,
+                satisfiedNote: "Inferred route key is currently carried.",
+                missingNote: $"Bring 1 × {candidate.Key.Name}. {candidate.Reason}");
+        }
+    }
+
+    private IReadOnlyList<InferredRouteKey> InferRouteKeys(
+        string questId,
+        string questName,
+        string questMapName,
+        JsonObject quest,
+        ActiveQuestState state)
+    {
+        var output = new Dictionary<string, InferredRouteKey>(StringComparer.OrdinalIgnoreCase);
+        foreach (var rule in QuestRouteKeyRules.Where(rule => rule.QuestId.Equals(questId, StringComparison.OrdinalIgnoreCase)))
+        {
+            if (IsRouteKeyStageComplete(quest, state, rule))
+            {
+                continue;
+            }
+
+            var key = GetTemplate(rule.KeyTemplateId);
+            if (!key.Exists || !key.IsKey)
+            {
+                continue;
+            }
+
+            output.TryAdd(
+                key.TemplateId,
+                new InferredRouteKey(key, rule.MapName, rule.Reason, "vanilla quest-route rule"));
+        }
+
+        var questSearchText = NormalizeSearchText(BuildQuestSearchText(questId, questName, quest));
+        if (questSearchText.Length == 0)
+        {
+            return output.Values.ToList();
+        }
+
+        foreach (var key in GetKeyTemplates())
+        {
+            if (output.ContainsKey(key.TemplateId))
+            {
+                continue;
+            }
+
+            var keyIdMatch = !string.IsNullOrWhiteSpace(key.KeyId)
+                             && questSearchText.Contains(NormalizeSearchText(key.KeyId), StringComparison.Ordinal);
+            var keyNamePhrase = BuildKeyMatchPhrase(key.Name);
+            var nameMatch = keyNamePhrase.Length >= 8
+                            && questSearchText.Contains(keyNamePhrase, StringComparison.Ordinal);
+            if (!keyIdMatch && !nameMatch)
+            {
+                continue;
+            }
+
+            var mapName = InferMapFromText(questSearchText) ?? questMapName;
+            output.TryAdd(
+                key.TemplateId,
+                new InferredRouteKey(
+                    key,
+                    mapName,
+                    "Inferred from the active quest text and the local key catalog.",
+                    "quest text/key match"));
+        }
+
+        return output.Values
+            .OrderBy(value => value.MapName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(value => value.Key.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private bool IsRouteKeyStageComplete(JsonObject quest, ActiveQuestState state, QuestRouteKeyRule rule)
+    {
+        var typeMatches = new List<JsonObject>();
+        var hintMatches = new List<JsonObject>();
+        var conditions = GetProperty(quest, "conditions", "Conditions");
+        foreach (var group in new[] { "AvailableForFinish", "Success" })
+        {
+            foreach (var node in GetArray(GetProperty(conditions, group)))
+            {
+                if (node is not JsonObject condition)
+                {
+                    continue;
+                }
+
+                var type = ReadString(condition, "conditionType", "ConditionType", "type", "Type") ?? string.Empty;
+                if (!type.Contains(rule.RelatedConditionType, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                typeMatches.Add(condition);
+                var description = NormalizeSearchText(DescribeQuestObjective(condition, type));
+                if (rule.TargetHints.Count == 0
+                    || rule.TargetHints.Any(hint => description.Contains(NormalizeSearchText(hint), StringComparison.Ordinal)))
+                {
+                    hintMatches.Add(condition);
+                }
+            }
+        }
+
+        IReadOnlyList<JsonObject> related = hintMatches.Count > 0
+            ? hintMatches
+            : typeMatches.Count == 1
+                ? typeMatches
+                : [];
+        return related.Count > 0
+               && related.All(condition =>
+               {
+                   var conditionId = ReadString(condition, "id", "Id");
+                   return !string.IsNullOrWhiteSpace(conditionId)
+                          && state.CompletedConditions.Contains(conditionId);
+               });
+    }
+
+    private IReadOnlyList<TemplateInfo> GetKeyTemplates()
+    {
+        lock (_keyTemplateSync)
+        {
+            if (_keyTemplates is not null)
+            {
+                return _keyTemplates;
+            }
+        }
+
+        EnsureLocaleStrings();
+        var candidateIds = new HashSet<string>(
+            QuestRouteKeyRules.Select(rule => rule.KeyTemplateId),
+            StringComparer.OrdinalIgnoreCase);
+        lock (_localeSync)
+        {
+            if (_localeStrings is not null)
+            {
+                foreach (var pair in _localeStrings)
+                {
+                    if (!pair.Key.EndsWith(" Name", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var lowerName = pair.Value.ToLowerInvariant();
+                    if (!lowerName.Contains("key", StringComparison.Ordinal)
+                        && !lowerName.Contains("keycard", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var templateId = pair.Key[..^5].Trim();
+                    if (MongoId.IsValidMongoId(templateId))
+                    {
+                        candidateIds.Add(templateId);
+                    }
+                }
+            }
+        }
+
+        lock (_templateSync)
+        {
+            foreach (var cached in _templateCache.Values.Where(template => template.Exists && template.IsKey))
+            {
+                candidateIds.Add(cached.TemplateId);
+            }
+        }
+
+        var keys = candidateIds
+            .Select(GetTemplate)
+            .Where(template => template.Exists && template.IsKey)
+            .OrderBy(template => template.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        lock (_keyTemplateSync)
+        {
+            _keyTemplates ??= keys;
+            return _keyTemplates;
+        }
+    }
+
+    private string BuildQuestSearchText(string questId, string questName, JsonObject quest)
+    {
+        var conditions = GetProperty(quest, "conditions", "Conditions");
+        var parts = new List<string>
+        {
+            questName,
+            conditions?.ToJsonString() ?? string.Empty
+        };
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { questId };
+        CollectConditionIds(conditions, ids);
+        EnsureLocaleStrings();
+        lock (_localeSync)
+        {
+            if (_localeStrings is not null)
+            {
+                foreach (var pair in _localeStrings)
+                {
+                    if (ids.Any(id => pair.Key.Contains(id, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        parts.Add(pair.Value);
+                    }
+                }
+            }
+        }
+
+        return string.Join(" ", parts);
+    }
+
+    private static void CollectConditionIds(JsonNode? node, ISet<string> output)
+    {
+        if (node is JsonObject obj)
+        {
+            foreach (var pair in obj)
+            {
+                if (pair.Key.Equals("id", StringComparison.OrdinalIgnoreCase)
+                    && pair.Value is JsonValue value
+                    && value.TryGetValue<string>(out var id)
+                    && !string.IsNullOrWhiteSpace(id))
+                {
+                    output.Add(id);
+                }
+
+                CollectConditionIds(pair.Value, output);
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var child in array)
+            {
+                CollectConditionIds(child, output);
+            }
+        }
+    }
+
+    private string ResolveObjectiveMap(
+        string questId,
+        string questMapName,
+        string conditionId,
+        string conditionType,
+        JsonObject condition)
+    {
+        var directLocationNode = GetProperty(condition, "location", "Location", "map", "Map");
+        var directLocation = directLocationNode is JsonValue
+            ? ReadString(directLocationNode)
+            : null;
+        if (!string.IsNullOrWhiteSpace(directLocation)
+            && !MongoId.IsValidMongoId(directLocation))
+        {
+            var directMap = FriendlyMapName(directLocation);
+            if (!directMap.Equals("Any map", StringComparison.OrdinalIgnoreCase))
+            {
+                return directMap;
+            }
+        }
+
+        // Delivery From the Past is stored as an any-map quest even though its
+        // pickup and placement conditions belong to different raids.
+        if (questId.Equals("59674eb386f774539f14813a", StringComparison.OrdinalIgnoreCase))
+        {
+            if (IsPlantOrPlacementCondition(conditionType))
+            {
+                return "Factory";
+            }
+
+            if (conditionType.Contains("FindItem", StringComparison.OrdinalIgnoreCase)
+                || conditionType.Contains("HandoverItem", StringComparison.OrdinalIgnoreCase)
+                || conditionType.Contains("VisitPlace", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Customs";
+            }
+        }
+
+        var conditionText = new List<string>
+        {
+            condition.ToJsonString(),
+            DescribeQuestObjective(condition, conditionType),
+            GetLocalizedConditionText(conditionId)
+        };
+        return InferMapFromText(string.Join(" ", conditionText)) ?? questMapName;
+    }
+
+    private string GetLocalizedConditionText(string conditionId)
+    {
+        if (string.IsNullOrWhiteSpace(conditionId))
+        {
+            return string.Empty;
+        }
+
+        EnsureLocaleStrings();
+        lock (_localeSync)
+        {
+            if (_localeStrings is null)
+            {
+                return string.Empty;
+            }
+
+            return string.Join(
+                " ",
+                _localeStrings
+                    .Where(pair => pair.Key.Contains(conditionId, StringComparison.OrdinalIgnoreCase))
+                    .Select(pair => pair.Value));
+        }
+    }
+
+    private static string? InferMapFromText(string text)
+    {
+        var normalized = NormalizeSearchText(text);
+        var matches = new List<string>();
+        AddMapMatch(matches, normalized, "Customs", "customs", "big red", "tarcone", "dorms");
+        AddMapMatch(matches, normalized, "Factory", "factory", "gate 3", "break room");
+        AddMapMatch(matches, normalized, "Woods", "woods", "sawmill");
+        AddMapMatch(matches, normalized, "Shoreline", "shoreline", "health resort", "resort");
+        AddMapMatch(matches, normalized, "Interchange", "interchange", "ultra mall", "idea", "oli", "goshan");
+        AddMapMatch(matches, normalized, "Reserve", "reserve", "rezervbase", "white pawn", "black pawn");
+        AddMapMatch(matches, normalized, "The Lab", "laboratory", "the lab", "terragroup labs");
+        AddMapMatch(matches, normalized, "Lighthouse", "lighthouse", "water treatment plant");
+        AddMapMatch(matches, normalized, "Streets of Tarkov", "streets of tarkov", "tarkovstreets");
+        AddMapMatch(matches, normalized, "Ground Zero", "ground zero", "sandbox");
+        return matches.Distinct(StringComparer.OrdinalIgnoreCase).Count() == 1
+            ? matches[0]
+            : null;
+    }
+
+    private static void AddMapMatch(ICollection<string> matches, string text, string mapName, params string[] aliases)
+    {
+        if (aliases.Any(alias => text.Contains(NormalizeSearchText(alias), StringComparison.Ordinal)))
+        {
+            matches.Add(mapName);
+        }
+    }
+
+    private static string BuildKeyMatchPhrase(string name)
+    {
+        var normalized = NormalizeSearchText(name);
+        var words = normalized
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(word => !word.Equals("key", StringComparison.Ordinal)
+                           && !word.Equals("keycard", StringComparison.Ordinal))
+            .ToList();
+        return string.Join(" ", words);
+    }
+
+    private static string NormalizeSearchText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var output = new char[value.Length];
+        var length = 0;
+        var previousSpace = true;
+        foreach (var character in value.ToLowerInvariant())
+        {
+            if (char.IsLetterOrDigit(character))
+            {
+                output[length++] = character;
+                previousSpace = false;
+            }
+            else if (!previousSpace)
+            {
+                output[length++] = ' ';
+                previousSpace = true;
+            }
+        }
+
+        return new string(output, 0, length).Trim();
     }
 
     private void AddNestedCounterRequirements(
@@ -1126,8 +1594,9 @@ public sealed class HermesLoadoutService(
                              && serializedProps.Contains("Energy", StringComparison.OrdinalIgnoreCase)
                              && maximumResource > 0d;
         var isArmor = armorClass > 0 || serializedProps.Contains("ArmorType", StringComparison.OrdinalIgnoreCase);
+        var keyId = ReadString(props, "KeyId", "keyId") ?? string.Empty;
         var isKey = ReadDouble(props, 0d, "MaximumNumberOfUsage", "maximumNumberOfUsage") > 0d
-                    || !string.IsNullOrWhiteSpace(ReadString(props, "KeyId", "keyId"))
+                    || !string.IsNullOrWhiteSpace(keyId)
                     || lowerName.EndsWith(" key", StringComparison.Ordinal)
                     || lowerName.Contains("marked key", StringComparison.Ordinal);
         var armorSlots = ParseArmorSlots(props);
@@ -1148,6 +1617,7 @@ public sealed class HermesLoadoutService(
             isAmmo,
             isArmor,
             isKey,
+            keyId,
             armorClass,
             magazineCapacity,
             internalMagazine,
@@ -1529,9 +1999,9 @@ public sealed class HermesLoadoutService(
             questName ??= ReadString(quest, "QuestName", "questName", "name", "Name") ?? "Active quest";
             var traderId = ReadString(quest, "traderId", "TraderId") ?? string.Empty;
             var traderName = traderNames.GetValueOrDefault(traderId, "Trader");
-            var mapName = FriendlyMapName(ReadString(quest, "location", "Location"));
+            var questMapName = FriendlyMapName(ReadString(quest, "location", "Location"));
             var conditions = GetProperty(quest, "conditions", "Conditions");
-            var objectives = new List<HermesRaidPlanObjective>();
+            var objectivesByMap = new Dictionary<string, List<HermesRaidPlanObjective>>(StringComparer.OrdinalIgnoreCase);
             var objectiveIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var group in new[] { "AvailableForFinish", "Success" })
@@ -1544,15 +2014,22 @@ public sealed class HermesLoadoutService(
                     }
 
                     var conditionType = ReadString(condition, "conditionType", "ConditionType", "type", "Type") ?? "Quest objective";
-                    var conditionId = ReadString(condition, "id", "Id") ?? $"{group}:{conditionType}:{objectives.Count}";
+                    var conditionId = ReadString(condition, "id", "Id") ?? $"{group}:{conditionType}:{objectiveIds.Count}";
                     if (!objectiveIds.Add(conditionId))
                     {
                         continue;
                     }
 
+                    var mapName = ResolveObjectiveMap(questId, questMapName, conditionId, conditionType, condition);
+                    if (!objectivesByMap.TryGetValue(mapName, out var mapObjectives))
+                    {
+                        mapObjectives = [];
+                        objectivesByMap[mapName] = mapObjectives;
+                    }
+
                     var completed = state.CompletedConditions.Contains(conditionId);
                     var isRaidObjective = IsRaidObjectiveCondition(condition, conditionType);
-                    objectives.Add(new HermesRaidPlanObjective(
+                    mapObjectives.Add(new HermesRaidPlanObjective(
                         FriendlyQuestConditionLabel(conditionType),
                         DescribeQuestObjective(condition, conditionType),
                         completed,
@@ -1561,32 +2038,47 @@ public sealed class HermesLoadoutService(
                 }
             }
 
-            var relatedRequirements = questRequirements
-                .Where(requirement => requirement.QuestName.Equals(questName, StringComparison.OrdinalIgnoreCase)
-                                      && requirement.MapName.Equals(mapName, StringComparison.OrdinalIgnoreCase))
+            var requirementMaps = questRequirements
+                .Where(requirement => requirement.QuestName.Equals(questName, StringComparison.OrdinalIgnoreCase))
+                .Select(requirement => requirement.MapName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            var missingRequirements = relatedRequirements.Count(requirement =>
-                requirement.IsRaidCritical && !requirement.IsCompleted && !requirement.IsSatisfied);
-            var questStatus = state.Status == 3
-                ? "Ready to finish"
-                : missingRequirements > 0
-                    ? "Missing gear"
-                    : "Active";
+            var stageMaps = objectivesByMap.Keys
+                .Concat(requirementMaps)
+                .DefaultIfEmpty(questMapName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
 
-            questDrafts.Add(new RaidQuestDraft(
-                mapName,
-                new HermesRaidPlanQuest(
-                    questName,
-                    traderName,
-                    questStatus,
-                    objectives.Count,
-                    objectives.Count(objective => objective.IsCompleted),
-                    missingRequirements,
-                    objectives
-                        .OrderBy(objective => objective.IsCompleted)
-                        .ThenByDescending(objective => objective.IsRaidObjective)
-                        .ThenBy(objective => objective.Description, StringComparer.OrdinalIgnoreCase)
-                        .ToList())));
+            foreach (var mapName in stageMaps)
+            {
+                var objectives = objectivesByMap.GetValueOrDefault(mapName) ?? [];
+                var relatedRequirements = questRequirements
+                    .Where(requirement => requirement.QuestName.Equals(questName, StringComparison.OrdinalIgnoreCase)
+                                          && requirement.MapName.Equals(mapName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                var missingRequirements = relatedRequirements.Count(requirement =>
+                    requirement.IsRaidCritical && !requirement.IsCompleted && !requirement.IsSatisfied);
+                var questStatus = state.Status == 3
+                    ? "Ready to finish"
+                    : missingRequirements > 0
+                        ? "Missing gear"
+                        : "Active";
+
+                questDrafts.Add(new RaidQuestDraft(
+                    mapName,
+                    new HermesRaidPlanQuest(
+                        questName,
+                        traderName,
+                        questStatus,
+                        objectives.Count,
+                        objectives.Count(objective => objective.IsCompleted),
+                        missingRequirements,
+                        objectives
+                            .OrderBy(objective => objective.IsCompleted)
+                            .ThenByDescending(objective => objective.IsRaidObjective)
+                            .ThenBy(objective => objective.Description, StringComparer.OrdinalIgnoreCase)
+                            .ToList())));
+            }
         }
 
         var plans = new List<HermesRaidPlanSummary>();
@@ -1731,7 +2223,7 @@ public sealed class HermesLoadoutService(
             notes.Add("All currently detectable raid-critical gear requirements are covered.");
         }
 
-        notes.Add("HERMES only lists keys and tools explicitly declared by quest data; undeclared route keys are not inferred yet.");
+        notes.Add("Route keys labeled as inferred come from local quest/key text matching and HERMES vanilla quest-route rules.");
         return notes;
     }
 
@@ -2083,7 +2575,7 @@ public sealed class HermesLoadoutService(
             "laboratory" or "lab" => "The Lab",
             "lighthouse" => "Lighthouse",
             "tarkovstreets" or "streets" => "Streets of Tarkov",
-            "sandbox" or "sandbox_high" or "groundzero" => "Ground Zero",
+            "sandbox" or "sandbox_high" or "groundzero" or "653e6760052c01c1c805532f" => "Ground Zero",
             "labyrinth" => "The Labyrinth",
             "terminal" => "Terminal",
             _ => FormatDisplayName(location ?? "Any map")
@@ -2426,6 +2918,28 @@ public sealed class HermesLoadoutService(
             new HermesMedicalReadiness(0, 0, false, false, false, false, false, 0, 0, []),
             [],
             [],
+            new HermesLoadoutValueSummary(
+                false,
+                message,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                null,
+                "Unavailable",
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                "UNAVAILABLE",
+                [],
+                [],
+                []),
             [],
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
     }
@@ -2449,6 +2963,7 @@ public sealed class HermesLoadoutService(
         bool IsAmmo,
         bool IsArmor,
         bool IsKey,
+        string KeyId,
         int ArmorClass,
         int MagazineCapacity,
         bool IsInternalMagazineWeapon,
@@ -2475,6 +2990,7 @@ public sealed class HermesLoadoutService(
             false,
             false,
             false,
+            string.Empty,
             0,
             0,
             false,
@@ -2495,4 +3011,16 @@ public sealed class HermesLoadoutService(
     private sealed record ConditionInfo(int Percent, string Description, bool HasCondition);
     private sealed record RaidQuestDraft(string MapName, HermesRaidPlanQuest Quest);
     private sealed record ActiveQuestState(int Status, IReadOnlySet<string> CompletedConditions);
+    private sealed record QuestRouteKeyRule(
+        string QuestId,
+        string MapName,
+        string KeyTemplateId,
+        string RelatedConditionType,
+        IReadOnlyList<string> TargetHints,
+        string Reason);
+    private sealed record InferredRouteKey(
+        TemplateInfo Key,
+        string MapName,
+        string Reason,
+        string Source);
 }

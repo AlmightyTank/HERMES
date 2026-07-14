@@ -50,11 +50,19 @@ public sealed class HermesDynamicRouter(
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(
+                "/hermes/inventory/instance/",
+                (url, _, sessionId, _) =>
+                {
+                    var profileItemId = GetTail(url, "/hermes/inventory/instance/");
+                    var response = stashService.GetInventoryInstanceSelection(profileItemId, sessionId);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
                 "/hermes/stash/instance/",
                 (url, _, sessionId, _) =>
                 {
                     var profileItemId = GetTail(url, "/hermes/stash/instance/");
-                    var response = stashService.GetInstanceSelection(profileItemId, sessionId);
+                    var response = stashService.GetInventoryInstanceSelection(profileItemId, sessionId);
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(

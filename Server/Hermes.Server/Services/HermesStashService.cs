@@ -66,53 +66,47 @@ public sealed class HermesStashService(
         string? profileItemId,
         MongoId sessionId)
     {
+        return GetInventoryInstanceSelection(profileItemId, sessionId);
+    }
+
+    public HermesStashInstanceSelectionResponse GetInventoryInstanceSelection(
+        string? profileItemId,
+        MongoId sessionId)
+    {
         if (string.IsNullOrWhiteSpace(profileItemId))
         {
-            return new HermesStashInstanceSelectionResponse(
-                false,
-                "HERMES did not receive a valid inventory item.",
-                null,
-                null);
+            return InventorySelectionNotFound("HERMES did not receive a valid PMC inventory item.");
         }
 
         var snapshot = BuildInventorySnapshot(sessionId);
         if (snapshot is null)
         {
-            return new HermesStashInstanceSelectionResponse(
-                false,
-                "HERMES could not read the active PMC inventory.",
-                null,
-                null);
+            return InventorySelectionNotFound("HERMES could not read the active PMC inventory.");
         }
 
-        if (!snapshot.ById.TryGetValue(profileItemId, out var item)
-            || !IsInStash(item, snapshot))
+        if (!snapshot.ById.TryGetValue(profileItemId, out var item))
         {
-            return new HermesStashInstanceSelectionResponse(
-                false,
-                "This item is not currently stored in the active PMC inventory.",
-                null,
-                null);
+            return InventorySelectionNotFound("This item is not present in the active PMC inventory.");
+        }
+
+        var location = ResolveInventoryLocation(item, snapshot);
+        if (!location.IsInStash && !location.IsEquipped)
+        {
+            return InventorySelectionNotFound(
+                "This item is not currently stored in the PMC stash or carried by the equipped character.");
         }
 
         if (!MongoId.IsValidMongoId(item.TemplateId))
         {
-            return new HermesStashInstanceSelectionResponse(
-                false,
-                "This inventory item has an unsupported template.",
-                null,
-                null);
+            return InventorySelectionNotFound("This PMC inventory item has an unsupported template.");
         }
 
         var templateId = new MongoId(item.TemplateId);
         var itemSummary = catalogService.GetSummary(templateId);
         if (itemSummary is null)
         {
-            return new HermesStashInstanceSelectionResponse(
-                false,
-                "HERMES does not list this item. Quest-only and handbook-less items are excluded.",
-                null,
-                null);
+            return InventorySelectionNotFound(
+                "HERMES does not list this item. Quest-only and handbook-less items are excluded.");
         }
 
         var tree = GetItemTree(item, snapshot);
@@ -123,7 +117,10 @@ public sealed class HermesStashService(
             true,
             null,
             itemSummary,
-            instance);
+            instance,
+            location.Label,
+            location.IsEquipped,
+            location.IsInStash);
     }
 
     public HermesStashInstancesResponse GetInstances(string? itemKey, MongoId sessionId)
@@ -191,8 +188,9 @@ public sealed class HermesStashService(
 
         foreach (var item in snapshot.Items)
         {
+            var location = ResolveInventoryLocation(item, snapshot);
             if (!item.TemplateId.Equals(catalogItem.TemplateId.ToString(), StringComparison.OrdinalIgnoreCase)
-                || !IsInStash(item, snapshot)
+                || (!location.IsInStash && !location.IsEquipped)
                 || !CreateInstanceKey(sessionId, item.Id).Equals(instanceKey, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -597,6 +595,7 @@ public sealed class HermesStashService(
         }
 
         var stashId = ReadString(inventory, "Stash", "stash");
+        var equipmentId = ReadString(inventory, "Equipment", "equipment");
         var items = new List<InventoryItemNode>();
 
         foreach (var node in GetArray(GetProperty(inventory, "items", "Items")))
@@ -627,7 +626,97 @@ public sealed class HermesStashService(
             .GroupBy(item => item.ParentId!, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
 
-        return new InventorySnapshot(stashId, items, byId, children);
+        return new InventorySnapshot(stashId, equipmentId, items, byId, children);
+    }
+
+    private static InventoryLocation ResolveInventoryLocation(
+        InventoryItemNode item,
+        InventorySnapshot snapshot)
+    {
+        var current = item;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        while (true)
+        {
+            if (!visited.Add(current.Id))
+            {
+                return InventoryLocation.Unknown;
+            }
+
+            if (!string.IsNullOrWhiteSpace(snapshot.StashId)
+                && string.Equals(current.ParentId, snapshot.StashId, StringComparison.OrdinalIgnoreCase))
+            {
+                return new InventoryLocation("PMC stash", false, true);
+            }
+
+            if (!string.IsNullOrWhiteSpace(snapshot.EquipmentId)
+                && string.Equals(current.ParentId, snapshot.EquipmentId, StringComparison.OrdinalIgnoreCase))
+            {
+                var slot = FriendlyEquipmentSlot(current.SlotId);
+                var label = current.Id.Equals(item.Id, StringComparison.OrdinalIgnoreCase)
+                    ? $"Equipped — {slot}"
+                    : IsCarriedContainerSlot(current.SlotId)
+                        ? $"Carried in {slot}"
+                        : $"Equipped on {slot}";
+                return new InventoryLocation(label, true, false);
+            }
+
+            if (string.IsNullOrWhiteSpace(snapshot.StashId)
+                && string.Equals(current.SlotId, "hideout", StringComparison.OrdinalIgnoreCase))
+            {
+                return new InventoryLocation("PMC stash", false, true);
+            }
+
+            if (string.IsNullOrWhiteSpace(current.ParentId)
+                || !snapshot.ById.TryGetValue(current.ParentId, out var parent))
+            {
+                return InventoryLocation.Unknown;
+            }
+
+            current = parent;
+        }
+    }
+
+    private static bool IsCarriedContainerSlot(string? slotId)
+    {
+        return slotId is "Backpack" or "TacticalVest" or "Pockets" or "SecuredContainer";
+    }
+
+    private static string FriendlyEquipmentSlot(string? slotId)
+    {
+        return slotId switch
+        {
+            "FirstPrimaryWeapon" => "primary weapon",
+            "SecondPrimaryWeapon" => "secondary weapon",
+            "Holster" => "holster",
+            "Scabbard" => "scabbard",
+            "ArmorVest" => "body armor",
+            "TacticalVest" => "tactical rig",
+            "Headwear" => "headwear",
+            "Earpiece" => "headset",
+            "FaceCover" => "face cover",
+            "Eyewear" => "eyewear",
+            "Backpack" => "backpack",
+            "Pockets" => "pockets",
+            "SecuredContainer" => "secure container",
+            "Armband" => "armband",
+            "Compass" => "compass",
+            "SpecialSlot1" or "SpecialSlot2" or "SpecialSlot3" => "special equipment slot",
+            null or "" => "character equipment",
+            _ => slotId
+        };
+    }
+
+    private static HermesStashInstanceSelectionResponse InventorySelectionNotFound(string message)
+    {
+        return new HermesStashInstanceSelectionResponse(
+            false,
+            message,
+            null,
+            null,
+            string.Empty,
+            false,
+            false);
     }
 
     private static bool IsInStash(InventoryItemNode item, InventorySnapshot snapshot)
@@ -880,9 +969,18 @@ public sealed class HermesStashService(
 
     private sealed record InventorySnapshot(
         string? StashId,
+        string? EquipmentId,
         IReadOnlyList<InventoryItemNode> Items,
         IReadOnlyDictionary<string, InventoryItemNode> ById,
         IReadOnlyDictionary<string, List<InventoryItemNode>> Children);
+
+    private sealed record InventoryLocation(
+        string Label,
+        bool IsEquipped,
+        bool IsInStash)
+    {
+        public static InventoryLocation Unknown { get; } = new(string.Empty, false, false);
+    }
 
     private sealed record ConditionInfo(
         int DisplayPercent,

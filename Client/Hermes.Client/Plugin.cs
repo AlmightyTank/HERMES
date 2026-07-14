@@ -25,24 +25,29 @@ public sealed class Plugin : BaseUnityPlugin
         try
         {
             new AskHermesContextMenuPatch().Enable();
-            Logger.LogInfo("Ask HERMES inventory, trader, and flea context actions enabled.");
+            Logger.LogInfo("Ask HERMES stash, equipped-character, trader, and flea context actions enabled.");
         }
         catch (Exception ex)
         {
             Logger.LogError($"Ask HERMES context action could not be enabled: {ex}");
         }
 
-        Logger.LogInfo("HERMES 0.1.0-alpha11.2 loaded. Press F8 in the main menu.");
+        Logger.LogInfo("HERMES 0.1.0-alpha11.3.1 loaded. Press F8 in the main menu.");
     }
 
-    internal void OpenForStashItem(string profileItemId)
+    internal void OpenForInventoryItem(string profileItemId)
     {
         if (_window is null || string.IsNullOrWhiteSpace(profileItemId))
         {
             return;
         }
 
-        _window.OpenForStashItem(profileItemId);
+        _window.OpenForInventoryItem(profileItemId);
+    }
+
+    internal void OpenForStashItem(string profileItemId)
+    {
+        OpenForInventoryItem(profileItemId);
     }
 
     internal void OpenForPreviewItem(string templateId, string sourceLabel)

@@ -50,7 +50,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
 
         return new HermesStatusResponse(
             "HERMES",
-            "0.1.0-alpha11.2",
+            "0.1.0-alpha11.3.1",
             "4.0.13",
             true,
             [
@@ -59,6 +59,8 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "trader-buy-and-sell-intelligence",
                 "selected-stash-instance-trader-valuation",
                 "ask-hermes-inventory-context-action",
+                "ask-hermes-equipped-character-context-action",
+                "ask-hermes-loadout-item-buttons",
                 "ask-hermes-trader-and-flea-preview-context-action",
                 "player-loyalty-awareness",
                 "cash-and-barter-offers",
@@ -126,7 +128,16 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "combined-raid-gear-checklists",
                 "duplicate-quest-requirement-merging",
                 "quest-objective-completion-summaries",
-                "multi-restriction-raid-plan-warnings"
+                "multi-restriction-raid-plan-warnings",
+                "exact-carried-item-valuation",
+                "loadout-market-replacement-cost",
+                "loadout-trader-liquidation-value",
+                "loadout-best-replacement-source",
+                "loadout-insurance-state-detection",
+                "protected-slot-risk-separation",
+                "loadout-value-category-breakdown",
+                "high-value-uninsured-warnings",
+                "configured-insurance-cost-estimate"
             ]);
     }
 

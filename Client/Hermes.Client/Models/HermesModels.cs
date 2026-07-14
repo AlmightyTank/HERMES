@@ -66,6 +66,9 @@ public sealed class HermesStashInstanceSelectionResponse
     public string? Message { get; set; }
     public HermesItemSummary? Item { get; set; }
     public HermesStashInstanceSummary? Instance { get; set; }
+    public string InventoryLocation { get; set; } = string.Empty;
+    public bool IsEquipped { get; set; }
+    public bool IsInStash { get; set; }
 }
 
 public sealed class HermesStashInstanceSummary
@@ -597,6 +600,7 @@ internal sealed class HermesLoadoutSummaryResponse
     public HermesMedicalReadiness Medical { get; set; } = new();
     public List<HermesQuestLoadoutRequirement> QuestRequirements { get; set; } = [];
     public List<HermesRaidPlanSummary> RaidPlans { get; set; } = [];
+    public HermesLoadoutValueSummary ValueSummary { get; set; } = new();
     public List<HermesLoadoutWarning> Warnings { get; set; } = [];
     public long GeneratedUnixTime { get; set; }
 }
@@ -744,6 +748,67 @@ internal sealed class HermesRaidPlanRequirement
     public bool IsSatisfied { get; set; }
     public List<string> QuestNames { get; set; } = [];
     public string Note { get; set; } = string.Empty;
+}
+
+internal sealed class HermesLoadoutValueSummary
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public long TraderLiquidationValue { get; set; }
+    public long MarketReplacementValue { get; set; }
+    public long BestReplacementValue { get; set; }
+    public long AtRiskReplacementValue { get; set; }
+    public long ProtectedReplacementValue { get; set; }
+    public long InsuredReplacementValue { get; set; }
+    public long UninsuredReplacementValue { get; set; }
+    public long? EstimatedInsuranceCost { get; set; }
+    public string InsuranceCostSource { get; set; } = string.Empty;
+    public int ValuedItemCount { get; set; }
+    public int UnsupportedItemCount { get; set; }
+    public int AtRiskItemCount { get; set; }
+    public int ProtectedItemCount { get; set; }
+    public int InsuredItemCount { get; set; }
+    public int UninsuredItemCount { get; set; }
+    public string InsuranceStatus { get; set; } = string.Empty;
+    public List<HermesLoadoutValueCategory> Categories { get; set; } = [];
+    public List<HermesLoadoutValueItem> Items { get; set; } = [];
+    public List<string> Notes { get; set; } = [];
+}
+
+internal sealed class HermesLoadoutValueCategory
+{
+    public string Category { get; set; } = string.Empty;
+    public int ItemCount { get; set; }
+    public long TraderLiquidationValue { get; set; }
+    public long MarketReplacementValue { get; set; }
+    public long BestReplacementValue { get; set; }
+    public long AtRiskReplacementValue { get; set; }
+    public long UninsuredReplacementValue { get; set; }
+}
+
+internal sealed class HermesLoadoutValueItem
+{
+    public string ProfileItemId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public string SlotName { get; set; } = string.Empty;
+    public double Quantity { get; set; }
+    public int ConditionPercent { get; set; }
+    public string ConditionDescription { get; set; } = string.Empty;
+    public long? TraderLiquidationValue { get; set; }
+    public string? BestTraderName { get; set; }
+    public long? MarketReplacementValue { get; set; }
+    public string MarketPriceSource { get; set; } = string.Empty;
+    public bool MarketPriceUsedHandbookFallback { get; set; }
+    public long? TraderReplacementValue { get; set; }
+    public string TraderReplacementSource { get; set; } = string.Empty;
+    public long? BestReplacementValue { get; set; }
+    public string BestReplacementSource { get; set; } = string.Empty;
+    public bool IsAtRisk { get; set; }
+    public bool IsProtected { get; set; }
+    public bool IsInsurable { get; set; }
+    public string InsuranceStatus { get; set; } = string.Empty;
+    public bool IsHighValueUninsured { get; set; }
 }
 
 internal sealed class HermesLoadoutWarning

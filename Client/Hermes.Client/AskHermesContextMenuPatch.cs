@@ -8,7 +8,7 @@ namespace Hermes.Client;
 
 /// <summary>
 /// Adds a normal EFT dynamic interaction to supported inventory, trader, and flea item context menus.
-/// Owned inventory items are resolved as exact PMC profile instances. Trader and flea previews are
+/// Owned stash and equipped-character items are resolved as exact PMC profile instances. Trader and flea previews are
 /// resolved by template and intentionally use the full-condition base-item estimate by default.
 /// </summary>
 internal sealed class AskHermesContextMenuPatch : ModulePatch
@@ -36,9 +36,7 @@ internal sealed class AskHermesContextMenuPatch : ModulePatch
             }
 
             var viewTypeName = itemContext.ViewType.ToString();
-            var isOwnedInventoryItem = viewTypeName.Equals(
-                EItemViewType.Inventory.ToString(),
-                StringComparison.OrdinalIgnoreCase);
+            var isOwnedInventoryItem = IsOwnedInventoryView(viewTypeName);
             var previewSource = GetPreviewSource(viewTypeName);
 
             // Keep raid/world-loot and unrelated context menus untouched.
@@ -66,7 +64,7 @@ internal sealed class AskHermesContextMenuPatch : ModulePatch
                     return;
                 }
 
-                action = () => Plugin.Instance?.OpenForStashItem(profileItemId);
+                action = () => Plugin.Instance?.OpenForInventoryItem(profileItemId);
             }
             else
             {
@@ -92,6 +90,39 @@ internal sealed class AskHermesContextMenuPatch : ModulePatch
         {
             Plugin.Log?.LogError($"Failed to add Ask HERMES context action: {ex}");
         }
+    }
+
+    private static bool IsOwnedInventoryView(string viewTypeName)
+    {
+        if (viewTypeName.Equals(EItemViewType.Inventory.ToString(), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (ContainsAny(viewTypeName, "ragfair", "flea", "market", "trader", "trading", "trade"))
+        {
+            return false;
+        }
+
+        // Avoid adding the action to raid/world-loot and reward preview menus.
+        if (ContainsAny(viewTypeName, "loot", "world", "raid", "reward", "mail", "insurance"))
+        {
+            return false;
+        }
+
+        return ContainsAny(
+            viewTypeName,
+            "inventory",
+            "equipment",
+            "character",
+            "gear",
+            "weaponmodding",
+            "modding");
+    }
+
+    private static bool ContainsAny(string value, params string[] terms)
+    {
+        return terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string? GetPreviewSource(string viewTypeName)
