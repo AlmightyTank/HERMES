@@ -17,24 +17,31 @@ internal sealed class HermesAssistantNoticeService
     private string? _profileToken;
     private int _requestVersion;
     private bool _inboxExpanded = true;
-    private GUIStyle? _overlayTitleStyle;
-    private GUIStyle? _overlayBodyStyle;
-    private GUIStyle? _overlayMetaStyle;
-    private GUIStyle? _overlayHintStyle;
-    private GUIStyle? _overlayCloseStyle;
+    private bool _hermesVisible;
+    private bool _assistantVisible;
 
     public int ActiveNoticeCount => _notices.Count(notice => !notice.Dismissed);
+
+    public HermesAssistantNoticeService()
+    {
+        HermesNativeNotificationBridge.Configure(HandleNativeNotificationClick);
+    }
 
     public string GetDiagnosticsSummary()
     {
         var nextSeconds = Math.Max(0, Convert.ToInt32(Math.Ceiling(_nextCheckAt - Time.realtimeSinceStartup)));
         return $"enabled={Plugin.Settings.EnableProactiveAssistantNotices.Value}, active={ActiveNoticeCount}, "
-               + $"retained={_notices.Count}, checking={_checking}, next-check-seconds={nextSeconds}, "
+               + $"native-active={HermesNativeNotificationBridge.ActiveCount}, retained={_notices.Count}, "
+               + $"checking={_checking}, next-check-seconds={nextSeconds}, "
                + $"profile-context={(!string.IsNullOrWhiteSpace(_profileToken) ? "available" : "unavailable")}";
     }
 
-    public void Tick()
+    public void Tick(bool hermesVisible, bool assistantVisible)
     {
+        _hermesVisible = hermesVisible;
+        _assistantVisible = assistantVisible;
+        PublishPendingNativeNotices();
+
         if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
         {
             return;
@@ -61,159 +68,11 @@ internal sealed class HermesAssistantNoticeService
 
     public void Clear()
     {
+        HermesNativeNotificationBridge.DismissAll();
         _notices.Clear();
         _activeFingerprints.Clear();
         _lastShownByFingerprint.Clear();
         _status = "Notice history cleared.";
-    }
-
-    public void DrawOverlay(bool hermesVisible, bool assistantVisible, Action<string> navigate)
-    {
-        if (!Plugin.Settings.EnableProactiveAssistantNotices.Value
-            || assistantVisible
-            || (!Plugin.Settings.ShowAssistantNoticesDuringRaid.Value && IsRaidActive())
-            || (!hermesVisible && !Plugin.Settings.ShowAssistantNoticesWhenClosed.Value))
-        {
-            return;
-        }
-
-        var visible = _notices
-            .Where(notice => !notice.Dismissed)
-            .OrderByDescending(notice => notice.SeverityRank)
-            .ThenByDescending(notice => notice.CreatedAt)
-            .Take(Plugin.Settings.GetMaximumVisibleAssistantNotices())
-            .ToList();
-        if (visible.Count == 0)
-        {
-            return;
-        }
-
-        EnsureOverlayStyles();
-        var width = Math.Min(430f, Math.Max(350f, Screen.width * 0.30f));
-        var cardHeight = Plugin.Settings.CompactMode.Value ? 94f : 112f;
-        const float spacing = 8f;
-        const float rightMargin = 18f;
-        const float bottomMargin = 24f;
-        var totalHeight = visible.Count * cardHeight + Math.Max(0, visible.Count - 1) * spacing;
-        var startY = Math.Max(12f, Screen.height - bottomMargin - totalHeight);
-        var startX = Screen.width - rightMargin - width;
-
-        for (var index = 0; index < visible.Count; index++)
-        {
-            var cardRect = new Rect(
-                startX,
-                startY + index * (cardHeight + spacing),
-                width,
-                cardHeight);
-            DrawPersistentEftNoticeCard(cardRect, visible[index], navigate);
-        }
-    }
-
-    private void DrawPersistentEftNoticeCard(
-        Rect cardRect,
-        HermesAssistantNotice notice,
-        Action<string> navigate)
-    {
-        var originalColor = GUI.color;
-        var originalContentColor = GUI.contentColor;
-        var accent = GetSeverityColor(notice.Severity);
-
-        try
-        {
-            GUI.color = new Color(0.035f, 0.045f, 0.05f, 0.96f);
-            GUI.DrawTexture(cardRect, Texture2D.whiteTexture, ScaleMode.StretchToFill);
-
-            GUI.color = new Color(0.14f, 0.16f, 0.17f, 0.98f);
-            GUI.DrawTexture(
-                new Rect(cardRect.x + 1f, cardRect.y + 1f, cardRect.width - 2f, 2f),
-                Texture2D.whiteTexture,
-                ScaleMode.StretchToFill);
-
-            GUI.color = accent;
-            GUI.DrawTexture(
-                new Rect(cardRect.x, cardRect.y, 4f, cardRect.height),
-                Texture2D.whiteTexture,
-                ScaleMode.StretchToFill);
-
-            var iconRect = new Rect(cardRect.x + 14f, cardRect.y + 17f, 42f, 42f);
-            var sprite = HermesIconService.AskHermesIcon;
-            if (sprite?.texture is not null)
-            {
-                GUI.color = Color.white;
-                GUI.DrawTexture(iconRect, sprite.texture, ScaleMode.ScaleToFit, true);
-            }
-            else
-            {
-                GUI.contentColor = accent;
-                GUI.Label(iconRect, "H", _overlayTitleStyle);
-            }
-
-            var textX = cardRect.x + 68f;
-            var textWidth = cardRect.width - 104f;
-            GUI.contentColor = new Color(0.63f, 0.76f, 0.82f, 1f);
-            GUI.Label(
-                new Rect(textX, cardRect.y + 8f, textWidth, 18f),
-                $"HERMES  •  {notice.Category.ToUpperInvariant()}",
-                _overlayMetaStyle);
-
-            GUI.contentColor = Color.white;
-            GUI.Label(
-                new Rect(textX, cardRect.y + 25f, textWidth, 24f),
-                notice.Title,
-                _overlayTitleStyle);
-
-            GUI.contentColor = new Color(0.83f, 0.85f, 0.85f, 1f);
-            var bodyHeight = Plugin.Settings.CompactMode.Value ? 31f : 46f;
-            GUI.Label(
-                new Rect(textX, cardRect.y + 49f, textWidth, bodyHeight),
-                notice.Message,
-                _overlayBodyStyle);
-
-            GUI.contentColor = new Color(0.56f, 0.70f, 0.76f, 1f);
-            GUI.Label(
-                new Rect(textX, cardRect.yMax - 19f, textWidth, 15f),
-                $"CLICK TO OPEN HERMES  •  {FriendlyTarget(notice.TargetTab)}",
-                _overlayHintStyle);
-
-            var closeRect = new Rect(cardRect.xMax - 29f, cardRect.y + 7f, 21f, 21f);
-            GUI.contentColor = new Color(0.75f, 0.78f, 0.78f, 1f);
-            if (GUI.Button(closeRect, "×", _overlayCloseStyle))
-            {
-                notice.Dismissed = true;
-                return;
-            }
-
-            var openLeftRect = new Rect(cardRect.x, cardRect.y, cardRect.width - 34f, cardRect.height);
-            var openLowerRightRect = new Rect(cardRect.xMax - 34f, cardRect.y + 33f, 34f, cardRect.height - 33f);
-            var tooltip = new GUIContent(string.Empty, $"Open HERMES: {FriendlyTarget(notice.TargetTab)}");
-            var openClicked = GUI.Button(openLeftRect, tooltip, GUIStyle.none)
-                              || GUI.Button(openLowerRightRect, tooltip, GUIStyle.none);
-            if (openClicked)
-            {
-                notice.Dismissed = true;
-                navigate(notice.TargetTab);
-            }
-        }
-        finally
-        {
-            GUI.color = originalColor;
-            GUI.contentColor = originalContentColor;
-        }
-    }
-
-    private static Color GetSeverityColor(string severity)
-    {
-        return severity.Trim().ToLowerInvariant() switch
-        {
-            "critical" or "error" => new Color(0.78f, 0.24f, 0.18f, 1f),
-            "warning" => new Color(0.80f, 0.59f, 0.20f, 1f),
-            _ => new Color(0.27f, 0.58f, 0.72f, 1f)
-        };
-    }
-
-    private static string FriendlyTarget(string targetTab)
-    {
-        return targetTab.Replace('/', ' ').Trim().ToUpperInvariant();
     }
 
     public void DrawInbox(Action<string> navigate)
@@ -244,7 +103,7 @@ internal sealed class HermesAssistantNoticeService
         {
             foreach (var notice in _notices)
             {
-                notice.Dismissed = true;
+                DismissNotice(notice);
             }
         }
         if (GUILayout.Button("Clear history", GUILayout.Width(105f)))
@@ -290,12 +149,11 @@ internal sealed class HermesAssistantNoticeService
             GUI.enabled = !notice.Dismissed;
             if (GUILayout.Button("Open", GUILayout.Width(85f)))
             {
-                notice.Dismissed = true;
-                navigate(notice.TargetTab);
+                OpenNotice(notice, navigate);
             }
             if (GUILayout.Button("Dismiss", GUILayout.Width(85f)))
             {
-                notice.Dismissed = true;
+                DismissNotice(notice);
             }
             GUI.enabled = true;
             if (notice.Dismissed)
@@ -351,6 +209,7 @@ internal sealed class HermesAssistantNoticeService
             if (!string.IsNullOrWhiteSpace(_profileToken)
                 && !_profileToken.Equals(profile.ContextToken, StringComparison.Ordinal))
             {
+                HermesNativeNotificationBridge.DismissAll();
                 _notices.Clear();
                 _activeFingerprints.Clear();
                 _lastShownByFingerprint.Clear();
@@ -612,6 +471,80 @@ internal sealed class HermesAssistantNoticeService
         }
     }
 
+    private void PublishPendingNativeNotices()
+    {
+        if (!Plugin.Settings.EnableProactiveAssistantNotices.Value
+            || _assistantVisible
+            || (!Plugin.Settings.ShowAssistantNoticesDuringRaid.Value && IsRaidActive())
+            || (!_hermesVisible && !Plugin.Settings.ShowAssistantNoticesWhenClosed.Value))
+        {
+            return;
+        }
+
+        var availableSlots = Math.Max(
+            0,
+            Plugin.Settings.GetMaximumVisibleAssistantNotices()
+            - HermesNativeNotificationBridge.ActiveCount);
+        if (availableSlots == 0)
+        {
+            return;
+        }
+
+        foreach (var notice in _notices
+                     .Where(notice => !notice.Dismissed && !notice.NativePublished)
+                     .OrderByDescending(notice => notice.SeverityRank)
+                     .ThenBy(notice => notice.CreatedAt)
+                     .Take(availableSlots))
+        {
+            if (!HermesNativeNotificationBridge.TryShow(
+                    notice.Id,
+                    notice.Severity,
+                    notice.Category,
+                    notice.Title,
+                    notice.Message,
+                    notice.TargetTab,
+                    out var description))
+            {
+                // The native manager may not be active during early startup. Leave the
+                // notice pending so a later Update can publish it once EFT is ready.
+                break;
+            }
+
+            notice.NativePublished = true;
+            notice.NativeDescription = description;
+        }
+    }
+
+    private void HandleNativeNotificationClick(string noticeId, string targetTab)
+    {
+        var notice = _notices.FirstOrDefault(candidate => candidate.Id == noticeId);
+        if (notice is not null)
+        {
+            notice.Dismissed = true;
+            notice.NativePublished = false;
+            notice.NativeDescription = null;
+        }
+
+        Plugin.Instance?.OpenNoticeTarget(targetTab);
+    }
+
+    private static void OpenNotice(HermesAssistantNotice notice, Action<string> navigate)
+    {
+        DismissNotice(notice);
+        navigate(notice.TargetTab);
+    }
+
+    private static void DismissNotice(HermesAssistantNotice notice)
+    {
+        notice.Dismissed = true;
+        if (notice.NativePublished)
+        {
+            HermesNativeNotificationBridge.Dismiss(notice.Id);
+            notice.NativePublished = false;
+            notice.NativeDescription = null;
+        }
+    }
+
     private static bool NeedsLoadout()
     {
         return Plugin.Settings.NotifyLoadoutReadiness.Value
@@ -695,52 +628,6 @@ internal sealed class HermesAssistantNoticeService
         }
     }
 
-    private void EnsureOverlayStyles()
-    {
-        _overlayTitleStyle ??= new GUIStyle(GUI.skin.label)
-        {
-            fontStyle = UnityEngine.FontStyle.Bold,
-            fontSize = 13,
-            wordWrap = false,
-            clipping = TextClipping.Clip,
-            alignment = TextAnchor.MiddleLeft,
-            padding = new RectOffset(0, 0, 0, 0)
-        };
-        _overlayBodyStyle ??= new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 11,
-            wordWrap = true,
-            clipping = TextClipping.Clip,
-            alignment = TextAnchor.UpperLeft,
-            padding = new RectOffset(0, 0, 0, 0)
-        };
-        _overlayMetaStyle ??= new GUIStyle(GUI.skin.label)
-        {
-            fontStyle = UnityEngine.FontStyle.Bold,
-            fontSize = 10,
-            wordWrap = false,
-            clipping = TextClipping.Clip,
-            alignment = TextAnchor.MiddleLeft,
-            padding = new RectOffset(0, 0, 0, 0)
-        };
-        _overlayHintStyle ??= new GUIStyle(GUI.skin.label)
-        {
-            fontSize = 9,
-            wordWrap = false,
-            clipping = TextClipping.Clip,
-            alignment = TextAnchor.MiddleLeft,
-            padding = new RectOffset(0, 0, 0, 0)
-        };
-        _overlayCloseStyle ??= new GUIStyle(GUI.skin.button)
-        {
-            fontStyle = UnityEngine.FontStyle.Bold,
-            fontSize = 15,
-            alignment = TextAnchor.MiddleCenter,
-            padding = new RectOffset(0, 0, 0, 1),
-            margin = new RectOffset(0, 0, 0, 0)
-        };
-    }
-
     private sealed class HermesAssistantNotice
     {
         public HermesAssistantNotice(
@@ -772,6 +659,8 @@ internal sealed class HermesAssistantNoticeService
         public string TargetTab { get; }
         public float CreatedAt { get; }
         public bool Dismissed { get; set; }
+        public bool NativePublished { get; set; }
+        public string? NativeDescription { get; set; }
         public int SeverityRank => HermesAssistantNoticeService.SeverityRank(Severity);
     }
 

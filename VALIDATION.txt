@@ -1,17 +1,15 @@
-HERMES 0.1.0-alpha12.4.1 validation report
+HERMES 0.1.0-alpha12.4.2 validation
 
-PASS - 36 C# files parsed without tree-sitter syntax errors.
-PASS - 3 project files parsed as valid XML.
-PASS - 131 BepInEx/F12 ConfigEntry properties are declared and bound.
-PASS - 31 shared client/server models match property order.
-PASS - Persistent notice cards no longer use OverlayExpiresAt/OverlayExpired.
-PASS - Every card body routes through navigate(notice.TargetTab).
-PASS - Close action dismisses without navigation.
-PASS - Cards use the embedded HERMES icon and severity accent styling.
-PASS - Closed-window and open-window overlay paths are wired.
-PASS - Open-window cards render after GUI.Window for top-most click handling.
-PASS - Unity IMGUI, text-rendering, and image-conversion references remain present.
-PASS - Version strings are consistent at 0.1.0-alpha12.4.1.
-PASS - Source tree contains no bin, obj, dist, or .vs directories.
+- 38 C# files passed tree-sitter C# syntax parsing.
+- 3 project XML files parsed successfully.
+- Custom proactive IMGUI overlay calls were removed.
+- Native EFT NotificationManagerClass.DisplayMessageNotification wiring confirmed.
+- ENotificationDurationType.Infinite confirmed in the uploaded SPT 4.0.13 Assembly-CSharp.dll.
+- Native Alert, Note, Quest, and Hideout icon enum values confirmed.
+- BaseNotificationView.OnPointerClick and HideNotification confirmed.
+- HERMES-only native click registration and navigation wiring checked.
+- Native notification dismissal from the Assistant inbox checked.
+- Read-only behavior audit passed.
+- Version consistency and clean source-tree checks passed.
 
-Not performed here: local Visual Studio/MSBuild compilation against C:\RealSPT and in-game runtime verification on SPT 4.0.13.
+A local Visual Studio rebuild and in-game SPT 4.0.13 runtime test are still required.

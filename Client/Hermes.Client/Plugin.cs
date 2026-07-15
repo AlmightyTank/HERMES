@@ -36,7 +36,17 @@ public sealed class Plugin : BaseUnityPlugin
             Logger.LogError($"Ask HERMES context action could not be enabled: {ex}");
         }
 
-        Logger.LogInfo($"HERMES 0.1.0-alpha12.4.1 loaded. Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");
+        try
+        {
+            new HermesNativeNotificationClickPatch().Enable();
+            Logger.LogInfo("HERMES native EFT notification click routing enabled.");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError($"HERMES native EFT notification click routing could not be enabled: {ex}");
+        }
+
+        Logger.LogInfo($"HERMES 0.1.0-alpha12.4.2 loaded. Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");
     }
 
     internal void OpenForInventoryItem(string profileItemId)
@@ -62,6 +72,16 @@ public sealed class Plugin : BaseUnityPlugin
         }
 
         _window.OpenForPreviewItem(templateId, sourceLabel);
+    }
+
+    internal void OpenNoticeTarget(string targetTab)
+    {
+        if (_window is null || string.IsNullOrWhiteSpace(targetTab))
+        {
+            return;
+        }
+
+        _window.OpenNativeNoticeTarget(targetTab);
     }
 
     private void Update()

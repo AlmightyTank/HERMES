@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <RootNamespace>Hermes.Client</RootNamespace>
@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0-alpha12.4.1</Version>
+    <Version>0.1.0-alpha12.4.2</Version>
     <OutputType>Library</OutputType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDependencyFile>false</GenerateDependencyFile>
@@ -64,6 +64,10 @@
       <HintPath>$(EftManaged)\UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+	<Reference Include="Sirenix.Serialization">
+		<HintPath>$(EftManaged)\Sirenix.Serialization.dll</HintPath>
+		<Private>false</Private>
+	</Reference>
   </ItemGroup>
 
   <ItemGroup>

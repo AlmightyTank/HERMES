@@ -236,14 +236,13 @@ internal sealed class HermesWindow
 
     public void Tick()
     {
-        _noticeService.Tick();
+        _noticeService.Tick(_visible, _activeTab == HermesTab.Assistant);
     }
 
     public void Draw()
     {
         if (!_visible)
         {
-            _noticeService.DrawOverlay(false, false, OpenNoticeTarget);
             return;
         }
 
@@ -280,7 +279,7 @@ internal sealed class HermesWindow
                 WindowId,
                 _windowRect,
                 DrawWindow,
-                "HERMES 0.1.0-alpha12.4.1 — Proactive Assistant");
+                "HERMES 0.1.0-alpha12.4.2 — Native EFT Notifications");
         }
         finally
         {
@@ -293,11 +292,6 @@ internal sealed class HermesWindow
             Plugin.Settings.RememberWindowPositionValue(_windowRect, scale);
         }
 
-        // Draw last so persistent EFT-style notice cards remain clickable above the HERMES window.
-        _noticeService.DrawOverlay(
-            true,
-            _activeTab == HermesTab.Assistant,
-            OpenNoticeTarget);
     }
 
     private void DrawWindow(int windowId)
@@ -1395,7 +1389,7 @@ internal sealed class HermesWindow
         var requests = HermesApiClient.GetDiagnosticsSnapshot();
         var lines = new List<string>
         {
-            "HERMES 0.1.0-alpha12.4.1 diagnostics",
+            "HERMES 0.1.0-alpha12.4.2 diagnostics",
             $"Active tab: {_activeTab}",
             $"Client requests: started={requests.Started}, completed={requests.Completed}, failed={requests.Failed}, active={requests.Active}",
             $"Failures: timeout={requests.TimedOut}, transport={requests.TransportFailures}, invalid-response={requests.InvalidResponses}",
@@ -1848,6 +1842,11 @@ internal sealed class HermesWindow
         _detailScroll = Vector2.zero;
         _status = "Search for an item or ask where it can be bought or sold.";
         _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
+    }
+
+    internal void OpenNativeNoticeTarget(string tabName)
+    {
+        OpenNoticeTarget(tabName);
     }
 
     private void OpenNoticeTarget(string tabName)

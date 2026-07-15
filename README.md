@@ -1,15 +1,18 @@
-# HERMES 0.1.0-alpha12.4.1
+# HERMES 0.1.0-alpha12.4.2
 
-## Persistent EFT-style clickable notices
+## Native EFT notification integration
 
-- Replaces the temporary top-right IMGUI window with compact lower-right EFT-style notification cards.
-- Notice cards remain visible until the player clicks them or dismisses them with the close button.
-- Clicking anywhere on a card opens HERMES directly to its related tab and sub-view.
-- Uses the embedded winged HERMES icon and severity accent bars.
-- Cards are rendered after the main HERMES window so they remain visible and clickable above it.
-- The previous auto-dismiss setting remains bound for configuration compatibility but is no longer used.
+Alpha12.4.2 removes the custom HERMES notification-card overlay. Proactive notices are now submitted to EFT's real `NotificationManagerClass` queue and rendered by EFT's native `BaseNotificationView` prefab.
 
-Alpha12.4 adds the final planned Alpha12 feature phase: optional proactive Assistant notices and a quiet, change-aware notice inbox. All checks use the same local read-only HERMES services as the existing tabs. No external AI service is used and no profile data leaves the game.
+- Uses `NotificationManagerClass.DisplayMessageNotification(...)`.
+- Uses `ENotificationDurationType.Infinite`, so a notice remains until the player clicks it or dismisses it from the HERMES inbox.
+- Uses EFT's native notification icons: Alert, Quest, Hideout, or Note depending on notice type.
+- Critical and warning notices use the native notification text-color option.
+- Clicking a HERMES-owned native notification opens HERMES directly to its related tab and sub-view.
+- The click patch only handles descriptions registered by HERMES; every normal EFT notification is left untouched.
+- If EFT's notification manager is not active yet during startup, the notice remains pending and is submitted later.
+
+The embedded winged icon remains used by the **Ask HERMES** item context-menu action. EFT's native notification queue uses its own icon set and prefab.
 
 ## Proactive notice types
 
@@ -22,20 +25,32 @@ HERMES can surface configured notices for:
 - Ready profitable crafts
 - Optional stash cleanup or safe-to-sell opportunities
 
-Stash notices are disabled by default because full Stash analysis is the heaviest proactive check.
+Stash notices remain disabled by default because full Stash analysis is the heaviest proactive check.
+
+## Native click routing
+
+EFT's `BaseNotificationView.OnPointerClick(...)` already closes native notifications. HERMES adds a narrow prefix that:
+
+1. Confirms the click is a left click.
+2. Reads the native notification object attached to that view.
+3. Checks whether the exact notification description belongs to HERMES.
+4. Opens the related HERMES tab.
+5. Allows EFT's original click method to continue and close the notification normally.
+
+Inbox actions can also close the matching native EFT notification view.
 
 ## Quiet notification behavior
 
 - Automatic checks pause during raids by default.
-- **Only notify on changes** prevents the same unresolved condition from repeating.
-- When repeat notifications are allowed, a configurable cooldown is enforced.
-- On-screen cards remain visible until opened or dismissed and also remain available in the Assistant notice inbox history.
-- Profile changes clear notice state so recommendations from one PMC are not shown for another.
-- A failed optional data source does not prevent the remaining notice categories from being evaluated.
+- **Only notify on changes** prevents unresolved conditions from repeating.
+- When repeats are allowed, a configurable cooldown is enforced.
+- Native notices remain available in the Assistant notice history after being shown.
+- Profile changes clear HERMES notice state and close HERMES-owned native notifications.
+- A failed optional data source does not prevent other notice categories from being evaluated.
 
 ## Assistant notice inbox
 
-The Assistant tab now contains a **Proactive Notices** section with:
+The Assistant tab retains:
 
 - Check now
 - Open related HERMES tab
@@ -44,28 +59,21 @@ The Assistant tab now contains a **Proactive Notices** section with:
 - Clear notice history
 - Current check status
 
-Opening a notice navigates directly to Loadout, Value & Insurance, Hideout, Crafts, or Stash as appropriate.
+Opening or dismissing an inbox entry also closes its corresponding native EFT notification.
 
-## New BepInEx/F12 settings
+## BepInEx/F12 settings
 
 Under **Assistant Notices**:
 
 - Enable proactive notices
 - Check interval minutes
 - Repeat cooldown minutes
-- Overlay auto-dismiss seconds (legacy compatibility; ignored)
-- Maximum visible notices
+- Overlay auto-dismiss seconds — retained only for configuration compatibility and ignored
+- Maximum visible/native-active notices
 - Show notices while HERMES is closed
 - Show notices during raid
 - Only notify on changes
-- Loadout readiness notices
-- High-value uninsured notices
-- Completed production notices
-- Ready hideout upgrade notices
-- Ready profitable craft notices
-- Minimum craft notice profit
-- Stash opportunity notices
-- Minimum stash notice value
+- Per-category notice toggles and thresholds
 
 ## Existing Alpha12 features retained
 
