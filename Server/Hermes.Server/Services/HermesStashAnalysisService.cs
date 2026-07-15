@@ -19,10 +19,15 @@ public sealed class HermesStashAnalysisService(
 
     private readonly object _sync = new();
     private readonly Dictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private long _cacheHits;
+    private long _cacheMisses;
+    private long _cacheWrites;
 
-    public HermesStashSummaryResponse GetSummary(MongoId sessionId)
+    public HermesStashSummaryResponse GetSummary(
+        MongoId sessionId,
+        HermesStashAnalysisSettings settings)
     {
-        var key = sessionId.ToString();
+        var key = $"{sessionId}:{settings.CacheKey}";
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var profileRevision = stashService.GetProfileRevision(sessionId);
         if (string.IsNullOrWhiteSpace(profileRevision))
@@ -36,13 +41,15 @@ public sealed class HermesStashAnalysisService(
                 && cached.ExpiresUnixTime > now
                 && cached.ProfileRevision.Equals(profileRevision, StringComparison.Ordinal))
             {
+                Interlocked.Increment(ref _cacheHits);
                 return cached.Response;
             }
 
             _cache.Remove(key);
         }
 
-        var response = BuildSummary(sessionId, now);
+        Interlocked.Increment(ref _cacheMisses);
+        var response = BuildSummary(sessionId, settings, now);
         if (response.Found)
         {
             lock (_sync)
@@ -51,6 +58,7 @@ public sealed class HermesStashAnalysisService(
                     response,
                     now + StashCacheTtlSeconds,
                     profileRevision);
+                Interlocked.Increment(ref _cacheWrites);
             }
         }
 
@@ -65,7 +73,32 @@ public sealed class HermesStashAnalysisService(
         }
     }
 
-    private HermesStashSummaryResponse BuildSummary(MongoId sessionId, long generatedUnixTime)
+    public HermesAnalysisCacheDiagnostics GetCacheDiagnostics()
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        lock (_sync)
+        {
+            foreach (var key in _cache
+                         .Where(pair => pair.Value.ExpiresUnixTime <= now)
+                         .Select(pair => pair.Key)
+                         .ToList())
+            {
+                _cache.Remove(key);
+            }
+
+            return new HermesAnalysisCacheDiagnostics(
+                _cache.Count,
+                Interlocked.Read(ref _cacheHits),
+                Interlocked.Read(ref _cacheMisses),
+                Interlocked.Read(ref _cacheWrites),
+                StashCacheTtlSeconds);
+        }
+    }
+
+    private HermesStashSummaryResponse BuildSummary(
+        MongoId sessionId,
+        HermesStashAnalysisSettings settings,
+        long generatedUnixTime)
     {
         var snapshot = stashService.BuildAnalysisSnapshot(sessionId);
         var profile = profileHelper.GetPmcProfile(sessionId);
@@ -160,7 +193,8 @@ public sealed class HermesStashAnalysisService(
             reservations.ByTemplate.TryGetValue(group.Key, out var reservation);
             recommendationRows.AddRange(BuildRecommendationsForTemplate(
                 group.ToList(),
-                reservation));
+                reservation,
+                settings));
         }
 
         var safeToSellCount = recommendationRows.Count(row => row.Recommendation == "Safe to sell");
@@ -196,21 +230,25 @@ public sealed class HermesStashAnalysisService(
             .OrderByDescending(row => row.RoubleEquivalent)
             .ThenBy(row => row.Destination, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var valuableItems = recommendationRows
+        var displayRows = settings.IncludeProtectedCurrencies
+            ? recommendationRows
+            : recommendationRows.Where(row => !row.IsProtectedCurrency).ToList();
+        var valuableItems = displayRows
             .OrderByDescending(row => row.BestSaleValue ?? row.BestTraderValue ?? row.ConditionAdjustedHandbookValue)
             .ThenBy(row => row.Name, StringComparer.OrdinalIgnoreCase)
             .Take(40)
             .ToList();
-        var orderedRecommendations = recommendationRows
+        var orderedRecommendations = displayRows
             .OrderBy(row => RecommendationRank(row.Recommendation))
             .ThenByDescending(row => row.PotentialBestSaleValue)
             .ThenBy(row => row.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(row => row.InstanceLabel, StringComparer.OrdinalIgnoreCase)
+            .Take(settings.MaximumRecommendations)
             .ToList();
-        var duplicates = BuildDuplicateGroups(recommendationRows);
-        var damaged = BuildConditionReport(recommendationRows);
-        var allCleanupCandidates = recommendationRows
-            .Where(IsCleanupCandidate)
+        var duplicates = BuildDuplicateGroups(displayRows, settings.DuplicateBaselineReserve);
+        var damaged = BuildConditionReport(displayRows, settings);
+        var allCleanupCandidates = displayRows
+            .Where(row => IsCleanupCandidate(row, settings))
             .OrderByDescending(row => row.OccupiedCells)
             .ThenByDescending(row => row.PotentialBestSaleValue)
             .ThenBy(row => row.Name, StringComparer.OrdinalIgnoreCase)
@@ -270,7 +308,8 @@ public sealed class HermesStashAnalysisService(
 
     private static IReadOnlyList<HermesStashValuationItem> BuildRecommendationsForTemplate(
         IReadOnlyList<AnalyzedEntry> entries,
-        HermesTemplateReservation? reservation)
+        HermesTemplateReservation? reservation,
+        HermesStashAnalysisSettings settings)
     {
         var states = entries
             .Select(entry => new AllocationState(entry))
@@ -278,26 +317,45 @@ public sealed class HermesStashAnalysisService(
 
         if (reservation is not null)
         {
-            AllocateReservation(
-                states,
-                reservation.ActiveQuestQuantity,
-                reservation.ActiveQuestFoundInRaidQuantity,
-                ReservationBucket.ActiveQuest);
-            AllocateReservation(
-                states,
-                reservation.NextHideoutQuantity,
-                reservation.NextHideoutFoundInRaidQuantity,
-                ReservationBucket.NextHideout);
-            AllocateReservation(
-                states,
-                reservation.FutureQuestQuantity,
-                reservation.FutureQuestFoundInRaidQuantity,
-                ReservationBucket.FutureQuest);
-            AllocateReservation(
-                states,
-                reservation.FutureHideoutQuantity,
-                reservation.FutureHideoutFoundInRaidQuantity,
-                ReservationBucket.FutureHideout);
+            if (settings.IncludeActiveQuestReservations)
+            {
+                AllocateReservation(
+                    states,
+                    reservation.ActiveQuestQuantity,
+                    reservation.ActiveQuestFoundInRaidQuantity,
+                    ReservationBucket.ActiveQuest,
+                    settings.PreferFoundInRaidCopies);
+            }
+
+            if (settings.IncludeNextHideoutReservations)
+            {
+                AllocateReservation(
+                    states,
+                    reservation.NextHideoutQuantity,
+                    reservation.NextHideoutFoundInRaidQuantity,
+                    ReservationBucket.NextHideout,
+                    settings.PreferFoundInRaidCopies);
+            }
+
+            if (settings.IncludeFutureQuestReservations)
+            {
+                AllocateReservation(
+                    states,
+                    reservation.FutureQuestQuantity,
+                    reservation.FutureQuestFoundInRaidQuantity,
+                    ReservationBucket.FutureQuest,
+                    settings.PreferFoundInRaidCopies);
+            }
+
+            if (settings.IncludeFutureHideoutReservations)
+            {
+                AllocateReservation(
+                    states,
+                    reservation.FutureHideoutQuantity,
+                    reservation.FutureHideoutFoundInRaidQuantity,
+                    ReservationBucket.FutureHideout,
+                    settings.PreferFoundInRaidCopies);
+            }
         }
 
         var output = new List<HermesStashValuationItem>();
@@ -327,6 +385,9 @@ public sealed class HermesStashAnalysisService(
                 entry.ItemKey,
                 entry.Name,
                 entry.ShortName,
+                entry.Category,
+                entry.Instance.FoundInRaid,
+                entry.IsProtectedCurrency,
                 entry.Instance.InstanceKey,
                 entry.Instance.Label,
                 entry.Instance.Quantity,
@@ -367,8 +428,13 @@ public sealed class HermesStashAnalysisService(
         return output;
     }
 
-    private static bool IsCleanupCandidate(HermesStashValuationItem row)
+    private static bool IsCleanupCandidate(
+        HermesStashValuationItem row,
+        HermesStashAnalysisSettings settings)
     {
+        var valuePerCell = row.OccupiedCells > 0
+            ? row.PotentialBestSaleValue / row.OccupiedCells
+            : 0L;
         return row.Recommendation == "Safe to sell"
                && row.OccupiedCells > 0
                && row.Quantity > 0d
@@ -376,11 +442,14 @@ public sealed class HermesStashAnalysisService(
                && row.InstalledItemCount == 0
                && row.ContainedItemCount == 0
                && !string.IsNullOrWhiteSpace(row.BestSaleDestination)
-               && row.PotentialBestSaleValue > 0L;
+               && row.PotentialBestSaleValue > 0L
+               && row.PotentialBestSaleValue >= settings.MinimumCleanupValue
+               && valuePerCell >= settings.MinimumValuePerRecoveredCell;
     }
 
     private static IReadOnlyList<HermesStashDuplicateGroup> BuildDuplicateGroups(
-        IReadOnlyList<HermesStashValuationItem> rows)
+        IReadOnlyList<HermesStashValuationItem> rows,
+        int duplicateBaselineReserve)
     {
         var output = new List<HermesStashDuplicateGroup>();
         foreach (var group in rows.GroupBy(row => row.ItemKey, StringComparer.OrdinalIgnoreCase))
@@ -400,7 +469,7 @@ public sealed class HermesStashAnalysisService(
             var explicitReserve = list.Sum(row => row.RecommendedKeepQuantity);
             var baselineReserve = explicitReserve > 0d
                 ? explicitReserve
-                : Math.Min(owned, list.Min(row => Math.Max(0d, row.Quantity)));
+                : Math.Min(owned, Math.Max(0d, duplicateBaselineReserve));
             var excess = Math.Max(0d, owned - baselineReserve);
             if (excess <= 0d)
             {
@@ -420,7 +489,7 @@ public sealed class HermesStashAnalysisService(
                 .FirstOrDefault();
             var note = explicitReserve > 0d
                 ? "Suggested reserve follows active/future quest and hideout reservations."
-                : "No explicit quest or hideout reserve was found; this duplicate view keeps one baseline instance for review.";
+                : $"No explicit quest or hideout reserve was found; the configured duplicate baseline keeps {duplicateBaselineReserve:N0} unit(s) for review.";
 
             output.Add(new HermesStashDuplicateGroup(
                 list[0].ItemKey,
@@ -446,12 +515,13 @@ public sealed class HermesStashAnalysisService(
     }
 
     private static IReadOnlyList<HermesStashConditionItem> BuildConditionReport(
-        IReadOnlyList<HermesStashValuationItem> rows)
+        IReadOnlyList<HermesStashValuationItem> rows,
+        HermesStashAnalysisSettings settings)
     {
         var output = new List<HermesStashConditionItem>();
         foreach (var row in rows)
         {
-            var threshold = GetConditionThreshold(row);
+            var threshold = GetConditionThreshold(row, settings);
             if (!threshold.ShouldReport)
             {
                 continue;
@@ -461,7 +531,9 @@ public sealed class HermesStashAnalysisService(
             {
                 "Weapon durability" => "Low weapon durability",
                 "Armor durability" => "Low armor durability",
-                "Key uses" => row.ConditionCurrent <= 0d ? "Depleted key" : "One use remaining",
+                "Key uses" => row.ConditionCurrent <= 0d
+                    ? "Depleted key"
+                    : $"Low key uses ({row.ConditionCurrent:N0} remaining)",
                 "Medical resource" => "Nearly empty medical item",
                 "Repair resource" => "Nearly empty repair kit",
                 "Consumable resource" => "Nearly depleted consumable",
@@ -498,22 +570,40 @@ public sealed class HermesStashAnalysisService(
             .ToList();
     }
 
-    private static ConditionThreshold GetConditionThreshold(HermesStashValuationItem row)
+    private static ConditionThreshold GetConditionThreshold(
+        HermesStashValuationItem row,
+        HermesStashAnalysisSettings settings)
     {
         return row.ConditionKind switch
         {
-            "Weapon durability" => new ConditionThreshold(70, row.ConditionPercent < 70),
-            "Armor durability" => new ConditionThreshold(50, row.ConditionPercent < 50),
-            "Durability" => new ConditionThreshold(50, row.ConditionPercent < 50),
-            "Medical resource" => new ConditionThreshold(20, row.ConditionPercent < 20),
-            "Consumable resource" => new ConditionThreshold(20, row.ConditionPercent < 20),
-            "Resource" => new ConditionThreshold(20, row.ConditionPercent < 20),
-            "Repair resource" => new ConditionThreshold(20, row.ConditionPercent < 20),
+            "Weapon durability" => new ConditionThreshold(
+                settings.WeaponDurabilityThresholdPercent,
+                row.ConditionPercent < settings.WeaponDurabilityThresholdPercent),
+            "Armor durability" => new ConditionThreshold(
+                settings.ArmorDurabilityThresholdPercent,
+                row.ConditionPercent < settings.ArmorDurabilityThresholdPercent),
+            "Durability" => new ConditionThreshold(
+                settings.ArmorDurabilityThresholdPercent,
+                row.ConditionPercent < settings.ArmorDurabilityThresholdPercent),
+            "Medical resource" => new ConditionThreshold(
+                settings.LowResourceThresholdPercent,
+                row.ConditionPercent < settings.LowResourceThresholdPercent),
+            "Consumable resource" => new ConditionThreshold(
+                settings.LowResourceThresholdPercent,
+                row.ConditionPercent < settings.LowResourceThresholdPercent),
+            "Resource" => new ConditionThreshold(
+                settings.LowResourceThresholdPercent,
+                row.ConditionPercent < settings.LowResourceThresholdPercent),
+            "Repair resource" => new ConditionThreshold(
+                settings.LowResourceThresholdPercent,
+                row.ConditionPercent < settings.LowResourceThresholdPercent),
             "Key uses" => new ConditionThreshold(
-                row.ConditionMaximum > 0d
-                    ? Math.Max(1, Convert.ToInt32(Math.Ceiling(100d / row.ConditionMaximum)))
-                    : 1,
-                row.ConditionCurrent <= 1d),
+                row.ConditionMaximum > 0d && settings.KeyUsesWarningThreshold > 0
+                    ? Math.Max(1, Convert.ToInt32(Math.Ceiling(
+                        settings.KeyUsesWarningThreshold / row.ConditionMaximum * 100d)))
+                    : 0,
+                settings.KeyUsesWarningThreshold > 0
+                && row.ConditionCurrent <= settings.KeyUsesWarningThreshold),
             _ => new ConditionThreshold(0, false)
         };
     }
@@ -545,7 +635,8 @@ public sealed class HermesStashAnalysisService(
         IReadOnlyList<AllocationState> states,
         double requestedQuantity,
         double foundInRaidRequestedQuantity,
-        ReservationBucket bucket)
+        ReservationBucket bucket,
+        bool preferFoundInRaidCopies)
     {
         var available = states.Sum(state => state.AvailableQuantity);
         var remaining = Math.Min(Math.Max(0d, requestedQuantity), Math.Max(0d, available));
@@ -562,29 +653,38 @@ public sealed class HermesStashAnalysisService(
             var foundInRaidAllocated = AllocateFromCandidates(
                 states.Where(state => state.Analyzed.Entry.Instance.FoundInRaid),
                 foundInRaidTarget,
-                bucket);
+                bucket,
+                true);
             remaining = Math.Max(0d, remaining - foundInRaidAllocated);
         }
 
         if (remaining > 0d)
         {
-            AllocateFromCandidates(states, remaining, bucket);
+            AllocateFromCandidates(states, remaining, bucket, preferFoundInRaidCopies);
         }
     }
 
     private static double AllocateFromCandidates(
         IEnumerable<AllocationState> candidates,
         double requestedQuantity,
-        ReservationBucket bucket)
+        ReservationBucket bucket,
+        bool preferFoundInRaidCopies)
     {
         var remaining = Math.Max(0d, requestedQuantity);
         var allocated = 0d;
-        foreach (var state in candidates
-                     .Where(state => state.AvailableQuantity > 0d)
-                     .OrderByDescending(state => state.Analyzed.Entry.Instance.FoundInRaid)
-                     .ThenBy(state => state.UnitLiquidationValue)
-                     .ThenBy(state => state.Analyzed.Entry.Instance.ConditionPercent)
-                     .ThenBy(state => state.Analyzed.Entry.Instance.Label, StringComparer.OrdinalIgnoreCase))
+        var orderedCandidates = preferFoundInRaidCopies
+            ? candidates.Where(state => state.AvailableQuantity > 0d)
+                .OrderByDescending(state => state.Analyzed.Entry.Instance.FoundInRaid)
+                .ThenBy(state => state.UnitLiquidationValue)
+                .ThenBy(state => state.Analyzed.Entry.Instance.ConditionPercent)
+                .ThenBy(state => state.Analyzed.Entry.Instance.Label, StringComparer.OrdinalIgnoreCase)
+            : candidates.Where(state => state.AvailableQuantity > 0d)
+                .OrderBy(state => state.Analyzed.Entry.Instance.FoundInRaid)
+                .ThenBy(state => state.UnitLiquidationValue)
+                .ThenBy(state => state.Analyzed.Entry.Instance.ConditionPercent)
+                .ThenBy(state => state.Analyzed.Entry.Instance.Label, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var state in orderedCandidates)
         {
             if (remaining <= 0d)
             {

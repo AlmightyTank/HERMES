@@ -6,6 +6,13 @@ using SPTarkov.Server.Core.Models.Common;
 
 namespace Hermes.Server.Services;
 
+public sealed record HermesAnalysisCacheDiagnostics(
+    int EntryCount,
+    long Hits,
+    long Misses,
+    long Writes,
+    int TtlSeconds);
+
 /// <summary>
 /// Short-lived shared cache for market valuations and market summaries.
 /// Profile inventory, quests, hideout state, and selected stash instances are never cached here.
@@ -80,7 +87,9 @@ public sealed class HermesCacheService
             status);
     }
 
-    public HermesCacheStatusResponse GetStatus()
+    public HermesCacheStatusResponse GetStatus(
+        HermesAnalysisCacheDiagnostics? stashAnalysis = null,
+        HermesAnalysisCacheDiagnostics? loadoutAnalysis = null)
     {
         PurgeExpired(_marketUnitValues);
         PurgeExpired(_marketSummaries);
@@ -103,11 +112,21 @@ public sealed class HermesCacheService
             null,
             _marketUnitValues.Count,
             _marketSummaries.Count,
+            stashAnalysis?.EntryCount ?? 0,
+            loadoutAnalysis?.EntryCount ?? 0,
             Interlocked.Read(ref _hits),
             Interlocked.Read(ref _misses),
             Interlocked.Read(ref _writes),
+            stashAnalysis?.Hits ?? 0L,
+            stashAnalysis?.Misses ?? 0L,
+            stashAnalysis?.Writes ?? 0L,
+            loadoutAnalysis?.Hits ?? 0L,
+            loadoutAnalysis?.Misses ?? 0L,
+            loadoutAnalysis?.Writes ?? 0L,
             Interlocked.Read(ref _generation),
             MarketCacheTtlSeconds,
+            stashAnalysis?.TtlSeconds ?? 0,
+            loadoutAnalysis?.TtlSeconds ?? 0,
             oldestAge,
             newestAge,
             _lastInvalidationReason,

@@ -15,6 +15,7 @@ public sealed class HermesLoadoutService(
     ProfileHelper profileHelper,
     HermesCatalogService catalogService,
     HermesLoadoutValueService loadoutValueService,
+    HermesStashService stashService,
     JsonUtil jsonUtil)
 {
     private const string Ms2000MarkerTemplateId = "5991b51486f77447b112d44f";
@@ -114,8 +115,89 @@ public sealed class HermesLoadoutService(
     private Dictionary<string, string>? _localeStrings;
     private readonly object _keyTemplateSync = new();
     private IReadOnlyList<TemplateInfo>? _keyTemplates;
+    private readonly object _summaryCacheSync = new();
+    private readonly Dictionary<string, LoadoutCacheEntry> _summaryCache = new(StringComparer.OrdinalIgnoreCase);
+    private long _summaryCacheHits;
+    private long _summaryCacheMisses;
+    private long _summaryCacheWrites;
+    private const int SummaryCacheTtlSeconds = 10;
 
-    public HermesLoadoutSummaryResponse GetSummary(MongoId sessionId)
+    public HermesLoadoutSummaryResponse GetSummary(
+        MongoId sessionId,
+        HermesLoadoutAnalysisSettings? settings = null)
+    {
+        settings ??= HermesLoadoutAnalysisSettings.Default;
+        var profileRevision = stashService.GetProfileRevision(sessionId);
+        if (string.IsNullOrWhiteSpace(profileRevision))
+        {
+            return NotFound("HERMES could not fingerprint the active PMC profile.");
+        }
+
+        var key = $"{sessionId}:{settings.CacheKey}";
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        lock (_summaryCacheSync)
+        {
+            if (_summaryCache.TryGetValue(key, out var cached)
+                && cached.ExpiresUnixTime > now
+                && cached.ProfileRevision.Equals(profileRevision, StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _summaryCacheHits);
+                return cached.Response;
+            }
+
+            _summaryCache.Remove(key);
+        }
+
+        Interlocked.Increment(ref _summaryCacheMisses);
+        var response = BuildSummary(sessionId, settings);
+        if (response.Found)
+        {
+            lock (_summaryCacheSync)
+            {
+                _summaryCache[key] = new LoadoutCacheEntry(
+                    response,
+                    now + SummaryCacheTtlSeconds,
+                    profileRevision);
+                Interlocked.Increment(ref _summaryCacheWrites);
+            }
+        }
+
+        return response;
+    }
+
+    public void Clear(string? reason = null)
+    {
+        lock (_summaryCacheSync)
+        {
+            _summaryCache.Clear();
+        }
+    }
+
+    public HermesAnalysisCacheDiagnostics GetCacheDiagnostics()
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        lock (_summaryCacheSync)
+        {
+            foreach (var key in _summaryCache
+                         .Where(pair => pair.Value.ExpiresUnixTime <= now)
+                         .Select(pair => pair.Key)
+                         .ToList())
+            {
+                _summaryCache.Remove(key);
+            }
+
+            return new HermesAnalysisCacheDiagnostics(
+                _summaryCache.Count,
+                Interlocked.Read(ref _summaryCacheHits),
+                Interlocked.Read(ref _summaryCacheMisses),
+                Interlocked.Read(ref _summaryCacheWrites),
+                SummaryCacheTtlSeconds);
+        }
+    }
+
+    private HermesLoadoutSummaryResponse BuildSummary(
+        MongoId sessionId,
+        HermesLoadoutAnalysisSettings settings)
     {
         var profile = profileHelper.GetPmcProfile(sessionId);
         if (profile is null)
@@ -169,14 +251,20 @@ public sealed class HermesLoadoutService(
             .ToList();
 
         var warnings = new List<HermesLoadoutWarning>();
-        var vitals = BuildVitals(root, warnings);
-        var slots = BuildSlotSummaries(equippedRoots, children);
-        var weapons = BuildWeaponReadiness(equippedRoots, equippedItems, children, warnings);
-        var armor = BuildArmorReadiness(equippedRoots, children, warnings);
-        var medical = BuildMedicalReadiness(equippedItems, warnings);
+        var vitals = BuildVitals(root, warnings, settings);
+        var slots = BuildSlotSummaries(equippedRoots, children, settings);
+        var weapons = BuildWeaponReadiness(equippedRoots, equippedItems, children, warnings, settings);
+        var armor = BuildArmorReadiness(equippedRoots, children, warnings, settings);
+        var medical = BuildMedicalReadiness(equippedItems, warnings, settings);
         var questRequirements = BuildQuestRequirements(root, equippedRoots, carriedQuestItems, warnings);
         var raidPlans = BuildRaidPlans(root, questRequirements);
-        var valueSummary = loadoutValueService.GetSummary(sessionId, warnings);
+        var valueSummary = settings.IncludeValueAnalysis
+            ? loadoutValueService.GetSummary(
+                sessionId,
+                warnings,
+                settings.EnableInsuranceWarnings,
+                settings.HighValueUninsuredThreshold)
+            : DisabledValueSummary();
 
         if (weapons.Count == 0)
         {
@@ -218,7 +306,10 @@ public sealed class HermesLoadoutService(
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
     }
 
-    private HermesVitalsSummary BuildVitals(JsonObject root, ICollection<HermesLoadoutWarning> warnings)
+    private HermesVitalsSummary BuildVitals(
+        JsonObject root,
+        ICollection<HermesLoadoutWarning> warnings,
+        HermesLoadoutAnalysisSettings settings)
     {
         var health = GetProperty(root, "Health", "health");
         var hydration = ReadCurrentMaximum(GetProperty(health, "Hydration", "hydration"));
@@ -249,20 +340,22 @@ public sealed class HermesLoadoutService(
                 $"PMC health is {healthPercent}% ({FormatNumber(currentHealth)}/{FormatNumber(maximumHealth)})."));
         }
 
-        if (hydration.Maximum > 0d && hydrationPercent < 50)
+        if (hydration.Maximum > 0d && hydrationPercent < settings.HydrationWarningPercent)
         {
+            var criticalThreshold = Math.Max(1, settings.HydrationWarningPercent / 2);
             warnings.Add(new HermesLoadoutWarning(
-                hydrationPercent < 30 ? "Critical" : "Warning",
+                hydrationPercent < criticalThreshold ? "Critical" : "Warning",
                 "Vitals",
-                $"Hydration is low at {hydrationPercent}%."));
+                $"Hydration is low at {hydrationPercent}% (configured warning: {settings.HydrationWarningPercent}%)."));
         }
 
-        if (energy.Maximum > 0d && energyPercent < 50)
+        if (energy.Maximum > 0d && energyPercent < settings.EnergyWarningPercent)
         {
+            var criticalThreshold = Math.Max(1, settings.EnergyWarningPercent / 2);
             warnings.Add(new HermesLoadoutWarning(
-                energyPercent < 30 ? "Critical" : "Warning",
+                energyPercent < criticalThreshold ? "Critical" : "Warning",
                 "Vitals",
-                $"Energy is low at {energyPercent}%."));
+                $"Energy is low at {energyPercent}% (configured warning: {settings.EnergyWarningPercent}%)."));
         }
 
         return new HermesVitalsSummary(
@@ -279,7 +372,8 @@ public sealed class HermesLoadoutService(
 
     private IReadOnlyList<HermesLoadoutSlotSummary> BuildSlotSummaries(
         IReadOnlyList<InventoryNode> roots,
-        IReadOnlyDictionary<string, List<InventoryNode>> children)
+        IReadOnlyDictionary<string, List<InventoryNode>> children,
+        HermesLoadoutAnalysisSettings settings)
     {
         var output = new List<HermesLoadoutSlotSummary>();
         foreach (var root in roots.Where(root =>
@@ -294,7 +388,7 @@ public sealed class HermesLoadoutService(
                 condition.Percent,
                 condition.Description,
                 Math.Max(0, tree.Count - 1),
-                DetermineSlotStatus(root.SlotId, condition.Percent)));
+                DetermineSlotStatus(root.SlotId, condition.Percent, settings)));
         }
 
         return output;
@@ -304,7 +398,8 @@ public sealed class HermesLoadoutService(
         IReadOnlyList<InventoryNode> roots,
         IReadOnlyList<InventoryNode> equippedItems,
         IReadOnlyDictionary<string, List<InventoryNode>> children,
-        ICollection<HermesLoadoutWarning> warnings)
+        ICollection<HermesLoadoutWarning> warnings,
+        HermesLoadoutAnalysisSettings settings)
     {
         var weaponRoots = roots
             .Where(item => WeaponSlots.Contains(item.SlotId ?? string.Empty))
@@ -381,13 +476,14 @@ public sealed class HermesLoadoutService(
                 : GetTemplate(attachedMagazine.TemplateId).Name;
             var localWarnings = new List<string>();
 
-            if (condition.Percent < 70)
+            if (condition.Percent < settings.MinimumWeaponDurabilityPercent)
             {
-                localWarnings.Add($"Low durability: {condition.Percent}%.");
+                var criticalThreshold = Math.Max(1, settings.MinimumWeaponDurabilityPercent - 20);
+                localWarnings.Add($"Low durability: {condition.Percent}% (configured minimum: {settings.MinimumWeaponDurabilityPercent}%).");
                 warnings.Add(new HermesLoadoutWarning(
-                    condition.Percent < 50 ? "Critical" : "Warning",
+                    condition.Percent < criticalThreshold ? "Critical" : "Warning",
                     "Weapons",
-                    $"{template.Name} durability is {condition.Percent}%."));
+                    $"{template.Name} durability is {condition.Percent}% (configured minimum: {settings.MinimumWeaponDurabilityPercent}%)."));
             }
 
             if (attachedMagazine is null && !template.IsInternalMagazineWeapon)
@@ -399,13 +495,13 @@ public sealed class HermesLoadoutService(
                     $"{template.Name} has no magazine installed."));
             }
 
-            if (loadedRounds <= 0d)
+            if (loadedRounds < settings.MinimumLoadedRounds)
             {
-                localWarnings.Add("Weapon contains no loaded ammunition.");
+                localWarnings.Add($"Loaded ammunition: {FormatNumber(loadedRounds)}/{settings.MinimumLoadedRounds:N0} configured minimum.");
                 warnings.Add(new HermesLoadoutWarning(
-                    "Critical",
+                    loadedRounds <= 0d ? "Critical" : "Warning",
                     "Ammunition",
-                    $"{template.Name} contains no loaded ammunition."));
+                    $"{template.Name} has {FormatNumber(loadedRounds)} loaded round(s); configured minimum is {settings.MinimumLoadedRounds:N0}."));
             }
 
             if (mixedAmmo)
@@ -417,8 +513,9 @@ public sealed class HermesLoadoutService(
                     $"{template.Name} has mixed ammunition loaded."));
             }
 
-            if (!string.IsNullOrWhiteSpace(weaponCaliber)
-                && ammoCalibers.Any(caliber => !CaliberMatches(weaponCaliber, caliber)))
+            var caliberMismatch = !string.IsNullOrWhiteSpace(weaponCaliber)
+                                  && ammoCalibers.Any(caliber => !CaliberMatches(weaponCaliber, caliber));
+            if (caliberMismatch)
             {
                 localWarnings.Add("Loaded ammunition caliber does not match the weapon.");
                 warnings.Add(new HermesLoadoutWarning(
@@ -427,20 +524,31 @@ public sealed class HermesLoadoutService(
                     $"{template.Name} has ammunition that does not match {FriendlyCaliber(weaponCaliber)}."));
             }
 
-            if (compatibleSpareMags.Count == 0 && looseRounds <= 0d)
+            if (compatibleSpareMags.Count < settings.MinimumSpareMagazines)
             {
-                localWarnings.Add("No compatible spare magazine or loose ammunition is carried.");
+                localWarnings.Add($"Compatible spare magazines: {compatibleSpareMags.Count:N0}/{settings.MinimumSpareMagazines:N0} configured minimum.");
                 warnings.Add(new HermesLoadoutWarning(
                     "Warning",
                     "Ammunition",
-                    $"No compatible spare magazine or loose ammunition was found for {template.Name}."));
+                    $"{template.Name} has {compatibleSpareMags.Count:N0} compatible spare magazine(s); configured minimum is {settings.MinimumSpareMagazines:N0}."));
             }
 
+            var compatibleSpareRounds = spareRounds + looseRounds;
+            if (compatibleSpareRounds < settings.MinimumSpareRounds)
+            {
+                localWarnings.Add($"Compatible spare rounds: {FormatNumber(compatibleSpareRounds)}/{settings.MinimumSpareRounds:N0} configured minimum.");
+                warnings.Add(new HermesLoadoutWarning(
+                    compatibleSpareRounds <= 0d && settings.MinimumSpareRounds > 0 ? "Critical" : "Warning",
+                    "Ammunition",
+                    $"{template.Name} has {FormatNumber(compatibleSpareRounds)} compatible spare round(s) across spare magazines and loose ammunition; configured minimum is {settings.MinimumSpareRounds:N0}."));
+            }
+
+            var hasCriticalReadinessIssue = (attachedMagazine is null && !template.IsInternalMagazineWeapon)
+                                            || (settings.MinimumLoadedRounds > 0 && loadedRounds <= 0d)
+                                            || caliberMismatch;
             var status = localWarnings.Count == 0
                 ? "Ready"
-                : localWarnings.Any(text => text.Contains("no loaded", StringComparison.OrdinalIgnoreCase)
-                                            || text.Contains("does not match", StringComparison.OrdinalIgnoreCase)
-                                            || text.Contains("No magazine", StringComparison.OrdinalIgnoreCase))
+                : hasCriticalReadinessIssue
                     ? "Not ready"
                     : "Review";
 
@@ -468,7 +576,8 @@ public sealed class HermesLoadoutService(
     private IReadOnlyList<HermesArmorReadiness> BuildArmorReadiness(
         IReadOnlyList<InventoryNode> roots,
         IReadOnlyDictionary<string, List<InventoryNode>> children,
-        ICollection<HermesLoadoutWarning> warnings)
+        ICollection<HermesLoadoutWarning> warnings,
+        HermesLoadoutAnalysisSettings settings)
     {
         var output = new List<HermesArmorReadiness>();
         foreach (var root in roots.Where(item => ArmorSlots.Contains(item.SlotId ?? string.Empty)))
@@ -513,13 +622,14 @@ public sealed class HermesLoadoutService(
             var emptyOptional = plateSlots.Count(slot => !slot.Required && !slot.Installed);
             var localWarnings = new List<string>();
 
-            if (conditionPercent < 50)
+            if (conditionPercent < settings.MinimumArmorDurabilityPercent)
             {
-                localWarnings.Add($"Low armor durability: {conditionPercent}%.");
+                var criticalThreshold = Math.Max(1, settings.MinimumArmorDurabilityPercent / 2);
+                localWarnings.Add($"Low armor durability: {conditionPercent}% (configured minimum: {settings.MinimumArmorDurabilityPercent}%).");
                 warnings.Add(new HermesLoadoutWarning(
-                    conditionPercent < 25 ? "Critical" : "Warning",
+                    conditionPercent < criticalThreshold ? "Critical" : "Warning",
                     "Armor",
-                    $"{template.Name} armor durability is {conditionPercent}%."));
+                    $"{template.Name} armor durability is {conditionPercent}% (configured minimum: {settings.MinimumArmorDurabilityPercent}%)."));
             }
 
             if (missingRequired > 0)
@@ -566,7 +676,8 @@ public sealed class HermesLoadoutService(
 
     private HermesMedicalReadiness BuildMedicalReadiness(
         IReadOnlyList<InventoryNode> equippedItems,
-        ICollection<HermesLoadoutWarning> warnings)
+        ICollection<HermesLoadoutWarning> warnings,
+        HermesLoadoutAnalysisSettings settings)
     {
         var medicalItems = new List<HermesCarriedMedicalItem>();
         var lightBleed = false;
@@ -616,29 +727,42 @@ public sealed class HermesLoadoutService(
             }
         }
 
-        if (totalHealing <= 0d)
+        if (totalHealing < settings.MinimumHealingResource)
         {
-            warnings.Add(new HermesLoadoutWarning("Critical", "Medical", "No usable health-restoration resource is carried."));
+            warnings.Add(new HermesLoadoutWarning(
+                totalHealing <= 0d ? "Critical" : "Warning",
+                "Medical",
+                $"Total healing resource is {FormatNumber(totalHealing)}; configured minimum is {settings.MinimumHealingResource:N0}."));
         }
 
-        if (!heavyBleed)
+        if (settings.RequireHeavyBleedTreatment && !heavyBleed)
         {
             warnings.Add(new HermesLoadoutWarning("Critical", "Medical", "No heavy-bleeding treatment is carried."));
         }
 
-        if (!lightBleed)
+        if (settings.RequireLightBleedTreatment && !lightBleed)
         {
             warnings.Add(new HermesLoadoutWarning("Warning", "Medical", "No light-bleeding treatment is carried."));
         }
 
-        if (!fracture)
+        if (settings.RequireFractureTreatment && !fracture)
         {
             warnings.Add(new HermesLoadoutWarning("Warning", "Medical", "No fracture treatment is carried."));
         }
 
-        if (!pain)
+        if (settings.RequirePainTreatment && !pain)
         {
             warnings.Add(new HermesLoadoutWarning("Warning", "Medical", "No pain treatment is carried."));
+        }
+
+        if (settings.RequireHydrationProvision && hydrationProvisions <= 0)
+        {
+            warnings.Add(new HermesLoadoutWarning("Warning", "Sustainment", "No carried provision provides hydration."));
+        }
+
+        if (settings.RequireEnergyProvision && energyProvisions <= 0)
+        {
+            warnings.Add(new HermesLoadoutWarning("Warning", "Sustainment", "No carried provision provides energy."));
         }
 
         return new HermesMedicalReadiness(
@@ -2836,15 +2960,19 @@ public sealed class HermesLoadoutService(
         };
     }
 
-    private static string DetermineSlotStatus(string? slotId, int conditionPercent)
+    private static string DetermineSlotStatus(
+        string? slotId,
+        int conditionPercent,
+        HermesLoadoutAnalysisSettings settings)
     {
-        if ((WeaponSlots.Contains(slotId ?? string.Empty) || ArmorSlots.Contains(slotId ?? string.Empty))
-            && conditionPercent < 50)
-        {
-            return "Low condition";
-        }
-
-        return "Equipped";
+        var threshold = WeaponSlots.Contains(slotId ?? string.Empty)
+            ? settings.MinimumWeaponDurabilityPercent
+            : ArmorSlots.Contains(slotId ?? string.Empty)
+                ? settings.MinimumArmorDurabilityPercent
+                : 0;
+        return threshold > 0 && conditionPercent < threshold
+            ? "Low condition"
+            : "Equipped";
     }
 
     private static bool IsMagazineSlot(string? slotId)
@@ -3239,6 +3367,32 @@ public sealed class HermesLoadoutService(
         return fallback;
     }
 
+    private static HermesLoadoutValueSummary DisabledValueSummary()
+    {
+        return new HermesLoadoutValueSummary(
+            false,
+            "Value and insurance analysis is disabled in the HERMES BepInEx settings.",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            null,
+            "Disabled",
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            "DISABLED",
+            [],
+            [],
+            []);
+    }
+
     private static HermesLoadoutSummaryResponse NotFound(string message)
     {
         return new HermesLoadoutSummaryResponse(
@@ -3280,6 +3434,11 @@ public sealed class HermesLoadoutService(
             [],
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
     }
+
+    private sealed record LoadoutCacheEntry(
+        HermesLoadoutSummaryResponse Response,
+        long ExpiresUnixTime,
+        string ProfileRevision);
 
     private sealed record InventoryNode(
         string Id,

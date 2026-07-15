@@ -31,6 +31,7 @@ internal sealed record HermesStashAnalysisEntry(
     string ItemKey,
     string Name,
     string ShortName,
+    string Category,
     HermesStashInstanceSummary Instance,
     IReadOnlyList<HermesTraderSaleComponent> Components,
     long FullHandbookReferenceValue,
@@ -298,17 +299,19 @@ public sealed class HermesStashService(
             }
 
             var instance = BuildInstanceSummary(item, tree, components, sessionId);
+            var isProtectedCurrency = ProtectedCurrencyTemplates.Contains(item.TemplateId);
             entries.Add(new HermesStashAnalysisEntry(
                 templateId,
                 catalogItem.ItemKey,
                 catalogItem.Name,
                 catalogItem.ShortName,
+                GetStashCategory(templateId, isProtectedCurrency),
                 instance,
                 components,
                 GetFullHandbookReferenceValue(tree),
                 IsLoadedAmmunition(item.SlotId) ? 0 : GetOccupiedCells(item),
                 CountContainedItems(item, snapshot),
-                ProtectedCurrencyTemplates.Contains(item.TemplateId)));
+                isProtectedCurrency));
         }
 
         return new HermesStashAnalysisSnapshot(
@@ -459,6 +462,82 @@ public sealed class HermesStashService(
         }
 
         return output;
+    }
+
+    private string GetStashCategory(MongoId templateId, bool isProtectedCurrency)
+    {
+        if (isProtectedCurrency)
+        {
+            return "Currency";
+        }
+
+        if (!databaseService.GetItems().TryGetValue(templateId, out var template))
+        {
+            return "Other";
+        }
+
+        var node = JsonNode.Parse(jsonUtil.Serialize(template) ?? "{}") as JsonObject;
+        var properties = GetProperty(node, "_props", "Properties", "properties");
+        var serialized = properties?.ToJsonString() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(ReadString(properties, "weapClass", "WeapClass"))
+            || GetArray(GetProperty(properties, "weapFireType", "WeapFireType")).Any())
+        {
+            return "Weapons";
+        }
+
+        if (ReadDouble(properties, 0d, "Damage", "damage") > 0d
+            || ReadDouble(properties, 0d, "PenetrationPower", "penetrationPower") > 0d)
+        {
+            return "Ammunition";
+        }
+
+        if (GetArray(GetProperty(properties, "Cartridges", "cartridges")).Any()
+            || serialized.Contains("magAnimationIndex", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Magazines";
+        }
+
+        if (ReadDouble(properties, 0d, "ArmorClass", "armorClass") > 0d
+            || serialized.Contains("ArmorType", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Armor";
+        }
+
+        if (ReadDouble(properties, 0d, "MaxHpResource", "maxHpResource") > 0d
+            || HasMeaningfulObject(GetProperty(properties, "effects_damage", "EffectsDamage"))
+            || HasMeaningfulArray(GetProperty(properties, "Buffs", "buffs")))
+        {
+            return "Medical";
+        }
+
+        if (ReadDouble(properties, 0d, "MaximumNumberOfUsage", "maximumNumberOfUsage") > 0d)
+        {
+            return "Keys";
+        }
+
+        if (ReadDouble(properties, 0d, "MaxResource", "maxResource") > 0d
+            && (serialized.Contains("Hydration", StringComparison.OrdinalIgnoreCase)
+                || serialized.Contains("Energy", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "Provisions";
+        }
+
+        if (GetArray(GetProperty(properties, "Grids", "grids")).Any())
+        {
+            return "Containers";
+        }
+
+        return "Other";
+    }
+
+    private static bool HasMeaningfulObject(JsonNode? node)
+    {
+        return node is JsonObject obj && obj.Count > 0;
+    }
+
+    private static bool HasMeaningfulArray(JsonNode? node)
+    {
+        return node is JsonArray array && array.Count > 0;
     }
 
     private bool IsArmorInsert(InventoryItemNode item)

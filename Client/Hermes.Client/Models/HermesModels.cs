@@ -7,11 +7,21 @@ public sealed class HermesCacheStatusResponse
     public string? Message { get; set; }
     public int MarketUnitValueEntryCount { get; set; }
     public int MarketSummaryEntryCount { get; set; }
+    public int StashAnalysisEntryCount { get; set; }
+    public int LoadoutAnalysisEntryCount { get; set; }
     public long CacheHits { get; set; }
     public long CacheMisses { get; set; }
     public long CacheWrites { get; set; }
+    public long StashCacheHits { get; set; }
+    public long StashCacheMisses { get; set; }
+    public long StashCacheWrites { get; set; }
+    public long LoadoutCacheHits { get; set; }
+    public long LoadoutCacheMisses { get; set; }
+    public long LoadoutCacheWrites { get; set; }
     public long Generation { get; set; }
     public int TtlSeconds { get; set; }
+    public int StashTtlSeconds { get; set; }
+    public int LoadoutTtlSeconds { get; set; }
     public long? OldestEntryAgeSeconds { get; set; }
     public long? NewestEntryAgeSeconds { get; set; }
     public string LastInvalidationReason { get; set; } = string.Empty;
@@ -512,6 +522,9 @@ internal sealed class HermesStashValuationItem
     public string ItemKey { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string ShortName { get; set; } = string.Empty;
+    public string Category { get; set; } = string.Empty;
+    public bool FoundInRaid { get; set; }
+    public bool IsProtectedCurrency { get; set; }
     public string InstanceKey { get; set; } = string.Empty;
     public string InstanceLabel { get; set; } = string.Empty;
     public double Quantity { get; set; }

@@ -23,8 +23,18 @@ public sealed class HermesDynamicRouter(
                 "/hermes/search/",
                 (url, _, _, _) =>
                 {
-                    var query = GetTail(url, "/hermes/search/");
-                    var response = catalogService.Search(query);
+                    var tail = GetTail(url, "/hermes/search/");
+                    var separator = tail.IndexOf('/');
+                    var maximumResults = 30;
+                    var query = tail;
+                    if (separator > 0
+                        && int.TryParse(tail[..separator], out var parsedMaximum))
+                    {
+                        maximumResults = Math.Clamp(parsedMaximum, 5, 50);
+                        query = tail[(separator + 1)..];
+                    }
+
+                    var response = catalogService.Search(query, maximumResults);
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(
@@ -37,16 +47,20 @@ public sealed class HermesDynamicRouter(
                 }),
             new RouteAction(
                 "/hermes/stash/summary",
-                (_, _, sessionId, _) =>
+                (url, _, sessionId, _) =>
                 {
-                    var response = stashAnalysisService.GetSummary(sessionId);
+                    var tail = GetTail(url, "/hermes/stash/summary");
+                    var settings = HermesStashAnalysisSettings.Parse(tail);
+                    var response = stashAnalysisService.GetSummary(sessionId, settings);
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(
                 "/hermes/loadout/summary",
-                (_, _, sessionId, _) =>
+                (url, _, sessionId, _) =>
                 {
-                    var response = loadoutService.GetSummary(sessionId);
+                    var tail = GetTail(url, "/hermes/loadout/summary");
+                    var settings = HermesLoadoutAnalysisSettings.Parse(tail);
+                    var response = loadoutService.GetSummary(sessionId, settings);
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(

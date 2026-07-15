@@ -1,0 +1,848 @@
+using BepInEx.Configuration;
+using UnityEngine;
+
+namespace Hermes.Client;
+
+internal sealed class HermesClientSettings
+{
+    private const string LastTabPlayerPref = "HERMES.LastTab";
+    private const string WindowXPlayerPref = "HERMES.WindowX";
+    private const string WindowYPlayerPref = "HERMES.WindowY";
+
+    public ConfigEntry<KeyboardShortcut> ToggleWindowShortcut { get; private set; } = null!;
+    public ConfigEntry<string> DefaultOpeningTab { get; private set; } = null!;
+    public ConfigEntry<bool> RememberLastSelectedTab { get; private set; } = null!;
+    public ConfigEntry<bool> AutomaticallyRefreshWhenOpened { get; private set; } = null!;
+    public ConfigEntry<int> RequestTimeoutSeconds { get; private set; } = null!;
+    public ConfigEntry<bool> DetailedLogging { get; private set; } = null!;
+    public ConfigEntry<bool> ShareDuplicateRequests { get; private set; } = null!;
+    public ConfigEntry<int> SlowRequestWarningSeconds { get; private set; } = null!;
+    public ConfigEntry<int> CacheStatusRefreshSeconds { get; private set; } = null!;
+    public ConfigEntry<bool> ShowDiagnosticsFooter { get; private set; } = null!;
+
+    public ConfigEntry<int> WindowWidth { get; private set; } = null!;
+    public ConfigEntry<int> WindowHeight { get; private set; } = null!;
+    public ConfigEntry<float> WindowOpacity { get; private set; } = null!;
+    public ConfigEntry<float> UiScale { get; private set; } = null!;
+    public ConfigEntry<bool> CompactMode { get; private set; } = null!;
+    public ConfigEntry<bool> ShowHelpText { get; private set; } = null!;
+    public ConfigEntry<bool> ShowSectionDescriptions { get; private set; } = null!;
+    public ConfigEntry<bool> CollapseSectionsByDefault { get; private set; } = null!;
+    public ConfigEntry<int> MaximumRowsPerSection { get; private set; } = null!;
+    public ConfigEntry<bool> RememberWindowPosition { get; private set; } = null!;
+
+    public ConfigEntry<int> MaximumSearchResults { get; private set; } = null!;
+    public ConfigEntry<bool> SearchWhileTyping { get; private set; } = null!;
+    public ConfigEntry<int> MinimumSearchCharacters { get; private set; } = null!;
+    public ConfigEntry<bool> ShowItemShortNames { get; private set; } = null!;
+    public ConfigEntry<bool> ShowItemReferencePrices { get; private set; } = null!;
+
+    public ConfigEntry<int> MinimumComparableFleaOffers { get; private set; } = null!;
+    public ConfigEntry<bool> ExpandTraderComparisonByDefault { get; private set; } = null!;
+    public ConfigEntry<bool> ExpandMarketByDefault { get; private set; } = null!;
+    public ConfigEntry<bool> ShowConvertedBarterOffers { get; private set; } = null!;
+    public ConfigEntry<bool> ShowDetailedBarterCalculations { get; private set; } = null!;
+    public ConfigEntry<bool> ShowListingFeeEstimates { get; private set; } = null!;
+    public ConfigEntry<bool> ShowFullAssemblyValuation { get; private set; } = null!;
+    public ConfigEntry<int> MaximumFleaOffersDisplayed { get; private set; } = null!;
+
+    public ConfigEntry<string> DefaultHideoutFilter { get; private set; } = null!;
+    public ConfigEntry<bool> ShowCompletedHideoutAreas { get; private set; } = null!;
+    public ConfigEntry<bool> ShowOnlyMissingHideoutRequirements { get; private set; } = null!;
+    public ConfigEntry<bool> ShowHideoutAcquisitionPlans { get; private set; } = null!;
+    public ConfigEntry<bool> ShowHideoutDetailedPriceSources { get; private set; } = null!;
+
+    public ConfigEntry<string> DefaultCraftFilter { get; private set; } = null!;
+    public ConfigEntry<string> DefaultCraftSorting { get; private set; } = null!;
+    public ConfigEntry<int> MinimumCraftProfit { get; private set; } = null!;
+    public ConfigEntry<int> MinimumCraftProfitPercent { get; private set; } = null!;
+    public ConfigEntry<int> OvernightMinimumHours { get; private set; } = null!;
+    public ConfigEntry<int> OvernightMaximumHours { get; private set; } = null!;
+    public ConfigEntry<bool> HideCraftsWithMissingIngredients { get; private set; } = null!;
+    public ConfigEntry<bool> HideUnavailableCrafts { get; private set; } = null!;
+    public ConfigEntry<bool> ShowDetailedCraftAcquisitionPlan { get; private set; } = null!;
+
+    public ConfigEntry<string> DefaultStashView { get; private set; } = null!;
+    public ConfigEntry<string> DefaultStashSorting { get; private set; } = null!;
+    public ConfigEntry<bool> IncludeActiveQuestReservations { get; private set; } = null!;
+    public ConfigEntry<bool> IncludeFutureQuestReservations { get; private set; } = null!;
+    public ConfigEntry<bool> IncludeNextHideoutReservations { get; private set; } = null!;
+    public ConfigEntry<bool> IncludeFutureHideoutReservations { get; private set; } = null!;
+    public ConfigEntry<bool> PreferFoundInRaidCopies { get; private set; } = null!;
+    public ConfigEntry<int> DuplicateBaselineReserve { get; private set; } = null!;
+    public ConfigEntry<int> StashWeaponDurabilityThreshold { get; private set; } = null!;
+    public ConfigEntry<int> StashArmorDurabilityThreshold { get; private set; } = null!;
+    public ConfigEntry<int> StashLowResourceThreshold { get; private set; } = null!;
+    public ConfigEntry<int> StashKeyUsesWarningThreshold { get; private set; } = null!;
+    public ConfigEntry<int> MinimumCleanupValue { get; private set; } = null!;
+    public ConfigEntry<int> MinimumValuePerRecoveredCell { get; private set; } = null!;
+    public ConfigEntry<int> MaximumStashRecommendations { get; private set; } = null!;
+    public ConfigEntry<bool> ShowProtectedCurrencies { get; private set; } = null!;
+    public ConfigEntry<bool> ShowUnsupportedStashItems { get; private set; } = null!;
+    public ConfigEntry<bool> ShowStashReservationReasons { get; private set; } = null!;
+
+    public ConfigEntry<int> MinimumWeaponDurabilityPercent { get; private set; } = null!;
+    public ConfigEntry<int> MinimumArmorDurabilityPercent { get; private set; } = null!;
+    public ConfigEntry<int> MinimumLoadedRounds { get; private set; } = null!;
+    public ConfigEntry<int> MinimumSpareMagazines { get; private set; } = null!;
+    public ConfigEntry<int> MinimumSpareRounds { get; private set; } = null!;
+    public ConfigEntry<int> MinimumHealingResource { get; private set; } = null!;
+    public ConfigEntry<bool> RequireHeavyBleedTreatment { get; private set; } = null!;
+    public ConfigEntry<bool> RequireLightBleedTreatment { get; private set; } = null!;
+    public ConfigEntry<bool> RequireFractureTreatment { get; private set; } = null!;
+    public ConfigEntry<bool> RequirePainTreatment { get; private set; } = null!;
+    public ConfigEntry<bool> RequireHydrationProvision { get; private set; } = null!;
+    public ConfigEntry<bool> RequireEnergyProvision { get; private set; } = null!;
+    public ConfigEntry<int> HydrationWarningPercent { get; private set; } = null!;
+    public ConfigEntry<int> EnergyWarningPercent { get; private set; } = null!;
+    public ConfigEntry<bool> ShowValueAndInsurance { get; private set; } = null!;
+    public ConfigEntry<bool> EnableInsuranceWarnings { get; private set; } = null!;
+    public ConfigEntry<int> HighValueUninsuredThreshold { get; private set; } = null!;
+    public ConfigEntry<bool> ShowCompletedQuestObjectives { get; private set; } = null!;
+    public ConfigEntry<bool> CollapseWarningGroupsByDefault { get; private set; } = null!;
+    public ConfigEntry<string> DefaultLoadoutView { get; private set; } = null!;
+    public ConfigEntry<bool> ShowReadinessScoreBar { get; private set; } = null!;
+    public ConfigEntry<bool> HideEmptyLoadoutSections { get; private set; } = null!;
+    public ConfigEntry<bool> ShowProtectedSlotValue { get; private set; } = null!;
+    public ConfigEntry<bool> ShowInsuranceCostEstimate { get; private set; } = null!;
+
+    public ConfigEntry<string> RaidPlannerDefaultSorting { get; private set; } = null!;
+    public ConfigEntry<bool> RaidPlannerShowInferredRouteKeys { get; private set; } = null!;
+    public ConfigEntry<bool> RaidPlannerShowAcquireInRaidItems { get; private set; } = null!;
+    public ConfigEntry<bool> RaidPlannerShowHandoverObjectives { get; private set; } = null!;
+    public ConfigEntry<bool> RaidPlannerShowFirHandoverObjectives { get; private set; } = null!;
+    public ConfigEntry<bool> RaidPlannerIncludeQuestGearRestrictions { get; private set; } = null!;
+    public ConfigEntry<bool> RaidPlannerIncludeMedicalReadiness { get; private set; } = null!;
+    public ConfigEntry<bool> RaidPlannerIncludeAmmunitionReadiness { get; private set; } = null!;
+    public ConfigEntry<bool> RaidPlannerIncludeInsuranceWarnings { get; private set; } = null!;
+    public ConfigEntry<bool> RaidPlannerShowPlanNotes { get; private set; } = null!;
+
+    public ConfigEntry<int> AutomaticLoadoutRefreshSeconds { get; private set; } = null!;
+
+    public void Bind(ConfigFile config)
+    {
+        ToggleWindowShortcut = config.Bind(
+            "General",
+            "Toggle HERMES",
+            new KeyboardShortcut(KeyCode.F8),
+            "Keyboard shortcut used to open and close HERMES.");
+        DefaultOpeningTab = config.Bind(
+            "General",
+            "Default opening tab",
+            "Item Search",
+            "Tab shown when HERMES opens and remembered-tab behavior is disabled. Options: Item Search, Hideout, Crafts, Stash, Loadout.");
+        RememberLastSelectedTab = config.Bind(
+            "General",
+            "Remember last selected tab",
+            true,
+            "Reopens HERMES on the most recently selected main tab.");
+        AutomaticallyRefreshWhenOpened = config.Bind(
+            "General",
+            "Automatically refresh when opened",
+            true,
+            "Refreshes the currently loaded view when HERMES is opened. This does not clear server caches.");
+        RequestTimeoutSeconds = config.Bind(
+            "General",
+            "Request timeout seconds",
+            12,
+            "Timeout for normal HERMES requests. Full stash and loadout analysis always receive at least 30 seconds. Range: 5-60.");
+        DetailedLogging = config.Bind(
+            "General",
+            "Detailed logging",
+            false,
+            "Logs successful request timings, tab changes, and shared UI state changes to the BepInEx log.");
+
+        ShareDuplicateRequests = config.Bind(
+            "Reliability",
+            "Share duplicate in-flight requests",
+            true,
+            "When multiple panels request the same read-only route at the same time, they share one server request instead of duplicating work.");
+        SlowRequestWarningSeconds = config.Bind(
+            "Reliability",
+            "Slow request warning seconds",
+            3,
+            "Logs a warning when a HERMES request exceeds this duration. Range: 1-30 seconds.");
+        CacheStatusRefreshSeconds = config.Bind(
+            "Reliability",
+            "Cache status refresh seconds",
+            10,
+            "How often the visible HERMES footer refreshes server cache diagnostics. Range: 5-60 seconds.");
+        ShowDiagnosticsFooter = config.Bind(
+            "Reliability",
+            "Show diagnostics footer",
+            true,
+            "Shows client request health and market/stash/loadout cache counts in the HERMES footer.");
+
+        WindowWidth = config.Bind(
+            "Interface",
+            "Window width",
+            1120,
+            "Physical HERMES window width in pixels. Range: 900-1800.");
+        WindowHeight = config.Bind(
+            "Interface",
+            "Window height",
+            760,
+            "Physical HERMES window height in pixels. Range: 600-1100.");
+        WindowOpacity = config.Bind(
+            "Interface",
+            "Window opacity",
+            1.0f,
+            "Opacity applied to the complete HERMES window. Range: 0.55-1.0.");
+        UiScale = config.Bind(
+            "Interface",
+            "UI scale",
+            1.0f,
+            "Scales HERMES controls and text. Range: 0.75-1.50.");
+        CompactMode = config.Bind(
+            "Interface",
+            "Compact mode",
+            false,
+            "Reduces shared spacing, header height, and status-panel padding.");
+        ShowHelpText = config.Bind(
+            "Interface",
+            "Show help text",
+            true,
+            "Shows the global Ask HERMES help line and empty-state guidance.");
+        ShowSectionDescriptions = config.Bind(
+            "Interface",
+            "Show section descriptions",
+            true,
+            "Shows explanatory text beneath shared panel headers.");
+        CollapseSectionsByDefault = config.Bind(
+            "Interface",
+            "Collapse sections by default",
+            false,
+            "Starts collapsible shared detail sections closed until opened.");
+        MaximumRowsPerSection = config.Bind(
+            "Interface",
+            "Maximum rows per section",
+            150,
+            "Maximum number of rows rendered in long shared lists before a hidden-row notice is shown. Range: 25-500.");
+        RememberWindowPosition = config.Bind(
+            "Interface",
+            "Remember window position",
+            true,
+            "Restores the last HERMES window position for the current client installation.");
+
+        MaximumSearchResults = config.Bind(
+            "Item Search",
+            "Maximum search results",
+            30,
+            "Maximum player-facing item matches requested from the server. Range: 5-50.");
+        SearchWhileTyping = config.Bind(
+            "Item Search",
+            "Search while typing",
+            true,
+            "Runs a debounced item search after the configured minimum character count is reached.");
+        MinimumSearchCharacters = config.Bind(
+            "Item Search",
+            "Minimum search characters",
+            2,
+            "Minimum trimmed characters required before manual or automatic item search. Range: 1-10.");
+        ShowItemShortNames = config.Bind(
+            "Item Search",
+            "Show item short names",
+            true,
+            "Shows short names beneath full item names in search results and selected-item details.");
+        ShowItemReferencePrices = config.Bind(
+            "Item Search",
+            "Show handbook reference prices",
+            true,
+            "Shows handbook reference prices in search results and the selected-item header.");
+
+        MinimumComparableFleaOffers = config.Bind(
+            "Market Intelligence",
+            "Minimum comparable flea offers",
+            3,
+            "Offer count required before the UI labels an active flea estimate reliable. This does not change the server's pricing order. Range: 1-20.");
+        ExpandTraderComparisonByDefault = config.Bind(
+            "Market Intelligence",
+            "Expand trader comparison by default",
+            false,
+            "Starts the vanilla-trader sale comparison expanded when selecting an item.");
+        ExpandMarketByDefault = config.Bind(
+            "Market Intelligence",
+            "Expand flea market by default",
+            true,
+            "Starts local flea market details expanded when selecting an item.");
+        ShowConvertedBarterOffers = config.Bind(
+            "Market Intelligence",
+            "Show converted flea barter offers",
+            true,
+            "Shows converted barter offers in the lowest-offers list. They remain part of server market valuation regardless of this display option.");
+        ShowDetailedBarterCalculations = config.Bind(
+            "Market Intelligence",
+            "Show detailed barter calculations",
+            true,
+            "Shows requirement-by-requirement market calculations for trader barters.");
+        ShowListingFeeEstimates = config.Bind(
+            "Market Intelligence",
+            "Show listing fee estimates",
+            true,
+            "Shows estimated flea listing fees and net-sale values when available.");
+        ShowFullAssemblyValuation = config.Bind(
+            "Market Intelligence",
+            "Show full assembly valuation",
+            true,
+            "Shows installed attachment and armor-insert valuation details for exact items and flea assemblies.");
+        MaximumFleaOffersDisplayed = config.Bind(
+            "Market Intelligence",
+            "Maximum flea offers displayed",
+            10,
+            "Maximum comparable flea rows rendered for a selected item. Range: 1-50.");
+
+        DefaultHideoutFilter = config.Bind(
+            "Hideout",
+            "Default area filter",
+            "Actionable",
+            "Initial Hideout view. Options: All, Actionable, Ready, Missing Materials, Progression Blocked, In Progress, Completed.");
+        ShowCompletedHideoutAreas = config.Bind(
+            "Hideout",
+            "Show completed areas",
+            false,
+            "Allows maximum-level hideout areas to appear outside the explicit Completed filter.");
+        ShowOnlyMissingHideoutRequirements = config.Bind(
+            "Hideout",
+            "Show only missing requirements",
+            false,
+            "Hides completed requirements in the selected hideout-area detail view.");
+        ShowHideoutAcquisitionPlans = config.Bind(
+            "Hideout",
+            "Show acquisition estimates",
+            true,
+            "Shows estimated missing-material costs and current acquisition sources.");
+        ShowHideoutDetailedPriceSources = config.Bind(
+            "Hideout",
+            "Show detailed price sources",
+            true,
+            "Shows the unit source and unit price used for each missing item requirement.");
+
+        DefaultCraftFilter = config.Bind(
+            "Crafts",
+            "Default craft filter",
+            "Available Crafts",
+            "Initial craft filter. Options: All, Available Crafts, Ready Now, Profitable, Overnight, Active.");
+        DefaultCraftSorting = config.Bind(
+            "Crafts",
+            "Default craft sorting",
+            "Profit per hour",
+            "Initial recipe sorting. Options: Name, Station, Duration, Profit, Profit percentage, Profit per hour, Missing ingredients.");
+        MinimumCraftProfit = config.Bind(
+            "Crafts",
+            "Minimum economic profit",
+            0,
+            "Minimum estimated economic profit required by the Profitable filter. Range: -10000000 to 10000000.");
+        MinimumCraftProfitPercent = config.Bind(
+            "Crafts",
+            "Minimum economic profit percent",
+            0,
+            "Minimum economic return percentage required by the Profitable filter. Range: -100 to 10000.");
+        OvernightMinimumHours = config.Bind(
+            "Crafts",
+            "Overnight minimum hours",
+            4,
+            "Minimum craft duration for the Overnight filter. Range: 1-48.");
+        OvernightMaximumHours = config.Bind(
+            "Crafts",
+            "Overnight maximum hours",
+            12,
+            "Maximum craft duration for the Overnight filter. Range: 1-72.");
+        HideCraftsWithMissingIngredients = config.Bind(
+            "Crafts",
+            "Hide crafts with missing ingredients",
+            false,
+            "Hides recipes whose required ingredients are not currently owned, even in the All filter.");
+        HideUnavailableCrafts = config.Bind(
+            "Crafts",
+            "Hide unavailable crafts",
+            false,
+            "Hides recipes locked by station level, quest progression, or recipe unlock state.");
+        ShowDetailedCraftAcquisitionPlan = config.Bind(
+            "Crafts",
+            "Show detailed acquisition plans",
+            true,
+            "Shows per-source acquisition lines for missing ingredients in recipe details.");
+
+        DefaultStashView = config.Bind(
+            "Stash",
+            "Default stash view",
+            "Overview",
+            "View selected when the Stash tab is reset. Options: Overview, Safe to Sell, Cleanup, Keep, Review, Duplicates, Damaged.");
+        DefaultStashSorting = config.Bind(
+            "Stash",
+            "Default stash sorting",
+            "Recommendation",
+            "Initial recommendation ordering. Options: Recommendation, Name, Sell value, Sellable quantity, Value per cell, Occupied cells, Condition, Destination, Reserved quantity.");
+        IncludeActiveQuestReservations = config.Bind(
+            "Stash Reservations",
+            "Include active quest reservations",
+            true,
+            "Protects owned quantities needed by currently active quest handover objectives.");
+        IncludeFutureQuestReservations = config.Bind(
+            "Stash Reservations",
+            "Include future quest reservations",
+            true,
+            "Protects owned quantities needed by known future quest handover objectives.");
+        IncludeNextHideoutReservations = config.Bind(
+            "Stash Reservations",
+            "Include next hideout upgrade",
+            true,
+            "Protects owned materials needed by the next level of each hideout area.");
+        IncludeFutureHideoutReservations = config.Bind(
+            "Stash Reservations",
+            "Include future hideout upgrades",
+            true,
+            "Protects owned materials needed by later hideout levels.");
+        PreferFoundInRaidCopies = config.Bind(
+            "Stash Reservations",
+            "Prefer found-in-raid copies",
+            true,
+            "When several copies can satisfy a reservation, prefers found-in-raid copies. FIR-required objectives always reserve FIR copies regardless of this setting.");
+        DuplicateBaselineReserve = config.Bind(
+            "Stash Recommendations",
+            "Duplicate baseline reserve",
+            1,
+            "When no quest or hideout reserve exists, the duplicate view keeps this many units before reporting possible excess. Range: 0-1000.");
+        StashWeaponDurabilityThreshold = config.Bind(
+            "Stash Condition",
+            "Weapon durability warning percent",
+            70,
+            "Stash weapons below this durability appear in Damaged. Range: 1-100.");
+        StashArmorDurabilityThreshold = config.Bind(
+            "Stash Condition",
+            "Armor durability warning percent",
+            50,
+            "Stash armor and generic durable items below this durability appear in Damaged. Range: 1-100.");
+        StashLowResourceThreshold = config.Bind(
+            "Stash Condition",
+            "Low resource warning percent",
+            20,
+            "Medical, repair, and consumable resources below this percentage appear in Damaged. Range: 0-100.");
+        StashKeyUsesWarningThreshold = config.Bind(
+            "Stash Condition",
+            "Key uses warning threshold",
+            1,
+            "Keys with this many uses remaining or fewer appear in Damaged. Set to 0 to disable. Range: 0-100.");
+        MinimumCleanupValue = config.Bind(
+            "Stash Cleanup",
+            "Minimum cleanup sale value",
+            0,
+            "Minimum best-destination value for an exact item instance to enter Cleanup. Range: 0-100000000.");
+        MinimumValuePerRecoveredCell = config.Bind(
+            "Stash Cleanup",
+            "Minimum value per recovered cell",
+            0,
+            "Minimum roubles recovered per occupied stash cell for Cleanup candidates. Range: 0-10000000.");
+        MaximumStashRecommendations = config.Bind(
+            "Stash Display",
+            "Maximum recommendations returned",
+            300,
+            "Maximum recommendation rows returned by the server. Totals still include all supported items. Range: 25-1000.");
+        ShowProtectedCurrencies = config.Bind(
+            "Stash Display",
+            "Show protected currencies",
+            true,
+            "Shows roubles, dollars, and euros in recommendation and value lists while still excluding them from sale advice.");
+        ShowUnsupportedStashItems = config.Bind(
+            "Stash Display",
+            "Show unsupported item count",
+            true,
+            "Shows the count and explanation for quest-only or handbook-less independent items excluded from analysis.");
+        ShowStashReservationReasons = config.Bind(
+            "Stash Display",
+            "Show detailed reservation reasons",
+            true,
+            "Shows the exact quest and hideout reasons behind keep and surplus quantities.");
+
+        MinimumWeaponDurabilityPercent = config.Bind(
+            "Loadout Readiness",
+            "Minimum weapon durability percent",
+            70,
+            "Weapons below this durability generate a readiness warning. Range: 1-100.");
+        MinimumArmorDurabilityPercent = config.Bind(
+            "Loadout Readiness",
+            "Minimum armor durability percent",
+            50,
+            "Armor or inserts below this durability generate a readiness warning. Range: 1-100.");
+        MinimumLoadedRounds = config.Bind(
+            "Loadout Readiness",
+            "Minimum loaded rounds per weapon",
+            1,
+            "Each equipped firearm should contain at least this many loaded rounds. Range: 0-200.");
+        MinimumSpareMagazines = config.Bind(
+            "Loadout Readiness",
+            "Minimum compatible spare magazines",
+            1,
+            "Each equipped firearm should have at least this many compatible spare magazines. Range: 0-20.");
+        MinimumSpareRounds = config.Bind(
+            "Loadout Readiness",
+            "Minimum compatible spare rounds",
+            30,
+            "Each equipped firearm should have at least this many compatible rounds outside the installed magazine. Loaded spare magazines and loose rounds both count. Range: 0-1000.");
+        MinimumHealingResource = config.Bind(
+            "Loadout Readiness",
+            "Minimum total healing resource",
+            100,
+            "Combined carried health-restoration resource required before HERMES reports adequate healing. Range: 0-5000.");
+        HydrationWarningPercent = config.Bind(
+            "Loadout Readiness",
+            "Hydration warning percent",
+            50,
+            "Current hydration below this percentage generates a warning. Range: 0-100.");
+        EnergyWarningPercent = config.Bind(
+            "Loadout Readiness",
+            "Energy warning percent",
+            50,
+            "Current energy below this percentage generates a warning. Range: 0-100.");
+        RequireHeavyBleedTreatment = config.Bind(
+            "Loadout Medical Requirements",
+            "Require heavy-bleed treatment",
+            true,
+            "Adds a critical readiness warning when no carried item can treat heavy bleeding.");
+        RequireLightBleedTreatment = config.Bind(
+            "Loadout Medical Requirements",
+            "Require light-bleed treatment",
+            true,
+            "Adds a readiness warning when no carried item can treat light bleeding.");
+        RequireFractureTreatment = config.Bind(
+            "Loadout Medical Requirements",
+            "Require fracture treatment",
+            true,
+            "Adds a readiness warning when no carried item can treat fractures.");
+        RequirePainTreatment = config.Bind(
+            "Loadout Medical Requirements",
+            "Require pain treatment",
+            true,
+            "Adds a readiness warning when no carried item can treat pain.");
+        RequireHydrationProvision = config.Bind(
+            "Loadout Sustainment Requirements",
+            "Require hydration provision",
+            false,
+            "Adds a readiness warning when no carried food or drink item provides hydration.");
+        RequireEnergyProvision = config.Bind(
+            "Loadout Sustainment Requirements",
+            "Require energy provision",
+            false,
+            "Adds a readiness warning when no carried food or drink item provides energy.");
+
+        ShowValueAndInsurance = config.Bind(
+            "Loadout Display",
+            "Show Value and Insurance",
+            true,
+            "Enables exact carried-item valuation and displays the Value & Insurance view.");
+        EnableInsuranceWarnings = config.Bind(
+            "Loadout Display",
+            "Enable insurance warnings",
+            true,
+            "Adds readiness warnings for high-value uninsured equipment.");
+        HighValueUninsuredThreshold = config.Bind(
+            "Loadout Display",
+            "High-value uninsured threshold",
+            100000,
+            "Replacement value in roubles at which an uninsured item generates a warning. Range: 0-10000000.");
+        ShowCompletedQuestObjectives = config.Bind(
+            "Loadout Display",
+            "Show completed quest objectives",
+            true,
+            "When disabled, Raid Planner hides already-completed objective rows.");
+        CollapseWarningGroupsByDefault = config.Bind(
+            "Loadout Display",
+            "Collapse warning groups by default",
+            false,
+            "Starts the Overview warning categories collapsed until opened.");
+        DefaultLoadoutView = config.Bind(
+            "Loadout Display",
+            "Default loadout view",
+            "Overview",
+            "Initial Loadout sub-tab. Options: Overview, Weapons & Ammo, Armor, Medical, Quest Gear, Raid Planner, Value & Insurance.");
+        ShowReadinessScoreBar = config.Bind(
+            "Loadout Display",
+            "Show readiness score bar",
+            true,
+            "Shows a visual 0-100 readiness bar beneath the Loadout summary metrics.");
+        HideEmptyLoadoutSections = config.Bind(
+            "Loadout Display",
+            "Hide empty loadout sections",
+            true,
+            "Suppresses empty detail sections when the corresponding equipment or item category is not present.");
+        ShowProtectedSlotValue = config.Bind(
+            "Loadout Display",
+            "Show protected-slot value",
+            true,
+            "Shows secure-container, melee, compass, armband, and special-slot value in Value & Insurance.");
+        ShowInsuranceCostEstimate = config.Bind(
+            "Loadout Display",
+            "Show insurance-cost estimate",
+            true,
+            "Shows HERMES' estimated insurance checkout cost when a configured insurer coefficient can be resolved.");
+
+        RaidPlannerDefaultSorting = config.Bind(
+            "Raid Planner",
+            "Default map sorting",
+            "Best prepared",
+            "Map order. Options: Best prepared, Most active quests, Most incomplete objectives, Fewest missing requirements, Alphabetical.");
+        RaidPlannerShowInferredRouteKeys = config.Bind(
+            "Raid Planner",
+            "Show inferred route keys",
+            true,
+            "Shows route-key requirements inferred from local quest text, locales, key data, and HERMES vanilla quest rules.");
+        RaidPlannerShowAcquireInRaidItems = config.Bind(
+            "Raid Planner",
+            "Show items acquired during raid",
+            true,
+            "Shows requirements such as Saving the Mole's science-office key that are obtained after deployment.");
+        RaidPlannerShowHandoverObjectives = config.Bind(
+            "Raid Planner",
+            "Show handover objectives",
+            true,
+            "Shows item handover and turn-in objective rows in map plans.");
+        RaidPlannerShowFirHandoverObjectives = config.Bind(
+            "Raid Planner",
+            "Show FIR handover objectives",
+            true,
+            "Shows found-in-raid handover rows when general handover objectives are enabled.");
+        RaidPlannerIncludeQuestGearRestrictions = config.Bind(
+            "Raid Planner",
+            "Include quest gear restrictions",
+            true,
+            "Shows the combined bring, equip, key, marker, and acquire-in-raid checklist.");
+        RaidPlannerIncludeMedicalReadiness = config.Bind(
+            "Raid Planner",
+            "Include medical readiness context",
+            true,
+            "Shows current Medical warnings beside map plans without changing quest requirements.");
+        RaidPlannerIncludeAmmunitionReadiness = config.Bind(
+            "Raid Planner",
+            "Include ammunition readiness context",
+            true,
+            "Shows current Weapons and Ammunition warnings beside map plans without changing quest requirements.");
+        RaidPlannerIncludeInsuranceWarnings = config.Bind(
+            "Raid Planner",
+            "Include insurance warning context",
+            false,
+            "Shows current Insurance warnings beside map plans without changing quest requirements.");
+        RaidPlannerShowPlanNotes = config.Bind(
+            "Raid Planner",
+            "Show plan notes",
+            true,
+            "Shows HERMES notes about equipment conflicts, inferred keys, and acquire-in-raid requirements.");
+
+        AutomaticLoadoutRefreshSeconds = config.Bind(
+            "Loadout Refresh",
+            "Automatic refresh interval seconds",
+            10,
+            "Rechecks the profile-aware Loadout snapshot while the tab is open. Set to 0 to disable. Range: 0-60.");
+    }
+
+    public HermesStashRequestSettings CreateStashRequestSettings()
+    {
+        return new HermesStashRequestSettings(
+            IncludeActiveQuestReservations.Value,
+            IncludeFutureQuestReservations.Value,
+            IncludeNextHideoutReservations.Value,
+            IncludeFutureHideoutReservations.Value,
+            PreferFoundInRaidCopies.Value,
+            Math.Clamp(DuplicateBaselineReserve.Value, 0, 1000),
+            Math.Clamp(StashWeaponDurabilityThreshold.Value, 1, 100),
+            Math.Clamp(StashArmorDurabilityThreshold.Value, 1, 100),
+            Math.Clamp(StashLowResourceThreshold.Value, 0, 100),
+            Math.Clamp(StashKeyUsesWarningThreshold.Value, 0, 100),
+            Math.Clamp(MinimumCleanupValue.Value, 0, 100_000_000),
+            Math.Clamp(MinimumValuePerRecoveredCell.Value, 0, 10_000_000),
+            Math.Clamp(MaximumStashRecommendations.Value, 25, 1000),
+            ShowProtectedCurrencies.Value);
+    }
+
+    public HermesLoadoutRequestSettings CreateLoadoutRequestSettings()
+    {
+        return new HermesLoadoutRequestSettings(
+            Math.Clamp(MinimumWeaponDurabilityPercent.Value, 1, 100),
+            Math.Clamp(MinimumArmorDurabilityPercent.Value, 1, 100),
+            Math.Clamp(MinimumLoadedRounds.Value, 0, 200),
+            Math.Clamp(MinimumSpareMagazines.Value, 0, 20),
+            Math.Clamp(MinimumSpareRounds.Value, 0, 1000),
+            Math.Clamp(MinimumHealingResource.Value, 0, 5000),
+            Math.Clamp(HydrationWarningPercent.Value, 0, 100),
+            Math.Clamp(EnergyWarningPercent.Value, 0, 100),
+            RequireHeavyBleedTreatment.Value,
+            RequireLightBleedTreatment.Value,
+            RequireFractureTreatment.Value,
+            RequirePainTreatment.Value,
+            RequireHydrationProvision.Value,
+            RequireEnergyProvision.Value,
+            ShowValueAndInsurance.Value,
+            EnableInsuranceWarnings.Value,
+            Math.Clamp(HighValueUninsuredThreshold.Value, 0, 10_000_000));
+    }
+
+    public int GetAutomaticRefreshSeconds() => Math.Clamp(AutomaticLoadoutRefreshSeconds.Value, 0, 60);
+    public int GetRequestTimeoutSeconds() => Math.Clamp(RequestTimeoutSeconds.Value, 5, 60);
+    public int GetLongRequestTimeoutSeconds() => Math.Max(30, GetRequestTimeoutSeconds());
+    public int GetSlowRequestWarningSeconds() => Math.Clamp(SlowRequestWarningSeconds.Value, 1, 30);
+    public int GetCacheStatusRefreshSeconds() => Math.Clamp(CacheStatusRefreshSeconds.Value, 5, 60);
+    public int GetWindowWidth() => Math.Clamp(WindowWidth.Value, 900, 1800);
+    public int GetWindowHeight() => Math.Clamp(WindowHeight.Value, 600, 1100);
+    public float GetWindowOpacity() => Math.Clamp(WindowOpacity.Value, 0.55f, 1f);
+    public float GetUiScale() => Math.Clamp(UiScale.Value, 0.75f, 1.5f);
+    public int GetMaximumRowsPerSection() => Math.Clamp(MaximumRowsPerSection.Value, 25, 500);
+    public int GetMaximumSearchResults() => Math.Clamp(MaximumSearchResults.Value, 5, 50);
+    public int GetMinimumSearchCharacters() => Math.Clamp(MinimumSearchCharacters.Value, 1, 10);
+    public int GetMinimumComparableFleaOffers() => Math.Clamp(MinimumComparableFleaOffers.Value, 1, 20);
+    public int GetMaximumFleaOffersDisplayed() => Math.Clamp(MaximumFleaOffersDisplayed.Value, 1, 50);
+    public int GetMinimumCraftProfit() => Math.Clamp(MinimumCraftProfit.Value, -10_000_000, 10_000_000);
+    public int GetMinimumCraftProfitPercent() => Math.Clamp(MinimumCraftProfitPercent.Value, -100, 10_000);
+    public int GetOvernightMinimumHours() => Math.Clamp(OvernightMinimumHours.Value, 1, 48);
+    public int GetOvernightMaximumHours() => Math.Max(GetOvernightMinimumHours(), Math.Clamp(OvernightMaximumHours.Value, 1, 72));
+    public string GetDefaultLoadoutView() => NormalizeLoadoutView(DefaultLoadoutView.Value);
+    public string GetRaidPlannerSorting() => NormalizeRaidPlannerSorting(RaidPlannerDefaultSorting.Value);
+
+    public string GetOpeningTabName()
+    {
+        if (RememberLastSelectedTab.Value)
+        {
+            var remembered = PlayerPrefs.GetString(LastTabPlayerPref, string.Empty);
+            if (!string.IsNullOrWhiteSpace(remembered))
+            {
+                return remembered;
+            }
+        }
+
+        return NormalizeTabName(DefaultOpeningTab.Value);
+    }
+
+    public void RememberTab(string tabName)
+    {
+        if (!RememberLastSelectedTab.Value)
+        {
+            return;
+        }
+
+        PlayerPrefs.SetString(LastTabPlayerPref, NormalizeTabName(tabName));
+        PlayerPrefs.Save();
+    }
+
+    public Vector2 GetInitialWindowPosition(float scale)
+    {
+        if (!RememberWindowPosition.Value)
+        {
+            return new Vector2(70f, 70f);
+        }
+
+        var physicalX = PlayerPrefs.GetFloat(WindowXPlayerPref, 70f * scale);
+        var physicalY = PlayerPrefs.GetFloat(WindowYPlayerPref, 70f * scale);
+        return new Vector2(physicalX / scale, physicalY / scale);
+    }
+
+    public void RememberWindowPositionValue(Rect logicalRect, float scale)
+    {
+        if (!RememberWindowPosition.Value)
+        {
+            return;
+        }
+
+        PlayerPrefs.SetFloat(WindowXPlayerPref, logicalRect.x * scale);
+        PlayerPrefs.SetFloat(WindowYPlayerPref, logicalRect.y * scale);
+        PlayerPrefs.Save();
+    }
+
+    private static string NormalizeLoadoutView(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "weapons" or "weapons & ammo" or "weapons and ammo" => "Weapons & Ammo",
+            "armor" => "Armor",
+            "medical" => "Medical",
+            "quests" or "quest gear" => "Quest Gear",
+            "raid" or "raid planner" => "Raid Planner",
+            "value" or "insurance" or "value & insurance" => "Value & Insurance",
+            _ => "Overview"
+        };
+    }
+
+    private static string NormalizeRaidPlannerSorting(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "most active quests" or "active quests" => "Most active quests",
+            "most incomplete objectives" or "incomplete objectives" => "Most incomplete objectives",
+            "fewest missing requirements" or "fewest missing" => "Fewest missing requirements",
+            "alphabetical" or "name" => "Alphabetical",
+            _ => "Best prepared"
+        };
+    }
+
+    private static string NormalizeTabName(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+        return normalized switch
+        {
+            "hideout" => "Hideout",
+            "craft" or "crafts" => "Crafts",
+            "stash" => "Stash",
+            "loadout" => "Loadout",
+            _ => "Item Search"
+        };
+    }
+}
+
+internal readonly record struct HermesStashRequestSettings(
+    bool IncludeActiveQuestReservations,
+    bool IncludeFutureQuestReservations,
+    bool IncludeNextHideoutReservations,
+    bool IncludeFutureHideoutReservations,
+    bool PreferFoundInRaidCopies,
+    int DuplicateBaselineReserve,
+    int WeaponDurabilityThresholdPercent,
+    int ArmorDurabilityThresholdPercent,
+    int LowResourceThresholdPercent,
+    int KeyUsesWarningThreshold,
+    int MinimumCleanupValue,
+    int MinimumValuePerRecoveredCell,
+    int MaximumRecommendations,
+    bool IncludeProtectedCurrencies)
+{
+    public string ToRouteSuffix()
+    {
+        return $"{(IncludeActiveQuestReservations ? 1 : 0)}/{(IncludeFutureQuestReservations ? 1 : 0)}/"
+               + $"{(IncludeNextHideoutReservations ? 1 : 0)}/{(IncludeFutureHideoutReservations ? 1 : 0)}/"
+               + $"{(PreferFoundInRaidCopies ? 1 : 0)}/{DuplicateBaselineReserve}/"
+               + $"{WeaponDurabilityThresholdPercent}/{ArmorDurabilityThresholdPercent}/"
+               + $"{LowResourceThresholdPercent}/{KeyUsesWarningThreshold}/{MinimumCleanupValue}/"
+               + $"{MinimumValuePerRecoveredCell}/{MaximumRecommendations}/"
+               + $"{(IncludeProtectedCurrencies ? 1 : 0)}";
+    }
+}
+
+internal readonly record struct HermesLoadoutRequestSettings(
+    int MinimumWeaponDurabilityPercent,
+    int MinimumArmorDurabilityPercent,
+    int MinimumLoadedRounds,
+    int MinimumSpareMagazines,
+    int MinimumSpareRounds,
+    int MinimumHealingResource,
+    int HydrationWarningPercent,
+    int EnergyWarningPercent,
+    bool RequireHeavyBleedTreatment,
+    bool RequireLightBleedTreatment,
+    bool RequireFractureTreatment,
+    bool RequirePainTreatment,
+    bool RequireHydrationProvision,
+    bool RequireEnergyProvision,
+    bool IncludeValueAnalysis,
+    bool EnableInsuranceWarnings,
+    int HighValueUninsuredThreshold)
+{
+    public string ToRouteSuffix()
+    {
+        return $"{MinimumWeaponDurabilityPercent}/{MinimumArmorDurabilityPercent}/{MinimumLoadedRounds}/"
+               + $"{MinimumSpareMagazines}/{MinimumSpareRounds}/{MinimumHealingResource}/"
+               + $"{HydrationWarningPercent}/{EnergyWarningPercent}/"
+               + $"{(RequireHeavyBleedTreatment ? 1 : 0)}/{(RequireLightBleedTreatment ? 1 : 0)}/"
+               + $"{(RequireFractureTreatment ? 1 : 0)}/{(RequirePainTreatment ? 1 : 0)}/"
+               + $"{(RequireHydrationProvision ? 1 : 0)}/{(RequireEnergyProvision ? 1 : 0)}/"
+               + $"{(IncludeValueAnalysis ? 1 : 0)}/{(EnableInsuranceWarnings ? 1 : 0)}/"
+               + $"{HighValueUninsuredThreshold}";
+    }
+}

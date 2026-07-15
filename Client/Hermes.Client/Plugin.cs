@@ -1,4 +1,5 @@
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using UnityEngine;
 
@@ -13,6 +14,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     internal static ManualLogSource Log { get; private set; } = null!;
     internal static Plugin? Instance { get; private set; }
+    internal static HermesClientSettings Settings { get; private set; } = null!;
 
     private HermesWindow? _window;
 
@@ -20,6 +22,8 @@ public sealed class Plugin : BaseUnityPlugin
     {
         Log = Logger;
         Instance = this;
+        Settings = new HermesClientSettings();
+        Settings.Bind(Config);
         _window = new HermesWindow();
 
         try
@@ -32,7 +36,7 @@ public sealed class Plugin : BaseUnityPlugin
             Logger.LogError($"Ask HERMES context action could not be enabled: {ex}");
         }
 
-        Logger.LogInfo("HERMES 0.1.0-alpha11.3.5 loaded. Press F8 in the main menu.");
+        Logger.LogInfo($"HERMES 0.1.0-alpha11.9 loaded. Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");
     }
 
     internal void OpenForInventoryItem(string profileItemId)
@@ -62,7 +66,7 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void Update()
     {
-        if (Input.GetKeyDown(KeyCode.F8))
+        if (Settings.ToggleWindowShortcut.Value.IsDown())
         {
             _window?.Toggle();
         }

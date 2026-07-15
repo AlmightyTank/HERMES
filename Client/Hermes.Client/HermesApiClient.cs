@@ -8,15 +8,23 @@ namespace Hermes.Client;
 
 internal static class HermesApiClient
 {
-    public const int RequestTimeoutSeconds = 12;
-    public const int StashRequestTimeoutSeconds = 30;
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(RequestTimeoutSeconds);
-    private static readonly TimeSpan StashRequestTimeout = TimeSpan.FromSeconds(StashRequestTimeoutSeconds);
-    private static readonly TimeSpan SlowRequestThreshold = TimeSpan.FromSeconds(2.5d);
+    public const int DefaultRequestTimeoutSeconds = 12;
+    public const int MinimumLongRequestTimeoutSeconds = 30;
 
-    public static Task<HermesSearchResponse> SearchAsync(string query)
+    private static readonly object InFlightSync = new();
+    private static readonly Dictionary<string, Task<string>> InFlightRequests =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private static TimeSpan RequestTimeout => TimeSpan.FromSeconds(
+        Plugin.Settings.GetRequestTimeoutSeconds());
+
+    private static TimeSpan LongRequestTimeout => TimeSpan.FromSeconds(
+        Plugin.Settings.GetLongRequestTimeoutSeconds());
+
+    public static Task<HermesSearchResponse> SearchAsync(string query, int maximumResults)
     {
-        var route = "/hermes/search/" + Uri.EscapeDataString(query);
+        var boundedMaximum = Math.Clamp(maximumResults, 5, 50);
+        var route = $"/hermes/search/{boundedMaximum}/" + Uri.EscapeDataString(query);
         return GetDataAsync(
             route,
             () => new HermesSearchResponse { Query = query });
@@ -34,28 +42,32 @@ internal static class HermesApiClient
             });
     }
 
-    public static Task<HermesStashSummaryResponse> GetStashSummaryAsync()
+    public static Task<HermesStashSummaryResponse> GetStashSummaryAsync(
+        HermesStashRequestSettings settings)
     {
+        var route = "/hermes/stash/summary/" + settings.ToRouteSuffix();
         return GetDataAsync(
-            "/hermes/stash/summary",
+            route,
             () => new HermesStashSummaryResponse
             {
                 Found = false,
                 Message = "HERMES returned no stash summary."
             },
-            StashRequestTimeout);
+            LongRequestTimeout);
     }
 
-    public static Task<HermesLoadoutSummaryResponse> GetLoadoutSummaryAsync()
+    public static Task<HermesLoadoutSummaryResponse> GetLoadoutSummaryAsync(
+        HermesLoadoutRequestSettings settings)
     {
+        var route = "/hermes/loadout/summary/" + settings.ToRouteSuffix();
         return GetDataAsync(
-            "/hermes/loadout/summary",
+            route,
             () => new HermesLoadoutSummaryResponse
             {
                 Found = false,
                 Message = "HERMES returned no loadout summary."
             },
-            StashRequestTimeout);
+            LongRequestTimeout);
     }
 
     public static Task<HermesStashInstanceSelectionResponse> GetInventoryInstanceSelectionAsync(string profileItemId)
@@ -194,8 +206,13 @@ internal static class HermesApiClient
             () => new HermesCacheClearResponse
             {
                 Cleared = false,
-                Message = "HERMES could not clear its market caches."
+                Message = "HERMES could not clear its market, stash-analysis, and loadout-analysis caches."
             });
+    }
+
+    public static HermesRequestDiagnosticsSnapshot GetDiagnosticsSnapshot()
+    {
+        return HermesRequestDiagnostics.Snapshot();
     }
 
     public static string DescribeFailure(Exception exception, string operation)
@@ -203,9 +220,11 @@ internal static class HermesApiClient
         return exception switch
         {
             HermesRequestTimeoutException timeout =>
-                $"{operation} timed out after {timeout.Timeout.TotalSeconds:N0} seconds. Retry; the server may still be finishing and warming the cache.",
-            HermesInvalidResponseException =>
-                $"{operation} returned an invalid response. Check the HERMES client and SPT server logs.",
+                $"{operation} timed out after {timeout.Timeout.TotalSeconds:N0} seconds. Retry after the current server analysis finishes.",
+            HermesTransportException =>
+                $"{operation} could not reach the HERMES server route. Confirm SPT.Server is running and check both HERMES logs.",
+            HermesInvalidResponseException invalid =>
+                $"{operation} returned an invalid or incompatible response. {invalid.UserMessage}",
             _ =>
                 $"{operation} failed. Check the HERMES client and SPT server logs."
         };
@@ -216,61 +235,185 @@ internal static class HermesApiClient
         Func<T> fallback,
         TimeSpan? requestTimeout = null)
     {
+        _ = fallback;
         var effectiveTimeout = requestTimeout ?? RequestTimeout;
         var stopwatch = Stopwatch.StartNew();
-        Task<string> requestTask;
+        var completedSuccessfully = false;
+        HermesRequestDiagnostics.RequestStarted(route);
+
         try
         {
-            requestTask = RequestHandler.GetJsonAsync(route);
+            var requestTask = GetJsonRequestTask(route);
+            using var timeoutCancellation = new CancellationTokenSource();
+            var timeoutTask = Task.Delay(effectiveTimeout, timeoutCancellation.Token);
+            var completedTask = await Task.WhenAny(requestTask, timeoutTask);
+            if (completedTask != requestTask)
+            {
+                ObserveLateCompletion(requestTask, route);
+                Plugin.Log.LogWarning($"HERMES request timed out after {effectiveTimeout.TotalSeconds:N0}s: {route}");
+                throw new HermesRequestTimeoutException(route, effectiveTimeout);
+            }
+
+            timeoutCancellation.Cancel();
+            string json;
+            try
+            {
+                json = await requestTask;
+            }
+            catch (HermesTransportException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new HermesTransportException(route, ex);
+            }
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                throw new HermesInvalidResponseException(route, "The server returned an empty response.");
+            }
+
+            T result;
+            try
+            {
+                var token = JToken.Parse(json);
+                ThrowIfServerReportedError(token, route);
+                var data = token["data"] ?? token["Data"] ?? token;
+                if (data.Type is JTokenType.Null or JTokenType.Undefined)
+                {
+                    throw new HermesInvalidResponseException(route, "The server response did not contain a data payload.");
+                }
+
+                result = data.ToObject<T>()
+                         ?? throw new HermesInvalidResponseException(
+                             route,
+                             $"The data payload could not be converted to {typeof(T).Name}.");
+            }
+            catch (HermesInvalidResponseException)
+            {
+                throw;
+            }
+            catch (JsonException ex)
+            {
+                throw new HermesInvalidResponseException(route, "The server response was not valid JSON for this client model.", ex);
+            }
+
+            stopwatch.Stop();
+            var slow = stopwatch.Elapsed >= TimeSpan.FromSeconds(Plugin.Settings.GetSlowRequestWarningSeconds());
+            if (slow)
+            {
+                Plugin.Log.LogWarning($"Slow HERMES request ({stopwatch.Elapsed.TotalSeconds:N1}s): {route}");
+            }
+            else if (Plugin.Settings.DetailedLogging.Value)
+            {
+                Plugin.Log.LogDebug($"HERMES request completed in {stopwatch.Elapsed.TotalMilliseconds:N0}ms: {route}");
+            }
+
+            HermesRequestDiagnostics.RequestCompleted(route, stopwatch.ElapsedMilliseconds, slow);
+            completedSuccessfully = true;
+            return result;
         }
         catch (Exception ex)
         {
-            throw new HermesTransportException(route, ex);
-        }
+            stopwatch.Stop();
+            HermesRequestDiagnostics.RequestFailed(route, ex, stopwatch.ElapsedMilliseconds);
+            if (Plugin.Settings.DetailedLogging.Value)
+            {
+                Plugin.Log.LogError($"HERMES request failed after {stopwatch.Elapsed.TotalMilliseconds:N0}ms ({route}): {ex}");
+            }
 
-        var timeoutTask = Task.Delay(effectiveTimeout);
-        var completedTask = await Task.WhenAny(requestTask, timeoutTask);
-        if (completedTask != requestTask)
-        {
-            ObserveLateCompletion(requestTask, route);
-            Plugin.Log.LogWarning($"HERMES request timed out after {effectiveTimeout.TotalSeconds:N0}s: {route}");
-            throw new HermesRequestTimeoutException(route, effectiveTimeout);
-        }
-
-        string json;
-        try
-        {
-            json = await requestTask;
-        }
-        catch (Exception ex)
-        {
-            throw new HermesTransportException(route, ex);
+            throw;
         }
         finally
         {
-            stopwatch.Stop();
+            if (!completedSuccessfully && stopwatch.IsRunning)
+            {
+                stopwatch.Stop();
+            }
         }
+    }
 
-        if (stopwatch.Elapsed >= SlowRequestThreshold)
+    private static Task<string> GetJsonRequestTask(string route)
+    {
+        if (!Plugin.Settings.ShareDuplicateRequests.Value)
         {
-            Plugin.Log.LogWarning($"Slow HERMES request ({stopwatch.Elapsed.TotalSeconds:N1}s): {route}");
+            return StartJsonRequest(route);
         }
 
-        if (string.IsNullOrWhiteSpace(json))
+        lock (InFlightSync)
         {
-            throw new HermesInvalidResponseException(route, "The server returned an empty response.");
-        }
+            if (InFlightRequests.TryGetValue(route, out var existing))
+            {
+                HermesRequestDiagnostics.RequestDeduplicated();
+                if (Plugin.Settings.DetailedLogging.Value)
+                {
+                    Plugin.Log.LogDebug($"Sharing in-flight HERMES request: {route}");
+                }
 
+                return existing;
+            }
+
+            var created = StartJsonRequest(route);
+            InFlightRequests[route] = created;
+            _ = created.ContinueWith(
+                _ =>
+                {
+                    lock (InFlightSync)
+                    {
+                        if (InFlightRequests.TryGetValue(route, out var current)
+                            && ReferenceEquals(current, created))
+                        {
+                            InFlightRequests.Remove(route);
+                        }
+                    }
+                },
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            return created;
+        }
+    }
+
+    private static Task<string> StartJsonRequest(string route)
+    {
         try
         {
-            var token = JToken.Parse(json);
-            var data = token["data"] ?? token["Data"] ?? token;
-            return data.ToObject<T>() ?? fallback();
+            return RequestHandler.GetJsonAsync(route);
         }
-        catch (JsonException ex)
+        catch (Exception ex)
         {
-            throw new HermesInvalidResponseException(route, "The server response was not valid JSON.", ex);
+            return Task.FromException<string>(new HermesTransportException(route, ex));
         }
+    }
+
+    private static void ThrowIfServerReportedError(JToken token, string route)
+    {
+        var errorToken = token["err"] ?? token["Err"] ?? token["error"] ?? token["Error"];
+        if (errorToken is null || errorToken.Type is JTokenType.Null or JTokenType.Undefined)
+        {
+            return;
+        }
+
+        var hasError = errorToken.Type switch
+        {
+            JTokenType.Integer => errorToken.Value<long>() != 0L,
+            JTokenType.Boolean => errorToken.Value<bool>(),
+            JTokenType.String => !string.IsNullOrWhiteSpace(errorToken.Value<string>())
+                                 && !string.Equals(errorToken.Value<string>(), "0", StringComparison.Ordinal),
+            _ => false
+        };
+        if (!hasError)
+        {
+            return;
+        }
+
+        var message = (token["errmsg"] ?? token["message"] ?? token["Message"])?.ToString();
+        throw new HermesInvalidResponseException(
+            route,
+            string.IsNullOrWhiteSpace(message)
+                ? "The SPT server reported an error for this route."
+                : $"The SPT server reported: {message}");
     }
 
     private static void ObserveLateCompletion(Task<string> requestTask, string route)
@@ -282,13 +425,16 @@ internal static class HermesApiClient
                 {
                     Plugin.Log.LogError($"Timed-out HERMES request later failed ({route}): {task.Exception}");
                 }
-                else
+                else if (Plugin.Settings.DetailedLogging.Value)
                 {
                     Plugin.Log.LogDebug($"Timed-out HERMES request later completed: {route}");
                 }
             },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
     }
+
 }
 
 internal sealed class HermesRequestTimeoutException : TimeoutException
@@ -310,10 +456,14 @@ internal sealed class HermesInvalidResponseException : Exception
     public HermesInvalidResponseException(string route, string message)
         : base($"HERMES route '{route}' returned an invalid response: {message}")
     {
+        UserMessage = message;
     }
 
     public HermesInvalidResponseException(string route, string message, Exception innerException)
         : base($"HERMES route '{route}' returned an invalid response: {message}", innerException)
     {
+        UserMessage = message;
     }
+
+    public string UserMessage { get; }
 }

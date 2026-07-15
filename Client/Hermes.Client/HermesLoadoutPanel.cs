@@ -22,31 +22,45 @@ internal sealed class HermesLoadoutPanel
     private bool _requested;
     private int _requestVersion;
     private LoadoutView _view;
+    private readonly Dictionary<string, bool> _warningGroupExpanded = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, bool> _raidPlanExpanded = new(StringComparer.OrdinalIgnoreCase);
+    private bool _defaultsInitialized;
+    private bool _showCriticalWarnings = true;
+    private bool _showAdvisoryWarnings = true;
+    private bool _showOnlyUninsuredItems;
+    private string _raidSearch = string.Empty;
+    private string _raidStatusFilter = "All maps";
+    private string _raidSorting = "Best prepared";
+    private float _nextAutomaticRefresh;
+    private HermesLoadoutRequestSettings _lastRequestSettings;
     private string _status = "Open this tab to inspect the active PMC raid loadout.";
 
     public void Draw()
     {
+        InitializeDefaults();
+
         if (!_requested && !_loading)
         {
             _requested = true;
             _ = RefreshFromServerAsync(false);
         }
 
-        GUILayout.BeginHorizontal();
-        GUILayout.Label("LOADOUT READINESS, RAID PLANNING, VALUE & INSURANCE — ALPHA11.3.3");
-        GUILayout.FlexibleSpace();
-        GUI.enabled = !_loading;
-        if (GUILayout.Button(_loading ? "Refreshing..." : "Refresh", GUILayout.Width(110f)))
+        var automaticRefreshSeconds = Plugin.Settings.GetAutomaticRefreshSeconds();
+        if (automaticRefreshSeconds > 0
+            && _summary is not null
+            && !_loading
+            && Time.realtimeSinceStartup >= _nextAutomaticRefresh)
         {
-            _ = RefreshFromServerAsync(true);
+            _nextAutomaticRefresh = Time.realtimeSinceStartup + automaticRefreshSeconds;
+            _ = RefreshFromServerAsync(false);
         }
 
-        GUI.enabled = true;
-        GUILayout.EndHorizontal();
-        GUILayout.Label("Exact loadout analysis, localized quest objectives, map-based raid plans, replacement value, raid risk, and insurance state.");
-        GUILayout.Space(4f);
-        GUILayout.Label(_status);
-        GUILayout.Space(6f);
+        HermesUi.DrawPanelHeader(
+            "LOADOUT READINESS & RAID PLANNING",
+            "Configurable readiness thresholds, localized raid plans, carried-item valuation, and exact insurance state.",
+            _status,
+            _loading,
+            () => _ = RefreshFromServerAsync(true));
 
         DrawViewTabs();
         GUILayout.Space(6f);
@@ -77,13 +91,17 @@ internal sealed class HermesLoadoutPanel
 
         try
         {
-            var response = await HermesApiClient.GetLoadoutSummaryAsync();
+            var requestSettings = Plugin.Settings.CreateLoadoutRequestSettings();
+            _lastRequestSettings = requestSettings;
+            var response = await HermesApiClient.GetLoadoutSummaryAsync(requestSettings);
             if (version != _requestVersion)
             {
                 return;
             }
 
             _summary = response;
+            _nextAutomaticRefresh = Time.realtimeSinceStartup + Plugin.Settings.GetAutomaticRefreshSeconds();
+            InitializeWarningGroups(response.Warnings);
             _status = response.Found
                 ? $"Loadout assessment: {response.Readiness} ({response.ReadinessScore}/100) • {response.CriticalCount} critical • {response.WarningCount} warning(s)."
                 : response.Message ?? "HERMES could not analyze the active loadout.";
@@ -114,7 +132,31 @@ internal sealed class HermesLoadoutPanel
         _loading = false;
         _requested = false;
         _view = LoadoutView.Overview;
+        _defaultsInitialized = false;
+        _showCriticalWarnings = true;
+        _showAdvisoryWarnings = true;
+        _showOnlyUninsuredItems = false;
+        _raidSearch = string.Empty;
+        _raidStatusFilter = "All maps";
+        _raidPlanExpanded.Clear();
         _status = "Open this tab to inspect the active PMC raid loadout.";
+    }
+
+    private void InitializeDefaults()
+    {
+        if (_defaultsInitialized)
+        {
+            return;
+        }
+
+        _view = ParseLoadoutView(Plugin.Settings.GetDefaultLoadoutView());
+        if (_view == LoadoutView.ValueInsurance && !Plugin.Settings.ShowValueAndInsurance.Value)
+        {
+            _view = LoadoutView.Overview;
+        }
+
+        _raidSorting = Plugin.Settings.GetRaidPlannerSorting();
+        _defaultsInitialized = true;
     }
 
     private void DrawViewTabs()
@@ -126,7 +168,14 @@ internal sealed class HermesLoadoutPanel
         DrawViewButton("Medical", LoadoutView.Medical, 85f);
         DrawViewButton("Quest Gear", LoadoutView.Quests, 100f);
         DrawViewButton("Raid Planner", LoadoutView.RaidPlanner, 110f);
-        DrawViewButton("Value & Insurance", LoadoutView.ValueInsurance, 130f);
+        if (Plugin.Settings.ShowValueAndInsurance.Value)
+        {
+            DrawViewButton("Value & Insurance", LoadoutView.ValueInsurance, 130f);
+        }
+        else if (_view == LoadoutView.ValueInsurance)
+        {
+            _view = LoadoutView.Overview;
+        }
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
     }
@@ -157,19 +206,19 @@ internal sealed class HermesLoadoutPanel
         switch (_view)
         {
             case LoadoutView.Weapons:
-                DrawWeapons(summary.Weapons);
+                DrawWeapons(summary.Weapons, _lastRequestSettings);
                 break;
             case LoadoutView.Armor:
-                DrawArmor(summary.Armor);
+                DrawArmor(summary.Armor, _lastRequestSettings);
                 break;
             case LoadoutView.Medical:
-                DrawMedical(summary.Medical);
+                DrawMedical(summary.Medical, _lastRequestSettings);
                 break;
             case LoadoutView.Quests:
                 DrawQuestRequirements(summary.QuestRequirements);
                 break;
             case LoadoutView.RaidPlanner:
-                DrawRaidPlans(summary.RaidPlans);
+                DrawRaidPlans(summary);
                 break;
             case LoadoutView.ValueInsurance:
                 DrawValueAndInsurance(summary.ValueSummary);
@@ -184,33 +233,39 @@ internal sealed class HermesLoadoutPanel
         GUILayout.Label($"Assessment generated {generated:yyyy-MM-dd HH:mm:ss} from the active PMC profile.");
     }
 
-    private static void DrawReadinessHeader(HermesLoadoutSummaryResponse summary)
+    private void DrawReadinessHeader(HermesLoadoutSummaryResponse summary)
     {
         GUILayout.BeginHorizontal();
         DrawMetric("READINESS", summary.Readiness, $"Score: {summary.ReadinessScore}/100");
         DrawMetric("CRITICAL", summary.CriticalCount.ToString("N0"), "Must-fix loadout problems.");
-        DrawMetric("WARNINGS", summary.WarningCount.ToString("N0"), "Recommended review before raid.");
+        DrawMetric("ADVISORIES", summary.WarningCount.ToString("N0"), "Recommended review before raid.");
         DrawMetric("EQUIPPED SLOTS", summary.EquippedSlots.Count.ToString("N0"), "Top-level equipment items.");
         GUILayout.EndHorizontal();
+
+        if (Plugin.Settings.ShowReadinessScoreBar.Value)
+        {
+            DrawProgressBar(summary.ReadinessScore / 100f, $"READINESS SCORE  {summary.ReadinessScore}/100  •  {summary.Readiness}");
+        }
     }
 
-    private static void DrawOverview(HermesLoadoutSummaryResponse summary)
+    private void DrawOverview(HermesLoadoutSummaryResponse summary)
     {
         DrawVitals(summary.Vitals);
         GUILayout.Space(8f);
-        GUILayout.Label("CURRENT WARNINGS");
-        if (summary.Warnings.Count == 0)
+        GUILayout.Label("CURRENT READINESS FINDINGS");
+        GUILayout.BeginHorizontal();
+        DrawToggleButton("Critical", ref _showCriticalWarnings, 95f);
+        DrawToggleButton("Advisories", ref _showAdvisoryWarnings, 105f);
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
+        DrawWarningGroups(summary.Warnings);
+
+        GUILayout.Space(8f);
+        DrawActiveSettings();
+
+        if (Plugin.Settings.HideEmptyLoadoutSections.Value && summary.EquippedSlots.Count == 0)
         {
-            DrawNotice("✓", "No critical or warning-level problems were detected in the current loadout.");
-        }
-        else
-        {
-            foreach (var warning in summary.Warnings)
-            {
-                DrawNotice(
-                    warning.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) ? "✗" : "!",
-                    $"{warning.Severity} — {warning.Category}\n{warning.Message}");
-            }
+            return;
         }
 
         GUILayout.Space(8f);
@@ -221,21 +276,23 @@ internal sealed class HermesLoadoutPanel
         }
         else
         {
-            foreach (var slot in summary.EquippedSlots)
+            var visibleSlots = HermesUi.LimitRows(summary.EquippedSlots, out var hiddenSlots);
+            foreach (var slot in visibleSlots)
             {
                 GUILayout.BeginVertical(GUI.skin.box);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label($"{slot.SlotName}: {slot.ItemName}");
                 GUILayout.FlexibleSpace();
-                GUILayout.Label(slot.Status);
+                GUILayout.Label(slot.Status.ToUpperInvariant());
                 GUILayout.EndHorizontal();
-                GUILayout.Label(slot.ConditionDescription);
+                DrawProgressBar(slot.ConditionPercent / 100f, slot.ConditionDescription);
                 if (slot.ChildItemCount > 0)
                 {
-                    GUILayout.Label($"Installed/contained child items: {slot.ChildItemCount:N0}");
+                    GUILayout.Label($"Installed or contained child items: {slot.ChildItemCount:N0}");
                 }
                 GUILayout.EndVertical();
             }
+            HermesUi.DrawHiddenRowsNotice(hiddenSlots);
         }
     }
 
@@ -258,68 +315,104 @@ internal sealed class HermesLoadoutPanel
         GUILayout.EndHorizontal();
     }
 
-    private static void DrawWeapons(IReadOnlyList<HermesWeaponReadiness> weapons)
+    private static void DrawWeapons(
+        IReadOnlyList<HermesWeaponReadiness> weapons,
+        HermesLoadoutRequestSettings settings)
     {
         GUILayout.Label("WEAPONS AND AMMUNITION");
         if (weapons.Count == 0)
         {
-            GUILayout.Label("No equipped firearm was detected.");
+            if (!Plugin.Settings.HideEmptyLoadoutSections.Value)
+            {
+                GUILayout.Label("No equipped firearm was detected.");
+            }
             return;
         }
 
-        foreach (var weapon in weapons)
+        GUILayout.BeginHorizontal();
+        DrawMetric("FIREARMS", weapons.Count.ToString("N0"), "Equipped primary, secondary, and holster weapons.");
+        DrawMetric("LOADED", FormatNumber(weapons.Sum(weapon => weapon.LoadedRounds)), $"Minimum per weapon: {settings.MinimumLoadedRounds:N0}");
+        DrawMetric("SPARE MAGS", weapons.Sum(weapon => weapon.CompatibleSpareMagazineCount).ToString("N0"), $"Minimum per weapon: {settings.MinimumSpareMagazines:N0}");
+        DrawMetric("SPARE ROUNDS", FormatNumber(weapons.Sum(weapon => weapon.SpareMagazineRounds + weapon.LooseCompatibleRounds)), $"Minimum per weapon: {settings.MinimumSpareRounds:N0}");
+        GUILayout.EndHorizontal();
+        GUILayout.Space(8f);
+
+        var visibleWeapons = HermesUi.LimitRows(weapons, out var hiddenWeapons);
+        foreach (var weapon in visibleWeapons)
         {
+            var spareRounds = weapon.SpareMagazineRounds + weapon.LooseCompatibleRounds;
             GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.BeginHorizontal();
             GUILayout.Label($"{weapon.SlotName}: {weapon.Name}");
             GUILayout.FlexibleSpace();
-            GUILayout.Label(weapon.Status);
+            GUILayout.Label(weapon.Status.ToUpperInvariant());
             GUILayout.EndHorizontal();
-            GUILayout.Label($"{weapon.DurabilityDescription} • {weapon.Caliber}");
-            GUILayout.Label(weapon.MagazineName is null
-                ? "Magazine: none detected"
-                : $"Magazine: {weapon.MagazineName} • capacity {weapon.MagazineCapacity:N0} • loaded in weapon {FormatNumber(weapon.LoadedRounds)} rounds");
+            GUILayout.Label($"{weapon.Caliber} • {weapon.DurabilityDescription}");
+            DrawProgressBar(weapon.DurabilityPercent / 100f, $"DURABILITY  {weapon.DurabilityPercent}%");
+
+            GUILayout.BeginHorizontal();
+            DrawMetric("IN WEAPON", FormatNumber(weapon.LoadedRounds), weapon.MagazineName ?? "No magazine detected");
+            DrawMetric("SPARE MAGS", weapon.CompatibleSpareMagazineCount.ToString("N0"), $"Rounds in spares: {FormatNumber(weapon.SpareMagazineRounds)}");
+            DrawMetric("LOOSE ROUNDS", FormatNumber(weapon.LooseCompatibleRounds), $"Compatible reserve total: {FormatNumber(spareRounds)}");
+            GUILayout.EndHorizontal();
+
             if (!string.IsNullOrWhiteSpace(weapon.LoadedAmmoName))
             {
-                GUILayout.Label($"Loaded ammunition: {weapon.LoadedAmmoName}");
+                GUILayout.Label($"Loaded ammunition: {weapon.LoadedAmmoName}{(weapon.HasMixedAmmo ? " • MIXED" : string.Empty)}");
             }
-            GUILayout.Label($"Compatible spare magazines: {weapon.CompatibleSpareMagazineCount:N0} • rounds in spares: {FormatNumber(weapon.SpareMagazineRounds)}");
-            GUILayout.Label($"Loose compatible rounds carried: {FormatNumber(weapon.LooseCompatibleRounds)}");
-            if (weapon.Warnings.Count > 0)
+
+            foreach (var warning in weapon.Warnings)
             {
-                GUILayout.Space(3f);
-                foreach (var warning in weapon.Warnings)
-                {
-                    GUILayout.Label($"! {warning}");
-                }
+                DrawNotice("!", warning);
             }
             GUILayout.EndVertical();
-            GUILayout.Space(3f);
+            GUILayout.Space(4f);
         }
+        HermesUi.DrawHiddenRowsNotice(hiddenWeapons);
     }
 
-    private static void DrawArmor(IReadOnlyList<HermesArmorReadiness> armorItems)
+    private static void DrawArmor(
+        IReadOnlyList<HermesArmorReadiness> armorItems,
+        HermesLoadoutRequestSettings settings)
     {
         GUILayout.Label("ARMOR AND INSERTS");
         if (armorItems.Count == 0)
         {
-            GUILayout.Label("No equipped armor was detected.");
+            if (!Plugin.Settings.HideEmptyLoadoutSections.Value)
+            {
+                GUILayout.Label("No equipped armor was detected.");
+            }
             return;
         }
 
-        foreach (var armor in armorItems)
+        GUILayout.BeginHorizontal();
+        DrawMetric("ARMOR ITEMS", armorItems.Count.ToString("N0"), "Equipped armor, armored rigs, and armored headwear.");
+        DrawMetric("PLATE SLOTS", armorItems.Sum(item => item.ArmorInsertSlotCount).ToString("N0"), $"Installed: {armorItems.Sum(item => item.InstalledArmorInsertCount):N0}");
+        DrawMetric("REQUIRED EMPTY", armorItems.Sum(item => item.MissingRequiredArmorInsertCount).ToString("N0"), "Missing required inserts.");
+        DrawMetric("MIN CONDITION", $"{settings.MinimumArmorDurabilityPercent}%", "Configured durability threshold.");
+        GUILayout.EndHorizontal();
+        GUILayout.Space(8f);
+
+        var visibleArmor = HermesUi.LimitRows(armorItems, out var hiddenArmor);
+        foreach (var armor in visibleArmor)
         {
             GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.BeginHorizontal();
             GUILayout.Label($"{armor.SlotName}: {armor.Name}");
             GUILayout.FlexibleSpace();
-            GUILayout.Label(armor.Status);
+            GUILayout.Label(armor.Status.ToUpperInvariant());
             GUILayout.EndHorizontal();
-            GUILayout.Label($"{armor.ConditionDescription} • highest installed armor class: {armor.MaximumArmorClass:N0}");
+            GUILayout.Label($"Highest installed armor class: {armor.MaximumArmorClass:N0} • {armor.ConditionDescription}");
+            DrawProgressBar(armor.ConditionPercent / 100f, $"CONDITION  {armor.ConditionPercent}%");
+
             if (armor.ArmorInsertSlotCount > 0)
             {
-                GUILayout.Label($"Armor insert slots: {armor.InstalledArmorInsertCount:N0}/{armor.ArmorInsertSlotCount:N0} filled");
-                GUILayout.Label($"Missing required: {armor.MissingRequiredArmorInsertCount:N0} • empty optional: {armor.EmptyOptionalArmorInsertCount:N0}");
+                var filledRatio = armor.ArmorInsertSlotCount <= 0
+                    ? 0f
+                    : armor.InstalledArmorInsertCount / (float)armor.ArmorInsertSlotCount;
+                DrawProgressBar(
+                    filledRatio,
+                    $"INSERTS  {armor.InstalledArmorInsertCount:N0}/{armor.ArmorInsertSlotCount:N0} installed • {armor.MissingRequiredArmorInsertCount:N0} required empty • {armor.EmptyOptionalArmorInsertCount:N0} optional empty");
             }
             else
             {
@@ -328,27 +421,47 @@ internal sealed class HermesLoadoutPanel
 
             foreach (var warning in armor.Warnings)
             {
-                GUILayout.Label($"! {warning}");
+                DrawNotice("!", warning);
             }
             GUILayout.EndVertical();
-            GUILayout.Space(3f);
+            GUILayout.Space(4f);
         }
+        HermesUi.DrawHiddenRowsNotice(hiddenArmor);
     }
 
-    private static void DrawMedical(HermesMedicalReadiness medical)
+    private static void DrawMedical(
+        HermesMedicalReadiness medical,
+        HermesLoadoutRequestSettings settings)
     {
         GUILayout.Label("MEDICAL AND SUSTAINMENT COVERAGE");
         GUILayout.BeginHorizontal();
-        DrawMetric("MED ITEMS", medical.MedicalItemCount.ToString("N0"), $"Healing resource: {FormatNumber(medical.TotalHealingResource)}");
+        DrawMetric("MED ITEMS", medical.MedicalItemCount.ToString("N0"), $"Healing: {FormatNumber(medical.TotalHealingResource)}/{settings.MinimumHealingResource:N0}");
         DrawMetric("BLEEDING", Coverage(medical.HasLightBleedTreatment, medical.HasHeavyBleedTreatment), "Light / heavy bleed treatment");
         DrawMetric("TRAUMA", Coverage(medical.HasFractureTreatment, medical.HasSurgeryKit), "Fracture / surgery coverage");
         DrawMetric("PAIN", medical.HasPainTreatment ? "Covered" : "Missing", "Pain treatment");
         GUILayout.EndHorizontal();
         GUILayout.BeginHorizontal();
-        DrawMetric("HYDRATION ITEMS", medical.HydrationProvisionCount.ToString("N0"), "Carried consumables with hydration effects.");
-        DrawMetric("ENERGY ITEMS", medical.EnergyProvisionCount.ToString("N0"), "Carried consumables with energy effects.");
+        DrawMetric("HYDRATION", medical.HydrationProvisionCount.ToString("N0"), settings.RequireHydrationProvision ? "Required by current settings." : "Optional by current settings.");
+        DrawMetric("ENERGY", medical.EnergyProvisionCount.ToString("N0"), settings.RequireEnergyProvision ? "Required by current settings." : "Optional by current settings.");
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
+
+        GUILayout.Space(8f);
+        GUILayout.Label("READINESS CHECKLIST");
+        GUILayout.BeginVertical(GUI.skin.box);
+        DrawCoverageRow("Healing resource", medical.TotalHealingResource >= settings.MinimumHealingResource, settings.MinimumHealingResource <= 0, $"{FormatNumber(medical.TotalHealingResource)} / {settings.MinimumHealingResource:N0}");
+        DrawCoverageRow("Heavy-bleed treatment", medical.HasHeavyBleedTreatment, !settings.RequireHeavyBleedTreatment, settings.RequireHeavyBleedTreatment ? "Required" : "Optional");
+        DrawCoverageRow("Light-bleed treatment", medical.HasLightBleedTreatment, !settings.RequireLightBleedTreatment, settings.RequireLightBleedTreatment ? "Required" : "Optional");
+        DrawCoverageRow("Fracture treatment", medical.HasFractureTreatment, !settings.RequireFractureTreatment, settings.RequireFractureTreatment ? "Required" : "Optional");
+        DrawCoverageRow("Pain treatment", medical.HasPainTreatment, !settings.RequirePainTreatment, settings.RequirePainTreatment ? "Required" : "Optional");
+        DrawCoverageRow("Hydration provision", medical.HydrationProvisionCount > 0, !settings.RequireHydrationProvision, settings.RequireHydrationProvision ? "Required" : "Optional");
+        DrawCoverageRow("Energy provision", medical.EnergyProvisionCount > 0, !settings.RequireEnergyProvision, settings.RequireEnergyProvision ? "Required" : "Optional");
+        GUILayout.EndVertical();
+
+        if (medical.Items.Count == 0 && Plugin.Settings.HideEmptyLoadoutSections.Value)
+        {
+            return;
+        }
 
         GUILayout.Space(8f);
         GUILayout.Label("CARRIED MEDICAL ITEMS");
@@ -358,33 +471,46 @@ internal sealed class HermesLoadoutPanel
             return;
         }
 
-        foreach (var item in medical.Items)
+        var visibleItems = HermesUi.LimitRows(medical.Items, out var hiddenMedicalItems);
+        foreach (var item in visibleItems)
         {
             GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.BeginHorizontal();
             GUILayout.Label(item.Name);
+            GUILayout.FlexibleSpace();
+            GUILayout.Label(item.Coverage);
+            GUILayout.EndHorizontal();
             if (item.MaximumResource > 0d)
             {
-                GUILayout.Label($"Resource: {FormatNumber(item.CurrentResource)} / {FormatNumber(item.MaximumResource)}");
+                DrawProgressBar(
+                    item.MaximumResource <= 0d ? 0f : (float)(item.CurrentResource / item.MaximumResource),
+                    $"RESOURCE  {FormatNumber(item.CurrentResource)} / {FormatNumber(item.MaximumResource)}");
             }
-            GUILayout.Label($"Coverage: {item.Coverage}");
             GUILayout.EndVertical();
         }
+        HermesUi.DrawHiddenRowsNotice(hiddenMedicalItems);
     }
 
-    private static void DrawQuestRequirements(IReadOnlyList<HermesQuestLoadoutRequirement> requirements)
+    private void DrawQuestRequirements(IReadOnlyList<HermesQuestLoadoutRequirement> requirements)
     {
         GUILayout.Label("ACTIVE QUEST RAID GEAR");
-        if (requirements.Count == 0)
+        var visibleRequirements = requirements
+            .Where(requirement => Plugin.Settings.RaidPlannerShowInferredRouteKeys.Value
+                                  || !IsInferredRouteKey(requirement.RequirementKind, requirement.Note))
+            .Where(requirement => Plugin.Settings.RaidPlannerShowAcquireInRaidItems.Value
+                                  || !requirement.AcquireInRaid)
+            .ToList();
+        if (visibleRequirements.Count == 0)
         {
             GUILayout.Label("No explicit active-quest equipment, raid-item, marker, plant-item, or carried turn-in requirements were identified.");
             GUILayout.Label("HERMES also adds known and inferred route-key requirements when quest data omits the locked-door access item.");
             return;
         }
 
-        var criticalMissing = requirements.Count(requirement => requirement.IsRaidCritical && !requirement.AcquireInRaid && !requirement.IsSatisfied);
-        var criticalReady = requirements.Count(requirement => requirement.IsRaidCritical && !requirement.AcquireInRaid && requirement.IsSatisfied);
-        var acquireInRaid = requirements.Count(requirement => requirement.AcquireInRaid);
-        var maps = requirements
+        var criticalMissing = visibleRequirements.Count(requirement => requirement.IsRaidCritical && !requirement.AcquireInRaid && !requirement.IsSatisfied);
+        var criticalReady = visibleRequirements.Count(requirement => requirement.IsRaidCritical && !requirement.AcquireInRaid && requirement.IsSatisfied);
+        var acquireInRaid = visibleRequirements.Count(requirement => requirement.AcquireInRaid);
+        var maps = visibleRequirements
             .Select(requirement => requirement.MapName)
             .Where(map => !string.IsNullOrWhiteSpace(map))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -398,7 +524,7 @@ internal sealed class HermesLoadoutPanel
         GUILayout.EndHorizontal();
         GUILayout.Space(8f);
 
-        foreach (var mapGroup in requirements
+        foreach (var mapGroup in visibleRequirements
                      .GroupBy(requirement => string.IsNullOrWhiteSpace(requirement.MapName) ? "Any map" : requirement.MapName)
                      .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
         {
@@ -457,68 +583,113 @@ internal sealed class HermesLoadoutPanel
         }
     }
 
-    private static void DrawRaidPlans(IReadOnlyList<HermesRaidPlanSummary> plans)
+    private void DrawRaidPlans(HermesLoadoutSummaryResponse summary)
     {
         GUILayout.Label("MAP-BASED RAID PLANNER");
-        if (plans.Count == 0)
+        if (summary.RaidPlans.Count == 0)
         {
             GUILayout.Label("No active quest objectives were available for raid planning.");
             return;
         }
 
-        var prepared = plans.Count(plan => plan.MissingRequirementCount == 0);
-        var missing = plans.Sum(plan => plan.MissingRequirementCount);
-        var objectives = plans.Sum(plan => plan.ObjectiveCount);
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("Map search", GUILayout.Width(78f));
+        _raidSearch = GUILayout.TextField(_raidSearch, GUILayout.MinWidth(180f));
+        DrawStatusFilterButton("All maps", 80f);
+        DrawStatusFilterButton("Prepared", 85f);
+        DrawStatusFilterButton("Missing gear", 100f);
+        DrawStatusFilterButton("Incomplete", 90f);
+        if (GUILayout.Button($"Sort: {_raidSorting}", GUILayout.Width(190f)))
+        {
+            _raidSorting = NextRaidSorting(_raidSorting);
+        }
+        if (GUILayout.Button("Clear", GUILayout.Width(62f)))
+        {
+            _raidSearch = string.Empty;
+            _raidStatusFilter = "All maps";
+        }
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
+
+        var plans = summary.RaidPlans
+            .Where(plan => string.IsNullOrWhiteSpace(_raidSearch)
+                           || plan.MapName.Contains(_raidSearch, StringComparison.OrdinalIgnoreCase)
+                           || plan.Quests.Any(quest => quest.QuestName.Contains(_raidSearch, StringComparison.OrdinalIgnoreCase)
+                                                      || quest.TraderName.Contains(_raidSearch, StringComparison.OrdinalIgnoreCase)))
+            .Where(MatchesRaidStatusFilter)
+            .ToList();
+        plans = SortRaidPlans(plans, _raidSorting).ToList();
+
+        if (plans.Count == 0)
+        {
+            HermesUi.DrawEmptyState("No raid plans match the current map search and status filter.");
+            return;
+        }
+
+        var prepared = plans.Count(plan => GetVisibleMissingRequirementCount(plan) == 0);
+        var missing = plans.Sum(GetVisibleMissingRequirementCount);
+        var objectives = plans.Sum(plan => VisibleObjectives(plan).Count());
         var activeQuests = plans.Sum(plan => plan.ActiveQuestCount);
 
         GUILayout.BeginHorizontal();
-        DrawMetric("MAPS", plans.Count.ToString("N0"), "Locations with active quest objectives.");
-        DrawMetric("PREPARED", prepared.ToString("N0"), "Maps with all detectable raid gear covered.");
-        DrawMetric("MISSING GEAR", missing.ToString("N0"), "Combined unsatisfied raid requirements.");
-        DrawMetric("OBJECTIVES", objectives.ToString("N0"), $"Across {activeQuests:N0} active quests.");
+        DrawMetric("MAPS", plans.Count.ToString("N0"), "Locations matching the current planner filters.");
+        DrawMetric("PREPARED", prepared.ToString("N0"), "Maps with all visible pre-raid requirements covered.");
+        DrawMetric("MISSING GEAR", missing.ToString("N0"), "Unsatisfied visible pre-raid requirements.");
+        DrawMetric("OBJECTIVES", objectives.ToString("N0"), $"Across {activeQuests:N0} active quest stage(s).");
         GUILayout.EndHorizontal();
         GUILayout.Space(8f);
 
-        foreach (var plan in plans)
+        DrawRaidReadinessContext(summary.Warnings);
+
+        var visiblePlans = HermesUi.LimitRows(plans, out var hiddenPlans);
+        foreach (var plan in visiblePlans)
         {
+            var requirements = VisiblePlanRequirements(plan).ToList();
+            var visibleMissing = requirements.Count(requirement => !requirement.AcquireInRaid && !requirement.IsSatisfied);
+            var visibleObjectives = VisibleObjectives(plan).ToList();
+            var expanded = _raidPlanExpanded.GetValueOrDefault(plan.MapName, true);
+
             GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.BeginHorizontal();
-            GUILayout.Label(plan.MapName.ToUpperInvariant());
-            GUILayout.FlexibleSpace();
-            GUILayout.Label(plan.Status);
-            GUILayout.EndHorizontal();
-            GUILayout.Label($"Active quests: {plan.ActiveQuestCount:N0} • objectives: {plan.CompletedObjectiveCount:N0}/{plan.ObjectiveCount:N0} complete • raid requirements: {plan.RaidRequirementCount:N0}");
-
-            GUILayout.Space(5f);
-            GUILayout.Label("COMBINED BRING / EQUIP / ACQUIRE CHECKLIST");
-            if (plan.CombinedRequirements.Count == 0)
+            var marker = expanded ? "▼" : "▶";
+            if (GUILayout.Button($"{marker} {plan.MapName.ToUpperInvariant()}", GUILayout.Height(28f), GUILayout.ExpandWidth(true)))
             {
-                GUILayout.Label("No explicit raid-critical item or equipment requirements were encoded for this map.");
+                expanded = !expanded;
+                _raidPlanExpanded[plan.MapName] = expanded;
             }
-            else
+            GUILayout.Label(visibleMissing > 0 ? $"MISSING {visibleMissing:N0}" : plan.Status.ToUpperInvariant(), GUILayout.Width(125f));
+            GUILayout.EndHorizontal();
+            GUILayout.Label($"Active quests: {plan.ActiveQuestCount:N0} • visible objectives: {visibleObjectives.Count:N0} • visible raid requirements: {requirements.Count:N0}");
+
+            if (!expanded)
             {
-                foreach (var requirement in plan.CombinedRequirements)
+                GUILayout.EndVertical();
+                GUILayout.Space(5f);
+                continue;
+            }
+
+            if (Plugin.Settings.RaidPlannerIncludeQuestGearRestrictions.Value)
+            {
+                GUILayout.Space(5f);
+                GUILayout.Label("COMBINED RAID CHECKLIST");
+                if (requirements.Count == 0)
                 {
-                    GUILayout.BeginVertical(GUI.skin.box);
-                    GUILayout.BeginHorizontal();
-                    GUILayout.Label($"{(requirement.AcquireInRaid ? "↳" : requirement.IsSatisfied ? "✓" : "✗")} {requirement.RequirementKind}: {requirement.RequiredEquipment}");
-                    GUILayout.FlexibleSpace();
-                    GUILayout.Label(requirement.AcquireInRaid
-                        ? requirement.CarriedQuantity >= requirement.RequiredQuantity
-                            ? "Acquired"
-                            : "Acquire in raid"
-                        : requirement.IsSatisfied
-                            ? "Covered"
-                            : $"Missing {FormatNumber(requirement.MissingQuantity)}");
-                    GUILayout.EndHorizontal();
-                    GUILayout.Label($"Required: {FormatNumber(requirement.RequiredQuantity)} • carried: {FormatNumber(requirement.CarriedQuantity)}");
-                    if (requirement.FoundInRaidRequired || requirement.FoundInRaidCarriedQuantity > 0d)
+                    GUILayout.Label("No visible raid-critical item, equipment, route-key, or acquire-in-raid requirements are encoded for this map.");
+                }
+                else
+                {
+                    foreach (var group in requirements
+                                 .GroupBy(ClassifyRaidRequirementGroup, StringComparer.OrdinalIgnoreCase)
+                                 .OrderBy(group => RaidRequirementGroupRank(group.Key)))
                     {
-                        GUILayout.Label($"FIR carried: {FormatNumber(requirement.FoundInRaidCarriedQuantity)}{(requirement.FoundInRaidRequired ? " • FIR required" : string.Empty)}");
+                        GUILayout.Label(group.Key.ToUpperInvariant());
+                        foreach (var requirement in group
+                                     .OrderBy(requirement => requirement.IsSatisfied)
+                                     .ThenBy(requirement => requirement.RequiredEquipment, StringComparer.OrdinalIgnoreCase))
+                        {
+                            DrawRaidRequirement(requirement);
+                        }
                     }
-                    GUILayout.Label($"Quests: {string.Join(", ", requirement.QuestNames)}");
-                    GUILayout.Label(requirement.Note);
-                    GUILayout.EndVertical();
                 }
             }
 
@@ -526,30 +697,41 @@ internal sealed class HermesLoadoutPanel
             GUILayout.Label("QUEST OBJECTIVES");
             foreach (var quest in plan.Quests)
             {
+                var questObjectives = quest.Objectives.Where(IsObjectiveVisible).ToList();
+                if (questObjectives.Count == 0 && Plugin.Settings.HideEmptyLoadoutSections.Value)
+                {
+                    continue;
+                }
+
                 GUILayout.BeginVertical(GUI.skin.box);
                 GUILayout.BeginHorizontal();
                 GUILayout.Label($"{quest.QuestName} — {quest.TraderName}");
                 GUILayout.FlexibleSpace();
-                GUILayout.Label(quest.Status);
+                GUILayout.Label(quest.Status.ToUpperInvariant());
                 GUILayout.EndHorizontal();
-                GUILayout.Label($"Objectives: {quest.CompletedObjectiveCount:N0}/{quest.ObjectiveCount:N0} complete • missing raid requirements: {quest.MissingRequirementCount:N0}");
+                GUILayout.Label($"Visible objectives: {questObjectives.Count:N0} • completed overall: {quest.CompletedObjectiveCount:N0}/{quest.ObjectiveCount:N0} • missing raid requirements: {quest.MissingRequirementCount:N0}");
 
-                if (quest.Objectives.Count == 0)
+                if (questObjectives.Count == 0)
                 {
-                    GUILayout.Label("No finish-condition objective text was available.");
+                    GUILayout.Label("All objective rows are hidden by the current HERMES settings.");
                 }
                 else
                 {
-                    foreach (var objective in quest.Objectives)
+                    foreach (var objective in questObjectives)
                     {
-                        GUILayout.Label($"{(objective.IsCompleted ? "✓" : objective.IsRaidObjective ? "•" : "○")} {objective.ConditionType}: {objective.Description}");
+                        var icon = objective.IsCompleted ? "✓" : objective.IsRaidObjective ? "•" : "○";
+                        GUILayout.Label($"{icon} {objective.Description}");
+                        if (Plugin.Settings.ShowSectionDescriptions.Value)
+                        {
+                            GUILayout.Label($"   {objective.ConditionType} • {objective.Status}");
+                        }
                     }
                 }
 
                 GUILayout.EndVertical();
             }
 
-            if (plan.Notes.Count > 0)
+            if (Plugin.Settings.RaidPlannerShowPlanNotes.Value && plan.Notes.Count > 0)
             {
                 GUILayout.Space(5f);
                 GUILayout.Label("PLAN NOTES");
@@ -562,9 +744,10 @@ internal sealed class HermesLoadoutPanel
             GUILayout.EndVertical();
             GUILayout.Space(6f);
         }
+        HermesUi.DrawHiddenRowsNotice(hiddenPlans);
     }
 
-    private static void DrawValueAndInsurance(HermesLoadoutValueSummary value)
+    private void DrawValueAndInsurance(HermesLoadoutValueSummary value)
     {
         GUILayout.Label("LOADOUT VALUE AND INSURANCE");
         if (!value.Found)
@@ -575,9 +758,17 @@ internal sealed class HermesLoadoutPanel
 
         GUILayout.BeginHorizontal();
         DrawMetric("AT-RISK VALUE", $"₽{value.AtRiskReplacementValue:N0}", $"{value.AtRiskItemCount:N0} carried item instance(s).");
-        DrawMetric("PROTECTED VALUE", $"₽{value.ProtectedReplacementValue:N0}", $"{value.ProtectedItemCount:N0} protected item instance(s).");
+        if (Plugin.Settings.ShowProtectedSlotValue.Value)
+        {
+            DrawMetric("PROTECTED VALUE", $"₽{value.ProtectedReplacementValue:N0}", $"{value.ProtectedItemCount:N0} protected item instance(s).");
+        }
         DrawMetric("UNINSURED VALUE", $"₽{value.UninsuredReplacementValue:N0}", $"{value.UninsuredItemCount:N0} uninsured insurable item(s).");
-        DrawMetric("INSURANCE", value.InsuranceStatus, value.EstimatedInsuranceCost.HasValue ? $"Estimated cost: ₽{value.EstimatedInsuranceCost.Value:N0}" : "Cost estimate unavailable.");
+        var insuranceNote = !Plugin.Settings.ShowInsuranceCostEstimate.Value
+            ? "Cost estimate hidden by settings."
+            : value.EstimatedInsuranceCost.HasValue
+                ? $"Estimated cost: ₽{value.EstimatedInsuranceCost.Value:N0}"
+                : "Cost estimate unavailable.";
+        DrawMetric("INSURANCE", value.InsuranceStatus, insuranceNote);
         GUILayout.EndHorizontal();
 
         GUILayout.Space(6f);
@@ -603,14 +794,23 @@ internal sealed class HermesLoadoutPanel
         }
 
         GUILayout.Space(8f);
+        GUILayout.BeginHorizontal();
         GUILayout.Label("CARRIED ITEM INSTANCES");
-        if (value.Items.Count == 0)
+        GUILayout.FlexibleSpace();
+        DrawToggleButton("Uninsured only", ref _showOnlyUninsuredItems, 120f);
+        GUILayout.EndHorizontal();
+        var displayedValueItems = value.Items
+            .Where(item => Plugin.Settings.ShowProtectedSlotValue.Value || !item.IsProtected)
+            .Where(item => !_showOnlyUninsuredItems || item.InsuranceStatus.Equals("Uninsured", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (displayedValueItems.Count == 0)
         {
             GUILayout.Label("No supported carried item instances were returned.");
         }
         else
         {
-            foreach (var item in value.Items)
+            var visibleItems = HermesUi.LimitRows(displayedValueItems, out var hiddenItems);
+            foreach (var item in visibleItems)
             {
                 GUILayout.BeginVertical(GUI.skin.box);
                 GUILayout.BeginHorizontal();
@@ -627,6 +827,7 @@ internal sealed class HermesLoadoutPanel
                 GUILayout.Label($"Trader liquidation: {(item.TraderLiquidationValue.HasValue ? $"₽{item.TraderLiquidationValue.Value:N0}" : "Unavailable")} • insurance: {item.InsuranceStatus}{(item.IsHighValueUninsured ? " • HIGH-VALUE UNINSURED" : string.Empty)}");
                 GUILayout.EndVertical();
             }
+            HermesUi.DrawHiddenRowsNotice(hiddenItems);
         }
 
         if (value.Notes.Count > 0)
@@ -638,6 +839,400 @@ internal sealed class HermesLoadoutPanel
                 GUILayout.Label("• " + note);
             }
         }
+    }
+
+    private void DrawStatusFilterButton(string label, float width)
+    {
+        var selected = _raidStatusFilter.Equals(label, StringComparison.OrdinalIgnoreCase);
+        if (GUILayout.Button((selected ? "● " : string.Empty) + label, GUILayout.Width(width)))
+        {
+            _raidStatusFilter = label;
+        }
+    }
+
+    private bool MatchesRaidStatusFilter(HermesRaidPlanSummary plan)
+    {
+        return _raidStatusFilter switch
+        {
+            "Prepared" => GetVisibleMissingRequirementCount(plan) == 0,
+            "Missing gear" => GetVisibleMissingRequirementCount(plan) > 0,
+            "Incomplete" => plan.CompletedObjectiveCount < plan.ObjectiveCount,
+            _ => true
+        };
+    }
+
+    private IEnumerable<HermesRaidPlanSummary> SortRaidPlans(
+        IEnumerable<HermesRaidPlanSummary> plans,
+        string sorting)
+    {
+        return sorting switch
+        {
+            "Most active quests" => plans
+                .OrderByDescending(plan => plan.ActiveQuestCount)
+                .ThenBy(plan => GetVisibleMissingRequirementCount(plan))
+                .ThenBy(plan => plan.MapName, StringComparer.OrdinalIgnoreCase),
+            "Most incomplete objectives" => plans
+                .OrderByDescending(plan => Math.Max(0, plan.ObjectiveCount - plan.CompletedObjectiveCount))
+                .ThenByDescending(plan => plan.ActiveQuestCount)
+                .ThenBy(plan => plan.MapName, StringComparer.OrdinalIgnoreCase),
+            "Fewest missing requirements" => plans
+                .OrderBy(plan => GetVisibleMissingRequirementCount(plan))
+                .ThenByDescending(plan => plan.ActiveQuestCount)
+                .ThenBy(plan => plan.MapName, StringComparer.OrdinalIgnoreCase),
+            "Alphabetical" => plans.OrderBy(plan => plan.MapName, StringComparer.OrdinalIgnoreCase),
+            _ => plans
+                .OrderBy(plan => GetVisibleMissingRequirementCount(plan) > 0 ? 1 : 0)
+                .ThenBy(plan => GetVisibleMissingRequirementCount(plan))
+                .ThenByDescending(plan => plan.ActiveQuestCount)
+                .ThenByDescending(plan => Math.Max(0, plan.ObjectiveCount - plan.CompletedObjectiveCount))
+                .ThenBy(plan => plan.MapName, StringComparer.OrdinalIgnoreCase)
+        };
+    }
+
+    private static string NextRaidSorting(string current)
+    {
+        return current switch
+        {
+            "Best prepared" => "Most active quests",
+            "Most active quests" => "Most incomplete objectives",
+            "Most incomplete objectives" => "Fewest missing requirements",
+            "Fewest missing requirements" => "Alphabetical",
+            _ => "Best prepared"
+        };
+    }
+
+    private IEnumerable<HermesRaidPlanRequirement> VisiblePlanRequirements(HermesRaidPlanSummary plan)
+    {
+        if (!Plugin.Settings.RaidPlannerIncludeQuestGearRestrictions.Value)
+        {
+            return [];
+        }
+
+        return plan.CombinedRequirements
+            .Where(requirement => Plugin.Settings.RaidPlannerShowInferredRouteKeys.Value
+                                  || !IsInferredRouteKey(requirement.RequirementKind, requirement.Note))
+            .Where(requirement => Plugin.Settings.RaidPlannerShowAcquireInRaidItems.Value
+                                  || !requirement.AcquireInRaid);
+    }
+
+    private int GetVisibleMissingRequirementCount(HermesRaidPlanSummary plan)
+    {
+        return VisiblePlanRequirements(plan)
+            .Count(requirement => !requirement.AcquireInRaid && !requirement.IsSatisfied);
+    }
+
+    private IEnumerable<HermesRaidPlanObjective> VisibleObjectives(HermesRaidPlanSummary plan)
+    {
+        return plan.Quests.SelectMany(quest => quest.Objectives).Where(IsObjectiveVisible);
+    }
+
+    private bool IsObjectiveVisible(HermesRaidPlanObjective objective)
+    {
+        if (!Plugin.Settings.ShowCompletedQuestObjectives.Value && objective.IsCompleted)
+        {
+            return false;
+        }
+
+        if (!IsHandoverObjective(objective))
+        {
+            return true;
+        }
+
+        if (!Plugin.Settings.RaidPlannerShowHandoverObjectives.Value)
+        {
+            return false;
+        }
+
+        return Plugin.Settings.RaidPlannerShowFirHandoverObjectives.Value
+               || !IsFirHandoverObjective(objective);
+    }
+
+    private static bool IsHandoverObjective(HermesRaidPlanObjective objective)
+    {
+        return objective.ConditionType.Contains("Handover", StringComparison.OrdinalIgnoreCase)
+               || objective.Description.Contains("hand over", StringComparison.OrdinalIgnoreCase)
+               || objective.Description.Contains("handover", StringComparison.OrdinalIgnoreCase)
+               || objective.Description.Contains("turn in", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsFirHandoverObjective(HermesRaidPlanObjective objective)
+    {
+        return objective.Description.Contains("found in raid", StringComparison.OrdinalIgnoreCase)
+               || objective.Description.Contains("FIR", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsInferredRouteKey(string requirementKind, string note)
+    {
+        return requirementKind.Contains("Inferred route key", StringComparison.OrdinalIgnoreCase)
+               || note.Contains("Inferred from", StringComparison.OrdinalIgnoreCase)
+               || note.Contains("inferred route key", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ClassifyRaidRequirementGroup(HermesRaidPlanRequirement requirement)
+    {
+        if (requirement.AcquireInRaid)
+        {
+            return "Acquire during raid";
+        }
+
+        if (requirement.RequirementKind.Contains("key", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Route keys";
+        }
+
+        if (requirement.RequirementKind.Contains("equipment", StringComparison.OrdinalIgnoreCase)
+            || requirement.RequirementKind.Contains("weapon", StringComparison.OrdinalIgnoreCase)
+            || requirement.RequirementKind.Contains("wear", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Equip before raid";
+        }
+
+        return "Bring from stash";
+    }
+
+    private static int RaidRequirementGroupRank(string group)
+    {
+        return group switch
+        {
+            "Equip before raid" => 0,
+            "Bring from stash" => 1,
+            "Route keys" => 2,
+            "Acquire during raid" => 3,
+            _ => 4
+        };
+    }
+
+    private static void DrawRaidRequirement(HermesRaidPlanRequirement requirement)
+    {
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.BeginHorizontal();
+        var icon = requirement.AcquireInRaid
+            ? requirement.CarriedQuantity >= requirement.RequiredQuantity ? "✓" : "↳"
+            : requirement.IsSatisfied ? "✓" : "✗";
+        GUILayout.Label($"{icon} {requirement.RequirementKind}: {requirement.RequiredEquipment}");
+        GUILayout.FlexibleSpace();
+        GUILayout.Label(requirement.AcquireInRaid
+            ? requirement.CarriedQuantity >= requirement.RequiredQuantity ? "ACQUIRED" : "ACQUIRE IN RAID"
+            : requirement.IsSatisfied ? "COVERED" : $"MISSING {FormatNumber(requirement.MissingQuantity)}");
+        GUILayout.EndHorizontal();
+        GUILayout.Label($"Required: {FormatNumber(requirement.RequiredQuantity)} • carried: {FormatNumber(requirement.CarriedQuantity)}");
+        if (requirement.FoundInRaidRequired || requirement.FoundInRaidCarriedQuantity > 0d)
+        {
+            GUILayout.Label($"Found in raid carried: {FormatNumber(requirement.FoundInRaidCarriedQuantity)}{(requirement.FoundInRaidRequired ? " • FIR required" : string.Empty)}");
+        }
+        GUILayout.Label($"Quests: {string.Join(", ", requirement.QuestNames)}");
+        GUILayout.Label(requirement.Note);
+        GUILayout.EndVertical();
+    }
+
+    private static void DrawRaidReadinessContext(IReadOnlyList<HermesLoadoutWarning> warnings)
+    {
+        var categories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (Plugin.Settings.RaidPlannerIncludeMedicalReadiness.Value)
+        {
+            categories.Add("Medical");
+            categories.Add("Sustainment");
+        }
+
+        if (Plugin.Settings.RaidPlannerIncludeAmmunitionReadiness.Value)
+        {
+            categories.Add("Weapons");
+            categories.Add("Ammunition");
+        }
+
+        if (Plugin.Settings.RaidPlannerIncludeInsuranceWarnings.Value)
+        {
+            categories.Add("Insurance");
+        }
+
+        if (categories.Count == 0)
+        {
+            return;
+        }
+
+        var contextWarnings = warnings
+            .Where(warning => categories.Contains(warning.Category))
+            .OrderBy(warning => warning.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(warning => warning.Category, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(warning => warning.Message, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        GUILayout.Label("CURRENT LOADOUT CONTEXT");
+        if (contextWarnings.Count == 0)
+        {
+            DrawNotice("✓", "No enabled medical, ammunition, weapon, sustainment, or insurance context warnings are active.");
+        }
+        else
+        {
+            var visibleWarnings = HermesUi.LimitRows(contextWarnings, out var hiddenWarnings);
+            foreach (var warning in visibleWarnings)
+            {
+                DrawNotice(
+                    warning.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) ? "✗" : "!",
+                    $"{warning.Category}: {warning.Message}");
+            }
+            HermesUi.DrawHiddenRowsNotice(hiddenWarnings);
+        }
+        GUILayout.Space(8f);
+    }
+
+    private static void DrawToggleButton(string label, ref bool value, float width)
+    {
+        if (GUILayout.Button($"{(value ? "☑" : "☐")} {label}", GUILayout.Width(width)))
+        {
+            value = !value;
+        }
+    }
+
+    private static void DrawCoverageRow(string label, bool covered, bool optional, string detail)
+    {
+        GUILayout.BeginHorizontal();
+        GUILayout.Label(covered ? "✓" : optional ? "○" : "✗", GUILayout.Width(20f));
+        GUILayout.Label(label, GUILayout.Width(190f));
+        GUILayout.Label(covered ? "Covered" : optional ? "Optional" : "Missing", GUILayout.Width(80f));
+        GUILayout.Label(detail);
+        GUILayout.EndHorizontal();
+    }
+
+    private static void DrawProgressBar(float value, string label)
+    {
+        var normalized = Mathf.Clamp01(value);
+        var rect = GUILayoutUtility.GetRect(120f, 22f, GUILayout.ExpandWidth(true));
+        GUI.Box(rect, string.Empty);
+        if (normalized > 0f)
+        {
+            var fill = new Rect(rect.x + 2f, rect.y + 2f, Math.Max(0f, (rect.width - 4f) * normalized), rect.height - 4f);
+            var previous = GUI.color;
+            GUI.color = normalized >= 0.75f
+                ? new Color(0.45f, 0.75f, 0.45f, 0.8f)
+                : normalized >= 0.5f
+                    ? new Color(0.85f, 0.72f, 0.35f, 0.8f)
+                    : new Color(0.82f, 0.35f, 0.35f, 0.8f);
+            GUI.Box(fill, string.Empty);
+            GUI.color = previous;
+        }
+
+        var style = new GUIStyle(GUI.skin.label)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            fontStyle = FontStyle.Bold
+        };
+        GUI.Label(rect, label, style);
+    }
+
+    private static LoadoutView ParseLoadoutView(string value)
+    {
+        return value switch
+        {
+            "Weapons & Ammo" => LoadoutView.Weapons,
+            "Armor" => LoadoutView.Armor,
+            "Medical" => LoadoutView.Medical,
+            "Quest Gear" => LoadoutView.Quests,
+            "Raid Planner" => LoadoutView.RaidPlanner,
+            "Value & Insurance" => LoadoutView.ValueInsurance,
+            _ => LoadoutView.Overview
+        };
+    }
+
+    private static string Enabled(bool value) => value ? "on" : "off";
+
+    private void InitializeWarningGroups(IReadOnlyList<HermesLoadoutWarning> warnings)
+    {
+        var defaultExpanded = !Plugin.Settings.CollapseSectionsByDefault.Value
+                              && !Plugin.Settings.CollapseWarningGroupsByDefault.Value;
+        foreach (var category in warnings.Select(warning => warning.Category).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!_warningGroupExpanded.ContainsKey(category))
+            {
+                _warningGroupExpanded[category] = defaultExpanded;
+            }
+        }
+    }
+
+    private void DrawWarningGroups(IReadOnlyList<HermesLoadoutWarning> warnings)
+    {
+        var filteredWarnings = warnings
+            .Where(warning => warning.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase)
+                ? _showCriticalWarnings
+                : _showAdvisoryWarnings)
+            .ToList();
+        if (filteredWarnings.Count == 0)
+        {
+            DrawNotice("✓", "No critical or warning-level problems were detected in the current loadout.");
+            return;
+        }
+
+        foreach (var group in filteredWarnings
+                     .GroupBy(warning => warning.Category, StringComparer.OrdinalIgnoreCase)
+                     .OrderBy(group => group.Min(warning => warning.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) ? 0 : 1))
+                     .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var expanded = _warningGroupExpanded.GetValueOrDefault(
+                group.Key,
+                !Plugin.Settings.CollapseSectionsByDefault.Value
+                && !Plugin.Settings.CollapseWarningGroupsByDefault.Value);
+            var critical = group.Count(warning => warning.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase));
+            var warningCount = group.Count() - critical;
+            var marker = expanded ? "▼" : "▶";
+            if (GUILayout.Button(
+                    $"{marker} {group.Key.ToUpperInvariant()} — {critical:N0} critical / {warningCount:N0} warning(s)",
+                    GUILayout.Height(28f),
+                    GUILayout.ExpandWidth(true)))
+            {
+                expanded = !expanded;
+                _warningGroupExpanded[group.Key] = expanded;
+            }
+
+            if (!expanded)
+            {
+                continue;
+            }
+
+            var orderedWarnings = group
+                .OrderBy(warning => warning.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+                .ThenBy(warning => warning.Message, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var visibleWarnings = HermesUi.LimitRows(orderedWarnings, out var hiddenWarnings);
+            foreach (var warning in visibleWarnings)
+            {
+                DrawNotice(
+                    warning.Severity.Equals("Critical", StringComparison.OrdinalIgnoreCase) ? "✗" : "!",
+                    $"{warning.Severity}\n{warning.Message}");
+            }
+            HermesUi.DrawHiddenRowsNotice(hiddenWarnings);
+        }
+    }
+
+    private void DrawActiveSettings()
+    {
+        GUILayout.Label("ACTIVE READINESS SETTINGS");
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.Label(
+            $"Weapon durability ≥ {_lastRequestSettings.MinimumWeaponDurabilityPercent}% • "
+            + $"armor durability ≥ {_lastRequestSettings.MinimumArmorDurabilityPercent}% • "
+            + $"loaded rounds ≥ {_lastRequestSettings.MinimumLoadedRounds:N0} • "
+            + $"spare magazines ≥ {_lastRequestSettings.MinimumSpareMagazines:N0} • "
+            + $"spare rounds ≥ {_lastRequestSettings.MinimumSpareRounds:N0}");
+        GUILayout.Label(
+            $"Healing resource ≥ {_lastRequestSettings.MinimumHealingResource:N0} • "
+            + $"hydration warning below {_lastRequestSettings.HydrationWarningPercent}% • "
+            + $"energy warning below {_lastRequestSettings.EnergyWarningPercent}%");
+        GUILayout.Label(
+            $"Required treatment: heavy bleed {Enabled(_lastRequestSettings.RequireHeavyBleedTreatment)} • "
+            + $"light bleed {Enabled(_lastRequestSettings.RequireLightBleedTreatment)} • "
+            + $"fracture {Enabled(_lastRequestSettings.RequireFractureTreatment)} • "
+            + $"pain {Enabled(_lastRequestSettings.RequirePainTreatment)}");
+        GUILayout.Label(
+            $"Required sustainment: hydration {Enabled(_lastRequestSettings.RequireHydrationProvision)} • "
+            + $"energy {Enabled(_lastRequestSettings.RequireEnergyProvision)}");
+        GUILayout.Label(
+            $"Value analysis: {(_lastRequestSettings.IncludeValueAnalysis ? "Enabled" : "Disabled")} • "
+            + $"insurance warnings: {(_lastRequestSettings.EnableInsuranceWarnings ? "Enabled" : "Disabled")} • "
+            + $"uninsured threshold: ₽{_lastRequestSettings.HighValueUninsuredThreshold:N0}");
+        GUILayout.Label(
+            $"Automatic refresh: {(Plugin.Settings.GetAutomaticRefreshSeconds() > 0 ? $"{Plugin.Settings.GetAutomaticRefreshSeconds()}s" : "Disabled")} • "
+            + "Change these options in the HERMES BepInEx/F12 configuration.");
+        GUILayout.EndVertical();
     }
 
     private static string Coverage(bool first, bool second)
@@ -654,11 +1249,7 @@ internal sealed class HermesLoadoutPanel
 
     private static void DrawMetric(string label, string value, string note)
     {
-        GUILayout.BeginVertical(GUI.skin.box, GUILayout.MinWidth(150f), GUILayout.ExpandWidth(true));
-        GUILayout.Label(label);
-        GUILayout.Label(value);
-        GUILayout.Label(note);
-        GUILayout.EndVertical();
+        HermesUi.DrawMetric(label, value, note, 150f);
     }
 
     private static string FormatNumber(double value)

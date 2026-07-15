@@ -18,7 +18,6 @@ public sealed class HermesLoadoutValueService(
     HermesTraderService traderService,
     JsonUtil jsonUtil)
 {
-    private const long HighValueUninsuredThreshold = 100_000L;
     private const int MaximumReturnedItems = 300;
 
     private static readonly HashSet<string> ProtectedEquipmentSlots = new(StringComparer.OrdinalIgnoreCase)
@@ -43,7 +42,9 @@ public sealed class HermesLoadoutValueService(
 
     internal HermesLoadoutValueSummary GetSummary(
         MongoId sessionId,
-        ICollection<HermesLoadoutWarning> warnings)
+        ICollection<HermesLoadoutWarning> warnings,
+        bool enableInsuranceWarnings,
+        long highValueUninsuredThreshold)
     {
         var profile = profileHelper.GetPmcProfile(sessionId);
         if (profile is null)
@@ -163,7 +164,7 @@ public sealed class HermesLoadoutValueService(
             var highValueUninsured = isAtRisk
                                      && isInsurable
                                      && !isInsured
-                                     && bestReplacement.UnitValue >= HighValueUninsuredThreshold;
+                                     && bestReplacement.UnitValue >= highValueUninsuredThreshold;
 
             if (bestReplacement.UnitValue <= 0L && traderLiquidation <= 0L)
             {
@@ -228,17 +229,23 @@ public sealed class HermesLoadoutValueService(
             insuranceRate,
             lines.Count,
             unsupported,
-            protectedItems.Count);
+            protectedItems.Count).ToList();
+        notes.Add(enableInsuranceWarnings
+            ? $"High-value uninsured warnings use the configured ₽{highValueUninsuredThreshold:N0} threshold."
+            : "High-value uninsured readiness warnings are disabled in the HERMES BepInEx settings.");
 
-        foreach (var item in uninsured
-                     .Where(line => line.IsHighValueUninsured)
-                     .OrderByDescending(line => line.BestReplacementValue)
-                     .Take(5))
+        if (enableInsuranceWarnings)
         {
-            warnings.Add(new HermesLoadoutWarning(
-                "Warning",
-                "Insurance",
-                $"{item.Name} is uninsured with an estimated replacement value of ₽{item.BestReplacementValue!.Value:N0}."));
+            foreach (var item in uninsured
+                         .Where(line => line.IsHighValueUninsured)
+                         .OrderByDescending(line => line.BestReplacementValue)
+                         .Take(5))
+            {
+                warnings.Add(new HermesLoadoutWarning(
+                    "Warning",
+                    "Insurance",
+                    $"{item.Name} is uninsured with an estimated replacement value of ₽{item.BestReplacementValue!.Value:N0} (configured threshold: ₽{highValueUninsuredThreshold:N0})."));
+            }
         }
 
         var orderedItems = lines

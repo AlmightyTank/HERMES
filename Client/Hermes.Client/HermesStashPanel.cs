@@ -16,40 +16,67 @@ internal sealed class HermesStashPanel
         Damaged
     }
 
+    private enum StashSort
+    {
+        Recommendation,
+        Name,
+        SellValue,
+        SellableQuantity,
+        ValuePerCell,
+        OccupiedCells,
+        Condition,
+        Destination,
+        ReservedQuantity
+    }
+
+    private enum FoundInRaidFilter
+    {
+        All,
+        FoundInRaid,
+        NotFoundInRaid
+    }
+
     private Vector2 _scroll;
     private HermesStashSummaryResponse? _summary;
     private bool _loading;
     private bool _requested;
+    private bool _defaultsLoaded;
     private int _requestVersion;
     private StashView _view;
+    private StashSort _sort;
+    private FoundInRaidFilter _foundInRaidFilter;
+    private string _textFilter = string.Empty;
+    private string _categoryFilter = "All";
+    private string _destinationFilter = "All";
     private string _status = "Open this tab to build a read-only snapshot of the active PMC stash.";
 
     public void Draw()
     {
+        EnsureDefaults();
         if (!_requested && !_loading)
         {
             _requested = true;
             _ = RefreshFromServerAsync(false, false);
         }
 
-        GUILayout.BeginHorizontal();
-        GUILayout.Label("STASH INTELLIGENCE — ALPHA10.3");
-        GUILayout.FlexibleSpace();
-        GUI.enabled = !_loading;
-        if (GUILayout.Button(_loading ? "Refreshing..." : "Refresh", GUILayout.Width(110f)))
-        {
-            _ = RefreshFromServerAsync(true, true);
-        }
-
-        GUI.enabled = true;
-        GUILayout.EndHorizontal();
-        GUILayout.Label("Exact-instance sale intelligence, conservative space-recovery estimates, duplicate review, and damaged/depleted-item reporting.");
-        GUILayout.Space(4f);
-        GUILayout.Label(_status);
-        GUILayout.Space(6f);
+        HermesUi.DrawPanelHeader(
+            "STASH INTELLIGENCE",
+            "Exact-instance sale intelligence, configurable reservations, space recovery, duplicates, and condition reports.",
+            _status,
+            _loading,
+            () => _ = RefreshFromServerAsync(true, true));
 
         DrawViewTabs();
-        GUILayout.Space(6f);
+        GUILayout.Space(HermesUi.SmallSpace);
+
+        if (_summary is { Found: true } summary)
+        {
+            DrawPinnedSummary(summary);
+            if (_view is not StashView.Overview)
+            {
+                DrawFilterToolbar(summary);
+            }
+        }
 
         _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.ExpandHeight(true));
         if (_summary is not null)
@@ -67,9 +94,10 @@ internal sealed class HermesStashPanel
         }
 
         var requestVersion = ++_requestVersion;
+        var settings = Plugin.Settings.CreateStashRequestSettings();
         _loading = true;
         _requested = true;
-        _status = "Building reservations, sale values, space-recovery candidates, duplicate groups, and condition reports...";
+        _status = "Building reservations, exact sale values, cleanup candidates, duplicate groups, and condition reports...";
 
         try
         {
@@ -78,7 +106,7 @@ internal sealed class HermesStashPanel
                 await HermesApiClient.ClearCachesAsync();
             }
 
-            var response = await HermesApiClient.GetStashSummaryAsync();
+            var response = await HermesApiClient.GetStashSummaryAsync(settings);
             if (requestVersion != _requestVersion)
             {
                 return;
@@ -117,8 +145,24 @@ internal sealed class HermesStashPanel
         _requested = false;
         _summary = null;
         _scroll = Vector2.zero;
-        _view = StashView.Overview;
+        _defaultsLoaded = false;
+        _textFilter = string.Empty;
+        _categoryFilter = "All";
+        _destinationFilter = "All";
+        _foundInRaidFilter = FoundInRaidFilter.All;
         _status = "Open this tab to build a read-only snapshot of the active PMC stash.";
+    }
+
+    private void EnsureDefaults()
+    {
+        if (_defaultsLoaded)
+        {
+            return;
+        }
+
+        _view = ParseView(Plugin.Settings.DefaultStashView.Value);
+        _sort = ParseSort(Plugin.Settings.DefaultStashSorting.Value);
+        _defaultsLoaded = true;
     }
 
     private void DrawViewTabs()
@@ -137,21 +181,102 @@ internal sealed class HermesStashPanel
 
     private void DrawViewButton(string label, StashView view, float width)
     {
-        GUI.enabled = _view != view;
-        if (GUILayout.Button(label, GUILayout.Width(width)))
+        if (HermesUi.DrawTabButton(label, _view == view, width))
         {
             _view = view;
             _scroll = Vector2.zero;
         }
+    }
 
-        GUI.enabled = true;
+    private static void DrawPinnedSummary(HermesStashSummaryResponse summary)
+    {
+        GUILayout.BeginHorizontal();
+        DrawMetric(
+            "SELLABLE",
+            FormatNumber(summary.PotentiallySellQuantity),
+            $"Best value ₽{summary.PotentialBestSaleValue:N0}");
+        DrawMetric(
+            "RECOVERABLE SPACE",
+            $"{summary.RecoverableCells:N0} cells",
+            $"{summary.CleanupCandidateInstanceCount:N0} exact instance(s)");
+        DrawMetric(
+            "RESERVED",
+            FormatNumber(summary.RecommendedKeepQuantity),
+            $"Keep rows {summary.KeepInstanceCount:N0}");
+        DrawMetric(
+            "REVIEW",
+            summary.ReviewInstanceCount.ToString("N0"),
+            $"Condition warnings {summary.DamagedOrDepletedItemCount:N0}");
+        GUILayout.EndHorizontal();
+    }
+
+    private void DrawFilterToolbar(HermesStashSummaryResponse summary)
+    {
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("Filter", GUILayout.Width(45f));
+        _textFilter = GUILayout.TextField(_textFilter, GUILayout.Width(220f));
+
+        var categories = new[] { "All" }
+            .Concat(summary.Recommendations
+                .Select(item => item.Category)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        if (GUILayout.Button($"Category: {_categoryFilter}", GUILayout.Width(155f)))
+        {
+            _categoryFilter = NextValue(categories, _categoryFilter);
+        }
+
+        var destinations = new[] { "All" }
+            .Concat(summary.Recommendations
+                .Select(item => item.BestSaleDestination ?? "Unavailable")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        if (GUILayout.Button($"Destination: {_destinationFilter}", GUILayout.Width(180f)))
+        {
+            _destinationFilter = NextValue(destinations, _destinationFilter);
+        }
+
+        if (GUILayout.Button($"FIR: {FriendlyFoundInRaidFilter(_foundInRaidFilter)}", GUILayout.Width(125f)))
+        {
+            _foundInRaidFilter = (FoundInRaidFilter)(((int)_foundInRaidFilter + 1) % 3);
+        }
+
+        if (GUILayout.Button($"Sort: {FriendlySort(_sort)}", GUILayout.Width(175f)))
+        {
+            _sort = (StashSort)(((int)_sort + 1) % Enum.GetValues(typeof(StashSort)).Length);
+        }
+
+        if (GUILayout.Button("Clear", GUILayout.Width(65f)))
+        {
+            _textFilter = string.Empty;
+            _categoryFilter = "All";
+            _destinationFilter = "All";
+            _foundInRaidFilter = FoundInRaidFilter.All;
+        }
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal();
+        GUILayout.Label(
+            "Filters apply to exact recommendation rows. Totals above remain based on the complete configured server analysis.",
+            GUILayout.ExpandWidth(true));
+        if (GUILayout.Button("Copy summary", GUILayout.Width(115f)))
+        {
+            GUIUtility.systemCopyBuffer = BuildClipboardSummary(summary);
+            _status = "Stash summary copied to the clipboard.";
+        }
+        GUILayout.EndHorizontal();
+        GUILayout.EndVertical();
     }
 
     private void DrawSummary(HermesStashSummaryResponse summary)
     {
         if (!summary.Found)
         {
-            GUILayout.Label(summary.Message ?? "Stash analysis is unavailable.");
+            HermesUi.DrawError(summary.Message ?? "Stash analysis is unavailable.");
             return;
         }
 
@@ -197,86 +322,58 @@ internal sealed class HermesStashPanel
 
     private static void DrawOverview(HermesStashSummaryResponse summary)
     {
+        GUILayout.Label("STASH SNAPSHOT");
         GUILayout.BeginHorizontal();
         DrawMetric("ITEM INSTANCES", summary.TotalItemInstances.ToString("N0"), "Includes installed parts and loaded ammunition.");
         DrawMetric("INDEPENDENT ITEMS", summary.IndependentItemCount.ToString("N0"), "Standalone stacks and sellable assemblies.");
         DrawMetric("VALUED ITEMS", summary.ValuedIndependentItemCount.ToString("N0"), $"Unsupported: {summary.UnsupportedIndependentItemCount:N0}");
-        DrawMetric("OCCUPIED CELLS", summary.OccupiedCells.ToString("N0"), "Template footprint estimate; installed parts add no cells.");
+        DrawMetric("OCCUPIED CELLS", summary.OccupiedCells.ToString("N0"), "Template footprint estimate.");
         GUILayout.EndHorizontal();
+
+        if (Plugin.Settings.ShowUnsupportedStashItems.Value
+            && summary.UnsupportedIndependentItemCount > 0)
+        {
+            HermesUi.DrawStatusLine(
+                $"{summary.UnsupportedIndependentItemCount:N0} quest-only or handbook-less independent item(s) were excluded from valuation and recommendations.");
+        }
 
         GUILayout.Space(8f);
         GUILayout.Label("RECOMMENDATIONS");
         GUILayout.BeginHorizontal();
-        DrawMetric("SAFE TO SELL", summary.SafeToSellInstanceCount.ToString("N0"), "Reliable trader or flea destination; no reservation warning.");
-        DrawMetric("SELL SURPLUS", summary.SellSurplusInstanceCount.ToString("N0"), "Keep reserved quantity; sell only the surplus.");
-        DrawMetric("KEEP", summary.KeepInstanceCount.ToString("N0"), $"Recommended keep quantity: {FormatNumber(summary.RecommendedKeepQuantity)}");
-        DrawMetric("REVIEW", summary.ReviewInstanceCount.ToString("N0"), "Built, filled, or weakly priced items.");
-        GUILayout.EndHorizontal();
-
-        GUILayout.BeginHorizontal();
-        DrawMetric("DUPLICATE GROUPS", summary.DuplicateGroupCount.ToString("N0"), "Exact-template duplicate review; advisory only.");
-        DrawMetric("CONDITION WARNINGS", summary.DamagedOrDepletedItemCount.ToString("N0"), "Low durability, low resources, or one-use keys.");
-        DrawMetric("FLEA VALUED", summary.FleaValuedItemCount.ToString("N0"), $"Unavailable: {summary.NoFleaEstimateItemCount:N0}");
-        DrawMetric("TRADER VALUED", summary.TraderValuedItemCount.ToString("N0"), $"No buyer: {summary.NoTraderBuyerItemCount:N0}");
+        DrawMetric("SAFE TO SELL", summary.SafeToSellInstanceCount.ToString("N0"), "No configured reservation or review restriction.");
+        DrawMetric("SELL SURPLUS", summary.SellSurplusInstanceCount.ToString("N0"), "Keeps reserved quantity and identifies only the excess.");
+        DrawMetric("KEEP", summary.KeepInstanceCount.ToString("N0"), $"Reserved quantity {FormatNumber(summary.RecommendedKeepQuantity)}");
+        DrawMetric("REVIEW", summary.ReviewInstanceCount.ToString("N0"), "Built, filled, protected, or weakly priced items.");
         GUILayout.EndHorizontal();
 
         GUILayout.Space(8f);
-        GUILayout.Label("RECOMMENDED SELLABLE QUANTITY");
+        GUILayout.Label("SELLABLE QUANTITY");
         GUILayout.BeginHorizontal();
-        DrawValueCard(
-            "Best-destination value",
-            summary.PotentialBestSaleValue,
-            $"{FormatNumber(summary.PotentiallySellQuantity)} recommended unit(s); reservations and review items excluded.");
-        DrawValueCard("Trader alternative", summary.PotentialTraderSaleValue, "Best supported trader value for the same sellable quantity.");
-        DrawValueCard("Flea net alternative", summary.PotentialFleaNetValue, "After estimated listing fees where a flea estimate was available.");
-        GUILayout.EndHorizontal();
-
-        GUILayout.Space(8f);
-        GUILayout.Label("POTENTIAL SPACE RECOVERY");
-        GUILayout.BeginHorizontal();
-        DrawMetric(
-            "REMOVABLE INSTANCES",
-            summary.CleanupCandidateInstanceCount.ToString("N0"),
-            "Only whole exact instances that are safe to sell are counted.");
-        DrawMetric(
-            "RECOVERABLE CELLS",
-            summary.RecoverableCells.ToString("N0"),
-            summary.OccupiedCells > 0
-                ? $"{(summary.RecoverableCells * 100d / summary.OccupiedCells):N1}% of the current estimated footprint."
-                : "No occupied-cell baseline was available.");
-        DrawValueCard(
-            "Cleanup value",
-            summary.CleanupBestSaleValue,
-            "Best reliable destination for the fully removable instances.");
+        DrawValueCard("BEST DESTINATION", summary.PotentialBestSaleValue, $"{FormatNumber(summary.PotentiallySellQuantity)} unit(s)");
+        DrawValueCard("TRADER ALTERNATIVE", summary.PotentialTraderSaleValue, "Best supported trader value.");
+        DrawValueCard("FLEA NET ALTERNATIVE", summary.PotentialFleaNetValue, "After estimated listing fees.");
         GUILayout.EndHorizontal();
 
         GUILayout.Space(8f);
         GUILayout.Label("COMPLETE STASH VALUE");
         GUILayout.BeginHorizontal();
-        DrawValueCard("Best trader liquidation", summary.BestTraderLiquidationValue, "Complete valued stash before reservations.");
-        DrawValueCard("Estimated flea net", summary.EstimatedFleaNetValue, "Fee-backed estimates; not every item has a usable flea market.");
-        DrawValueCard("Best reliable destination", summary.BestDestinationLiquidationValue, "Reliable flea estimate or best trader, selected per item.");
+        DrawValueCard("BEST TRADER LIQUIDATION", summary.BestTraderLiquidationValue, "Complete valued stash before reservations.");
+        DrawValueCard("ESTIMATED FLEA NET", summary.EstimatedFleaNetValue, "Items with usable flea estimates.");
+        DrawValueCard("BEST RELIABLE DESTINATION", summary.BestDestinationLiquidationValue, "Higher reliable destination per item.");
         GUILayout.EndHorizontal();
-        GUILayout.BeginHorizontal();
-        DrawValueCard("Full handbook reference", summary.FullHandbookReferenceValue, "Full-condition reference before wear/resource adjustment.");
-        DrawValueCard("Condition-adjusted handbook", summary.ConditionAdjustedHandbookValue, "Exact durability, resources, stacks, attachments, and armor inserts.");
-        GUILayout.EndHorizontal();
-
-        if (!string.IsNullOrWhiteSpace(summary.Message))
-        {
-            GUILayout.Space(6f);
-            GUILayout.Label(summary.Message);
-        }
 
         GUILayout.Space(8f);
         GUILayout.Label("BEST SALE DESTINATIONS");
         if (summary.SaleDestinationBreakdown.Count == 0)
         {
-            GUILayout.Label("No reliable sale destination was available.");
+            HermesUi.DrawEmptyState("No reliable sale destination was available.");
         }
         else
         {
-            foreach (var destination in summary.SaleDestinationBreakdown)
+            var visibleDestinations = HermesUi.LimitRows(
+                summary.SaleDestinationBreakdown,
+                out var hiddenDestinations);
+            foreach (var destination in visibleDestinations)
             {
                 GUILayout.BeginHorizontal(GUI.skin.box);
                 GUILayout.Label(destination.Destination, GUILayout.Width(180f));
@@ -285,36 +382,35 @@ internal sealed class HermesStashPanel
                 GUILayout.Label($"₽{destination.RoubleEquivalent:N0}");
                 GUILayout.EndHorizontal();
             }
+            HermesUi.DrawHiddenRowsNotice(hiddenDestinations);
         }
 
         GUILayout.Space(8f);
         GUILayout.Label("MOST VALUABLE ITEMS");
-        if (summary.MostValuableItems.Count == 0)
+        var visibleValuableItems = HermesUi.LimitRows(
+            summary.MostValuableItems,
+            out var hiddenValuable);
+        foreach (var item in visibleValuableItems)
         {
-            GUILayout.Label("No valued stash items were found.");
+            DrawCompactItemRow(item);
         }
-        else
-        {
-            foreach (var item in summary.MostValuableItems)
-            {
-                DrawItemRow(item);
-            }
-        }
+        HermesUi.DrawHiddenRowsNotice(hiddenValuable);
     }
 
-    private static void DrawRecommendationList(
+    private void DrawRecommendationList(
         HermesStashSummaryResponse summary,
         string heading,
         IEnumerable<HermesStashValuationItem> items)
     {
-        var rows = items.ToList();
-        GUILayout.Label(heading);
+        var rows = ApplyRecommendationFilters(items).ToList();
+        GUILayout.Label($"{heading} — {rows.Count:N0} visible");
         GUILayout.Label(
-            "Reservations are allocated in this order: active quests, next hideout upgrade, future quests, then later hideout stages. "
-            + "A flea destination is selected automatically only when at least three comparable offers support the estimate.");
+            "Reservation priority is active quests, next hideout upgrade, future quests, then later hideout stages. "
+            + "Only the enabled F12 reservation sources are applied.");
         GUILayout.Space(5f);
 
-        if (!string.IsNullOrWhiteSpace(summary.Message))
+        if (Plugin.Settings.ShowUnsupportedStashItems.Value
+            && !string.IsNullOrWhiteSpace(summary.Message))
         {
             GUILayout.Label(summary.Message);
             GUILayout.Space(5f);
@@ -322,185 +418,247 @@ internal sealed class HermesStashPanel
 
         if (rows.Count == 0)
         {
-            GUILayout.Label("No stash items match this view.");
+            HermesUi.DrawEmptyState("No stash items match the current view and filters.");
             return;
         }
 
-        foreach (var item in rows)
+        var visibleRows = HermesUi.LimitRows(rows, out var hiddenRows);
+        foreach (var item in visibleRows)
         {
             DrawItemRow(item);
         }
+        HermesUi.DrawHiddenRowsNotice(hiddenRows);
     }
 
-    private static void DrawCleanup(HermesStashSummaryResponse summary)
+    private void DrawCleanup(HermesStashSummaryResponse summary)
     {
-        GUILayout.Label("SPACE RECOVERY");
+        var rows = ApplyRecommendationFilters(summary.CleanupCandidates).ToList();
+        GUILayout.Label($"SPACE RECOVERY — {rows.Count:N0} visible");
         GUILayout.Label(
-            "A cell is counted only when the entire exact item instance can be sold. Partial stacks, loaded ammunition, "
-            + "reserved quantities, filled containers, installed assemblies, and items without a reliable sale destination are excluded.");
+            "Only complete exact instances that satisfy the configured minimum sale value and value-per-cell thresholds are included. "
+            + "Partial stacks, filled containers, installed assemblies, and reserved quantities remain excluded.");
         GUILayout.Space(5f);
 
         GUILayout.BeginHorizontal();
-        DrawMetric("REMOVABLE INSTANCES", summary.CleanupCandidateInstanceCount.ToString("N0"), "Fully removable exact stash instances.");
-        DrawMetric(
-            "RECOVERABLE CELLS",
-            summary.RecoverableCells.ToString("N0"),
-            summary.OccupiedCells > 0
-                ? $"{(summary.RecoverableCells * 100d / summary.OccupiedCells):N1}% of estimated occupied cells."
-                : "No occupied-cell baseline was available.");
+        DrawMetric("REMOVABLE INSTANCES", summary.CleanupCandidateInstanceCount.ToString("N0"), "Complete exact instances passing server thresholds.");
+        DrawMetric("RECOVERABLE CELLS", summary.RecoverableCells.ToString("N0"), summary.OccupiedCells > 0
+            ? $"{(summary.RecoverableCells * 100d / summary.OccupiedCells):N1}% of occupied cells."
+            : "No occupied-cell baseline.");
         DrawValueCard("BEST SALE VALUE", summary.CleanupBestSaleValue, "Combined best reliable destination value.");
         GUILayout.EndHorizontal();
 
-        GUILayout.BeginHorizontal();
-        DrawValueCard("TRADER ALTERNATIVE", summary.CleanupTraderSaleValue, "Best supported trader values for cleanup candidates.");
-        DrawValueCard("FLEA NET ALTERNATIVE", summary.CleanupFleaNetValue, "Estimated net after listing fees where available.");
-        GUILayout.EndHorizontal();
-        GUILayout.Space(6f);
-
-        if (summary.CleanupCandidates.Count == 0)
+        if (rows.Count == 0)
         {
-            GUILayout.Label("No fully removable safe-sale instances were found.");
+            HermesUi.DrawEmptyState("No cleanup candidates match the configured thresholds and current filters.");
             return;
         }
 
-        GUILayout.Label(summary.CleanupCandidateInstanceCount > summary.CleanupCandidates.Count
-            ? $"Showing the top {summary.CleanupCandidates.Count:N0} of {summary.CleanupCandidateInstanceCount:N0} cleanup candidates."
-            : $"{summary.CleanupCandidateInstanceCount:N0} cleanup candidate(s), ordered by cells recovered and then value.");
-
-        foreach (var item in summary.CleanupCandidates)
+        var visibleCleanupRows = HermesUi.LimitRows(rows, out var hiddenCleanup);
+        foreach (var item in visibleCleanupRows)
         {
-            GUILayout.BeginVertical(GUI.skin.box);
-            GUILayout.BeginHorizontal();
-            GUILayout.Label(item.Name);
-            GUILayout.FlexibleSpace();
-            GUILayout.Label($"{item.OccupiedCells:N0} cell(s) • {item.BestSaleDestination} • ₽{item.PotentialBestSaleValue:N0}");
-            GUILayout.EndHorizontal();
-            GUILayout.Label(item.InstanceLabel);
-            GUILayout.Label(
-                item.OccupiedCells > 0
-                    ? $"Value per recovered cell: ₽{(item.PotentialBestSaleValue / Math.Max(1, item.OccupiedCells)):N0}"
-                    : "Value per recovered cell unavailable.");
-            foreach (var reason in item.Reasons.Take(3))
-            {
-                GUILayout.Label("• " + reason);
-            }
-            GUILayout.EndVertical();
+            DrawItemRow(item, true);
         }
+        HermesUi.DrawHiddenRowsNotice(hiddenCleanup);
     }
 
-    private static void DrawDuplicates(HermesStashSummaryResponse summary)
+    private void DrawDuplicates(HermesStashSummaryResponse summary)
     {
-        GUILayout.Label("DUPLICATE REVIEW");
+        var rows = summary.DuplicateGroups
+            .Where(group => MatchesText(group.Name, group.ShortName, group.Note, group.BestSaleDestination))
+            .OrderByDescending(group => group.PotentialExcessSaleValue)
+            .ThenByDescending(group => group.PotentialExcessQuantity)
+            .ThenBy(group => group.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        GUILayout.Label($"DUPLICATE REVIEW — {rows.Count:N0} visible");
         GUILayout.Label(
-            "Exact-template duplicates only. Quest and hideout reservations remain authoritative. "
-            + "When no explicit reserve exists, this advisory view keeps one baseline instance and reports the remainder as possible excess.");
+            $"Exact-template duplicate advice keeps explicit reservations first. Without one, the configured baseline keeps "
+            + $"{Math.Clamp(Plugin.Settings.DuplicateBaselineReserve.Value, 0, 1000):N0} unit(s).");
         GUILayout.Space(5f);
 
-        if (summary.DuplicateGroups.Count == 0)
+        if (rows.Count == 0)
         {
-            GUILayout.Label("No duplicate groups with potential excess were found.");
+            HermesUi.DrawEmptyState("No duplicate groups match the current filter.");
             return;
         }
 
-        foreach (var group in summary.DuplicateGroups)
+        var visibleDuplicateRows = HermesUi.LimitRows(rows, out var hiddenDuplicates);
+        foreach (var group in visibleDuplicateRows)
         {
             GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.BeginHorizontal();
             GUILayout.Label(group.Name);
             GUILayout.FlexibleSpace();
             GUILayout.Label(group.PotentialExcessSaleValue > 0
-                ? $"Potential value: ₽{group.PotentialExcessSaleValue:N0}"
+                ? $"Potential value ₽{group.PotentialExcessSaleValue:N0}"
                 : "Value unavailable");
             GUILayout.EndHorizontal();
             GUILayout.Label(
-                $"Instances: {group.InstanceCount:N0} • Owned: {FormatNumber(group.OwnedQuantity)} • "
-                + $"Suggested reserve: {FormatNumber(group.SuggestedReserveQuantity)} • "
-                + $"Potential excess: {FormatNumber(group.PotentialExcessQuantity)}");
-            GUILayout.Label(
-                $"Explicit quest/hideout reserve: {FormatNumber(group.ExplicitlyReservedQuantity)} • "
-                + $"Occupied cells: {group.OccupiedCells:N0} • "
-                + $"Best estimated destination: {group.BestSaleDestination ?? "Review manually"}");
+                $"Instances {group.InstanceCount:N0} • Owned {FormatNumber(group.OwnedQuantity)} • "
+                + $"Explicit reserve {FormatNumber(group.ExplicitlyReservedQuantity)} • "
+                + $"Suggested reserve {FormatNumber(group.SuggestedReserveQuantity)} • "
+                + $"Potential excess {FormatNumber(group.PotentialExcessQuantity)}");
+            GUILayout.Label($"Cells {group.OccupiedCells:N0} • Destination {group.BestSaleDestination ?? "Review manually"}");
             GUILayout.Label(group.Note);
             GUILayout.EndVertical();
         }
+        HermesUi.DrawHiddenRowsNotice(hiddenDuplicates);
     }
 
-    private static void DrawDamaged(HermesStashSummaryResponse summary)
+    private void DrawDamaged(HermesStashSummaryResponse summary)
     {
-        GUILayout.Label("DAMAGED AND DEPLETED ITEMS");
+        var rows = summary.DamagedOrDepletedItems
+            .Where(item => MatchesText(item.Name, item.ShortName, item.Status, item.ConditionKind, item.BestSaleDestination))
+            .OrderBy(item => item.ConditionPercent)
+            .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        GUILayout.Label($"DAMAGED AND DEPLETED ITEMS — {rows.Count:N0} visible");
         GUILayout.Label(
-            "Thresholds: weapons below 70%, armor and generic durability below 50%, resources below 20%, and keys with one use remaining.");
+            $"Current thresholds: weapon {Math.Clamp(Plugin.Settings.StashWeaponDurabilityThreshold.Value, 1, 100)}%, "
+            + $"armor/durability {Math.Clamp(Plugin.Settings.StashArmorDurabilityThreshold.Value, 1, 100)}%, "
+            + $"resources {Math.Clamp(Plugin.Settings.StashLowResourceThreshold.Value, 0, 100)}%, "
+            + $"keys ≤ {Math.Clamp(Plugin.Settings.StashKeyUsesWarningThreshold.Value, 0, 100)} uses.");
         GUILayout.Space(5f);
 
-        if (summary.DamagedOrDepletedItems.Count == 0)
+        if (rows.Count == 0)
         {
-            GUILayout.Label("No damaged or depleted items crossed the current Alpha10.2 thresholds.");
+            HermesUi.DrawEmptyState("No damaged or depleted items match the current thresholds and filter.");
             return;
         }
 
-        foreach (var item in summary.DamagedOrDepletedItems)
+        var visibleDamagedRows = HermesUi.LimitRows(rows, out var hiddenDamaged);
+        foreach (var item in visibleDamagedRows)
         {
             GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.BeginHorizontal();
             GUILayout.Label($"{item.Status.ToUpperInvariant()} — {item.Name}");
             GUILayout.FlexibleSpace();
-            GUILayout.Label($"{item.ConditionPercent:N0}%");
+            if (GUILayout.Button("Ask HERMES", GUILayout.Width(105f)))
+            {
+                Plugin.Instance?.OpenForInventoryItem(item.InstanceKey);
+            }
+            GUILayout.Label($"{item.ConditionPercent:N0}%", GUILayout.Width(55f));
             GUILayout.EndHorizontal();
             GUILayout.Label(item.InstanceLabel);
             GUILayout.Label(
                 $"{item.ConditionKind}: {FormatNumber(item.ConditionCurrent)}/{FormatNumber(item.ConditionMaximum)} • "
-                + $"Report threshold: {item.ThresholdPercent:N0}%");
-            if (item.BestSaleValue.HasValue)
-            {
-                GUILayout.Label($"Best estimated destination: {item.BestSaleDestination} • ₽{item.BestSaleValue.Value:N0}");
-            }
-            else
-            {
-                GUILayout.Label("Best estimated destination: unavailable");
-            }
+                + $"Report threshold {item.ThresholdPercent:N0}%");
+            GUILayout.Label(item.BestSaleValue.HasValue
+                ? $"Best estimated destination {item.BestSaleDestination} • ₽{item.BestSaleValue.Value:N0}"
+                : "Best estimated destination unavailable");
             GUILayout.Label(item.Recommendation);
             GUILayout.EndVertical();
         }
+        HermesUi.DrawHiddenRowsNotice(hiddenDamaged);
     }
 
-    private static void DrawMetric(string label, string value, string note)
+    private IEnumerable<HermesStashValuationItem> ApplyRecommendationFilters(
+        IEnumerable<HermesStashValuationItem> source)
     {
-        GUILayout.BeginVertical(GUI.skin.box, GUILayout.MinWidth(180f), GUILayout.ExpandWidth(true));
-        GUILayout.Label(label);
-        GUILayout.Label(value);
-        GUILayout.Label(note);
-        GUILayout.EndVertical();
+        var filtered = source.Where(item =>
+            MatchesText(
+                item.Name,
+                item.ShortName,
+                item.InstanceLabel,
+                item.Category,
+                item.Recommendation,
+                item.BestSaleDestination,
+                string.Join(" ", item.Reasons))
+            && (_categoryFilter.Equals("All", StringComparison.OrdinalIgnoreCase)
+                || item.Category.Equals(_categoryFilter, StringComparison.OrdinalIgnoreCase))
+            && (_destinationFilter.Equals("All", StringComparison.OrdinalIgnoreCase)
+                || (item.BestSaleDestination ?? "Unavailable").Equals(
+                    _destinationFilter,
+                    StringComparison.OrdinalIgnoreCase))
+            && (_foundInRaidFilter == FoundInRaidFilter.All
+                || (_foundInRaidFilter == FoundInRaidFilter.FoundInRaid && item.FoundInRaid)
+                || (_foundInRaidFilter == FoundInRaidFilter.NotFoundInRaid && !item.FoundInRaid)));
+
+        return _sort switch
+        {
+            StashSort.Name => filtered
+                .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(item => item.InstanceLabel, StringComparer.OrdinalIgnoreCase),
+            StashSort.SellValue => filtered
+                .OrderByDescending(item => item.PotentialBestSaleValue)
+                .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase),
+            StashSort.SellableQuantity => filtered
+                .OrderByDescending(item => item.PotentiallySellQuantity)
+                .ThenByDescending(item => item.PotentialBestSaleValue),
+            StashSort.ValuePerCell => filtered
+                .OrderByDescending(GetValuePerCell)
+                .ThenByDescending(item => item.PotentialBestSaleValue),
+            StashSort.OccupiedCells => filtered
+                .OrderByDescending(item => item.OccupiedCells)
+                .ThenByDescending(item => item.PotentialBestSaleValue),
+            StashSort.Condition => filtered
+                .OrderBy(item => item.ConditionPercent)
+                .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase),
+            StashSort.Destination => filtered
+                .OrderBy(item => item.BestSaleDestination ?? "Unavailable", StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(item => item.PotentialBestSaleValue),
+            StashSort.ReservedQuantity => filtered
+                .OrderByDescending(GetReservedQuantity)
+                .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase),
+            _ => filtered
+                .OrderBy(item => RecommendationRank(item.Recommendation))
+                .ThenByDescending(item => item.PotentialBestSaleValue)
+                .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+        };
     }
 
-    private static void DrawValueCard(string label, long value, string note)
-    {
-        GUILayout.BeginVertical(GUI.skin.box, GUILayout.MinWidth(250f), GUILayout.ExpandWidth(true));
-        GUILayout.Label(label);
-        GUILayout.Label($"₽{value:N0}");
-        GUILayout.Label(note);
-        GUILayout.EndVertical();
-    }
-
-    private static void DrawItemRow(HermesStashValuationItem item)
+    private void DrawItemRow(HermesStashValuationItem item, bool emphasizeSpace = false)
     {
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.BeginHorizontal();
-        GUILayout.Label($"{item.Recommendation.ToUpperInvariant()} — {item.Name}");
+        var badges = new List<string> { item.Recommendation.ToUpperInvariant(), item.Category.ToUpperInvariant() };
+        if (item.FoundInRaid)
+        {
+            badges.Add("FIR");
+        }
+        if (item.PotentiallySellQuantity > 0d && item.PotentiallySellQuantity + 0.001d < item.Quantity)
+        {
+            badges.Add("PARTIAL STACK");
+        }
+        if (item.ContainedItemCount > 0)
+        {
+            badges.Add("FILLED");
+        }
+        if (item.InstalledItemCount > 0)
+        {
+            badges.Add("ASSEMBLY");
+        }
+        if (item.IsProtectedCurrency)
+        {
+            badges.Add("PROTECTED");
+        }
+
+        GUILayout.Label($"{string.Join(" • ", badges)} — {item.Name}");
         GUILayout.FlexibleSpace();
+        if (GUILayout.Button("Ask HERMES", GUILayout.Width(105f)))
+        {
+            Plugin.Instance?.OpenForInventoryItem(item.InstanceKey);
+        }
         GUILayout.Label(item.BestSaleValue.HasValue
-            ? $"Best: {item.BestSaleDestination} • ₽{item.BestSaleValue.Value:N0}"
-            : "No reliable sale destination");
+            ? $"Best {item.BestSaleDestination} • ₽{item.BestSaleValue.Value:N0}"
+            : "No reliable destination", GUILayout.Width(230f));
         GUILayout.EndHorizontal();
 
         GUILayout.Label(item.InstanceLabel);
         GUILayout.Label(
-            $"Owned in this instance: {FormatNumber(item.Quantity)} • "
-            + $"Keep: {FormatNumber(item.RecommendedKeepQuantity)} • "
-            + $"Potentially sell: {FormatNumber(item.PotentiallySellQuantity)}");
+            $"Owned {FormatNumber(item.Quantity)} • Keep {FormatNumber(item.RecommendedKeepQuantity)} • "
+            + $"Sellable {FormatNumber(item.PotentiallySellQuantity)} • Condition {item.ConditionPercent:N0}%");
 
         if (item.PotentialBestSaleValue > 0)
         {
-            GUILayout.Label($"Estimated best-destination value of sellable quantity: ₽{item.PotentialBestSaleValue:N0}");
+            GUILayout.Label(
+                $"Sellable value ₽{item.PotentialBestSaleValue:N0} • "
+                + $"Value per occupied cell ₽{GetValuePerCell(item):N0} • Cells {item.OccupiedCells:N0}");
+        }
+        else if (emphasizeSpace)
+        {
+            GUILayout.Label($"Cells {item.OccupiedCells:N0} • value unavailable");
         }
 
         var saleOptions = new List<string>();
@@ -510,25 +668,19 @@ internal sealed class HermesStashPanel
         }
         if (item.FleaEstimateAvailable && item.EstimatedFleaNetValue.HasValue)
         {
-            var reliability = item.FleaEstimateReliable ? "reliable" : "informational";
-            saleOptions.Add($"flea net ₽{item.EstimatedFleaNetValue.Value:N0} ({item.FleaComparableOfferCount:N0} offers, {reliability})");
+            saleOptions.Add(
+                $"Flea net ₽{item.EstimatedFleaNetValue.Value:N0} "
+                + $"({item.FleaComparableOfferCount:N0} offers, {(item.FleaEstimateReliable ? "reliable" : "informational")})");
         }
         if (saleOptions.Count > 0)
         {
-            GUILayout.Label("Sale options: " + string.Join(" • ", saleOptions));
-        }
-
-        if (item.FleaEstimateAvailable && item.EstimatedFleaListPrice.HasValue)
-        {
-            GUILayout.Label(
-                $"Flea listing estimate: ₽{item.EstimatedFleaListPrice.Value:N0} • "
-                + $"fee ₽{item.EstimatedFleaFee.GetValueOrDefault():N0} • source: {item.FleaEstimateSource}");
+            GUILayout.Label("Sale alternatives: " + string.Join(" • ", saleOptions));
         }
 
         var reserves = new List<string>();
         if (item.ActiveQuestReserve > 0d)
         {
-            reserves.Add($"active quests {FormatNumber(item.ActiveQuestReserve)}");
+            reserves.Add($"active quest {FormatNumber(item.ActiveQuestReserve)}");
         }
         if (item.NextHideoutReserve > 0d)
         {
@@ -536,7 +688,7 @@ internal sealed class HermesStashPanel
         }
         if (item.FutureQuestReserve > 0d)
         {
-            reserves.Add($"future quests {FormatNumber(item.FutureQuestReserve)}");
+            reserves.Add($"future quest {FormatNumber(item.FutureQuestReserve)}");
         }
         if (item.FutureHideoutReserve > 0d)
         {
@@ -544,21 +696,173 @@ internal sealed class HermesStashPanel
         }
         if (reserves.Count > 0)
         {
-            GUILayout.Label("Reserved for: " + string.Join(" • ", reserves));
+            GUILayout.Label("Reservation breakdown: " + string.Join(" • ", reserves));
         }
 
         GUILayout.Label(
-            $"Condition-adjusted handbook: ₽{item.ConditionAdjustedHandbookValue:N0} • "
-            + $"Full reference: ₽{item.FullHandbookReferenceValue:N0} • "
-            + $"Cells: {item.OccupiedCells:N0} • Installed: {item.InstalledItemCount:N0} • "
-            + $"Contained: {item.ContainedItemCount:N0}");
+            $"Trader sellable value ₽{item.PotentialTraderSaleValue:N0} • "
+            + $"Flea sellable net ₽{item.PotentialFleaNetValue:N0} • "
+            + $"Handbook condition-adjusted ₽{item.ConditionAdjustedHandbookValue:N0}");
 
-        foreach (var reason in item.Reasons)
+        if (Plugin.Settings.ShowStashReservationReasons.Value)
         {
-            GUILayout.Label("• " + reason);
+            foreach (var reason in item.Reasons)
+            {
+                GUILayout.Label("• " + reason);
+            }
         }
 
         GUILayout.EndVertical();
+    }
+
+    private static void DrawCompactItemRow(HermesStashValuationItem item)
+    {
+        GUILayout.BeginHorizontal(GUI.skin.box);
+        GUILayout.Label($"{item.Name} [{item.Category}]", GUILayout.ExpandWidth(true));
+        GUILayout.Label(item.FoundInRaid ? "FIR" : string.Empty, GUILayout.Width(35f));
+        GUILayout.Label(item.BestSaleValue.HasValue
+            ? $"{item.BestSaleDestination} • ₽{item.BestSaleValue.Value:N0}"
+            : $"Reference ₽{item.ConditionAdjustedHandbookValue:N0}", GUILayout.Width(230f));
+        if (GUILayout.Button("Ask HERMES", GUILayout.Width(105f)))
+        {
+            Plugin.Instance?.OpenForInventoryItem(item.InstanceKey);
+        }
+        GUILayout.EndHorizontal();
+    }
+
+    private bool MatchesText(params string?[] values)
+    {
+        if (string.IsNullOrWhiteSpace(_textFilter))
+        {
+            return true;
+        }
+
+        var query = _textFilter.Trim();
+        return values.Any(value =>
+            !string.IsNullOrWhiteSpace(value)
+            && value.Contains(query, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static long GetValuePerCell(HermesStashValuationItem item)
+    {
+        return item.OccupiedCells > 0
+            ? item.PotentialBestSaleValue / item.OccupiedCells
+            : 0L;
+    }
+
+    private static double GetReservedQuantity(HermesStashValuationItem item)
+    {
+        return item.ActiveQuestReserve
+               + item.FutureQuestReserve
+               + item.NextHideoutReserve
+               + item.FutureHideoutReserve;
+    }
+
+    private static int RecommendationRank(string recommendation)
+    {
+        return recommendation switch
+        {
+            "Sell surplus" => 0,
+            "Safe to sell" => 1,
+            "Keep" => 2,
+            "Review" => 3,
+            _ => 4
+        };
+    }
+
+    private static string NextValue(IReadOnlyList<string> values, string current)
+    {
+        if (values.Count == 0)
+        {
+            return "All";
+        }
+
+        var index = values
+            .Select((value, position) => (value, position))
+            .FirstOrDefault(pair => pair.value.Equals(current, StringComparison.OrdinalIgnoreCase))
+            .position;
+        return values[(index + 1) % values.Count];
+    }
+
+    private static StashView ParseView(string? value)
+    {
+        return (value ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "safe to sell" or "safetosell" => StashView.SafeToSell,
+            "cleanup" => StashView.Cleanup,
+            "keep" => StashView.Keep,
+            "review" => StashView.Review,
+            "duplicates" => StashView.Duplicates,
+            "damaged" => StashView.Damaged,
+            _ => StashView.Overview
+        };
+    }
+
+    private static StashSort ParseSort(string? value)
+    {
+        return (value ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "name" => StashSort.Name,
+            "sell value" or "value" => StashSort.SellValue,
+            "sellable quantity" or "quantity" => StashSort.SellableQuantity,
+            "value per cell" => StashSort.ValuePerCell,
+            "occupied cells" or "cells" => StashSort.OccupiedCells,
+            "condition" => StashSort.Condition,
+            "destination" => StashSort.Destination,
+            "reserved quantity" or "reserved" => StashSort.ReservedQuantity,
+            _ => StashSort.Recommendation
+        };
+    }
+
+    private static string FriendlySort(StashSort sort)
+    {
+        return sort switch
+        {
+            StashSort.SellValue => "Sell value",
+            StashSort.SellableQuantity => "Sellable qty",
+            StashSort.ValuePerCell => "Value/cell",
+            StashSort.OccupiedCells => "Cells",
+            StashSort.ReservedQuantity => "Reserved qty",
+            _ => sort.ToString()
+        };
+    }
+
+    private static string FriendlyFoundInRaidFilter(FoundInRaidFilter filter)
+    {
+        return filter switch
+        {
+            FoundInRaidFilter.FoundInRaid => "Only",
+            FoundInRaidFilter.NotFoundInRaid => "Exclude",
+            _ => "All"
+        };
+    }
+
+    private static string BuildClipboardSummary(HermesStashSummaryResponse summary)
+    {
+        return $"HERMES Stash Intelligence\n"
+               + $"Independent items: {summary.IndependentItemCount:N0}\n"
+               + $"Occupied cells: {summary.OccupiedCells:N0}\n"
+               + $"Safe to sell: {summary.SafeToSellInstanceCount:N0}\n"
+               + $"Sell surplus: {summary.SellSurplusInstanceCount:N0}\n"
+               + $"Keep: {summary.KeepInstanceCount:N0}\n"
+               + $"Review: {summary.ReviewInstanceCount:N0}\n"
+               + $"Sellable quantity: {FormatNumber(summary.PotentiallySellQuantity)}\n"
+               + $"Potential best sale value: ₽{summary.PotentialBestSaleValue:N0}\n"
+               + $"Cleanup candidates: {summary.CleanupCandidateInstanceCount:N0}\n"
+               + $"Recoverable cells: {summary.RecoverableCells:N0}\n"
+               + $"Cleanup value: ₽{summary.CleanupBestSaleValue:N0}\n"
+               + $"Duplicate groups: {summary.DuplicateGroupCount:N0}\n"
+               + $"Condition warnings: {summary.DamagedOrDepletedItemCount:N0}";
+    }
+
+    private static void DrawMetric(string label, string value, string note)
+    {
+        HermesUi.DrawMetric(label, value, note, 180f);
+    }
+
+    private static void DrawValueCard(string label, long value, string note)
+    {
+        HermesUi.DrawMetric(label, $"₽{value:N0}", note, 250f);
     }
 
     private static string FormatNumber(double value)

@@ -16,10 +16,13 @@ internal sealed class HermesWindow
 
     private const int WindowId = 0x4845524D;
 
-    private Rect _windowRect = new(70f, 70f, 1120f, 760f);
+    private Rect _windowRect;
+    private float _lastUiScale = 1f;
     private Vector2 _resultScroll;
     private Vector2 _detailScroll;
     private string _query = string.Empty;
+    private string _lastSubmittedQuery = string.Empty;
+    private float _deferredSearchAt = -1f;
     private string _status = "Search for an item or ask where it can be bought or sold.";
     private string _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
     private bool _visible;
@@ -53,9 +56,26 @@ internal sealed class HermesWindow
     private HermesCacheStatusResponse? _cacheStatus;
     private string? _refreshStatus;
 
+    public HermesWindow()
+    {
+        _lastUiScale = Plugin.Settings.GetUiScale();
+        var position = Plugin.Settings.GetInitialWindowPosition(_lastUiScale);
+        _windowRect = new Rect(
+            position.x,
+            position.y,
+            Plugin.Settings.GetWindowWidth() / _lastUiScale,
+            Plugin.Settings.GetWindowHeight() / _lastUiScale);
+        _activeTab = ParseTabName(Plugin.Settings.GetOpeningTabName());
+        ResetSectionExpansionDefaults();
+    }
+
     public void Toggle()
     {
         _visible = !_visible;
+        if (_visible && Plugin.Settings.AutomaticallyRefreshWhenOpened.Value)
+        {
+            _ = RefreshCurrentDataAsync(false);
+        }
     }
 
     internal void OpenForInventoryItem(string profileItemId)
@@ -66,7 +86,7 @@ internal sealed class HermesWindow
         }
 
         _visible = true;
-        _activeTab = HermesTab.ItemSearch;
+        SetActiveTab(HermesTab.ItemSearch);
         _ = OpenForInventoryItemAsync(profileItemId);
     }
 
@@ -83,7 +103,7 @@ internal sealed class HermesWindow
         }
 
         _visible = true;
-        _activeTab = HermesTab.ItemSearch;
+        SetActiveTab(HermesTab.ItemSearch);
         _ = OpenForPreviewItemAsync(templateId, sourceLabel);
     }
 
@@ -226,22 +246,55 @@ internal sealed class HermesWindow
             _ = LoadCacheStatusAsync();
         }
 
-        _windowRect = GUI.Window(
-            WindowId,
-            _windowRect,
-            DrawWindow,
-            "HERMES 0.1.0-alpha11.3.5 — Loadout & Raid Planning");
+        var originalMatrix = GUI.matrix;
+        var originalColor = GUI.color;
+        var scale = Plugin.Settings.GetUiScale();
+        if (Math.Abs(scale - _lastUiScale) > 0.001f)
+        {
+            var physicalX = _windowRect.x * _lastUiScale;
+            var physicalY = _windowRect.y * _lastUiScale;
+            _windowRect.x = physicalX / scale;
+            _windowRect.y = physicalY / scale;
+            _lastUiScale = scale;
+        }
+
+        _windowRect.width = Plugin.Settings.GetWindowWidth() / scale;
+        _windowRect.height = Plugin.Settings.GetWindowHeight() / scale;
+        _windowRect.x = Mathf.Clamp(_windowRect.x, 0f, Math.Max(0f, Screen.width / scale - _windowRect.width));
+        _windowRect.y = Mathf.Clamp(_windowRect.y, 0f, Math.Max(0f, Screen.height / scale - _windowRect.height));
+
+        try
+        {
+            GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
+            GUI.color = new Color(1f, 1f, 1f, Plugin.Settings.GetWindowOpacity());
+            _windowRect = GUI.Window(
+                WindowId,
+                _windowRect,
+                DrawWindow,
+                "HERMES 0.1.0-alpha11.9 — Release Stabilization");
+        }
+        finally
+        {
+            GUI.matrix = originalMatrix;
+            GUI.color = originalColor;
+        }
+
+        if (Event.current.type == EventType.MouseUp)
+        {
+            Plugin.Settings.RememberWindowPositionValue(_windowRect, scale);
+        }
     }
 
     private void DrawWindow(int windowId)
     {
         GUILayout.BeginVertical();
 
-        GUILayout.Label("READ-ONLY PERSONAL OPERATIONS ASSISTANT");
-        GUILayout.Label("Right-click owned, equipped, trader, or flea items and choose Ask HERMES. PMC items use the exact profile instance; previews use the base item.");
-        GUILayout.Space(6f);
+        HermesUi.DrawAppHeader(
+            "READ-ONLY PERSONAL OPERATIONS ASSISTANT",
+            "Right-click owned, equipped, trader, or flea items and choose Ask HERMES. PMC items use the exact profile instance; previews use the base item.");
+        GUILayout.Space(HermesUi.StandardSpace);
         DrawTabs();
-        GUILayout.Space(6f);
+        GUILayout.Space(HermesUi.StandardSpace);
 
         switch (_activeTab)
         {
@@ -283,20 +336,22 @@ internal sealed class HermesWindow
 
     private void DrawTabButton(HermesTab tab, string label)
     {
-        var selected = _activeTab == tab;
-        if (GUILayout.Button((selected ? "● " : string.Empty) + label, GUILayout.Width(145f), GUILayout.Height(30f)))
+        if (HermesUi.DrawTabButton(label, _activeTab == tab, 145f))
         {
-            _activeTab = tab;
+            SetActiveTab(tab);
         }
     }
 
     private void DrawItemSearchTab()
     {
+        CheckDeferredSearch();
+        HermesUi.DrawPanelTitle(
+            "ITEM SEARCH & MARKET INTELLIGENCE",
+            "Search player-facing item names or inspect an exact PMC item through Ask HERMES.",
+            _status,
+            _searching);
         DrawSearchBar();
-
-        GUILayout.Space(4f);
-        GUILayout.Label(_status);
-        GUILayout.Space(6f);
+        GUILayout.Space(HermesUi.StandardSpace);
 
         GUILayout.BeginHorizontal(GUILayout.ExpandHeight(true));
         DrawResultPanel();
@@ -308,25 +363,66 @@ internal sealed class HermesWindow
     private void DrawSearchBar()
     {
         GUILayout.BeginHorizontal();
-
         GUI.SetNextControlName("HermesSearchField");
-        _query = GUILayout.TextField(_query, GUILayout.ExpandWidth(true), GUILayout.Height(30f));
-
-        GUI.enabled = !_searching && !string.IsNullOrWhiteSpace(_query);
-        if (GUILayout.Button(_searching ? "Searching..." : "Search", GUILayout.Width(120f), GUILayout.Height(30f)))
+        var previousQuery = _query;
+        _query = GUILayout.TextField(_query, GUILayout.ExpandWidth(true), GUILayout.Height(HermesUi.ToolbarHeight));
+        if (!string.Equals(previousQuery, _query, StringComparison.Ordinal))
         {
-            _ = RunSearchAsync();
+            _deferredSearchAt = Plugin.Settings.SearchWhileTyping.Value
+                                && _query.Trim().Length >= Plugin.Settings.GetMinimumSearchCharacters()
+                ? Time.realtimeSinceStartup + 0.35f
+                : -1f;
         }
 
+        var trimmedLength = _query.Trim().Length;
+        var canSearch = !_searching && trimmedLength >= Plugin.Settings.GetMinimumSearchCharacters();
+        GUI.enabled = canSearch;
+        if (GUILayout.Button(_searching ? "Searching..." : "Search", GUILayout.Width(110f), GUILayout.Height(HermesUi.ToolbarHeight)))
+        {
+            _deferredSearchAt = -1f;
+            _ = RunSearchAsync();
+        }
         GUI.enabled = true;
+
+        if (GUILayout.Button("Clear", GUILayout.Width(70f), GUILayout.Height(HermesUi.ToolbarHeight)))
+        {
+            Clear();
+            _query = string.Empty;
+            _lastSubmittedQuery = string.Empty;
+            _deferredSearchAt = -1f;
+        }
         GUILayout.EndHorizontal();
+
+        if (Plugin.Settings.ShowSectionDescriptions.Value)
+        {
+            var mode = Plugin.Settings.SearchWhileTyping.Value ? "Automatic search enabled" : "Press Search or Enter";
+            GUILayout.Label($"{mode} • minimum {Plugin.Settings.GetMinimumSearchCharacters()} character(s) • up to {Plugin.Settings.GetMaximumSearchResults()} result(s).");
+        }
 
         if (Event.current.type == EventType.KeyDown
             && Event.current.keyCode is KeyCode.Return or KeyCode.KeypadEnter
-            && !_searching
-            && !string.IsNullOrWhiteSpace(_query))
+            && canSearch)
         {
             Event.current.Use();
+            _deferredSearchAt = -1f;
+            _ = RunSearchAsync();
+        }
+    }
+
+    private void CheckDeferredSearch()
+    {
+        if (_deferredSearchAt < 0f
+            || _searching
+            || Time.realtimeSinceStartup < _deferredSearchAt)
+        {
+            return;
+        }
+
+        _deferredSearchAt = -1f;
+        var query = _query.Trim();
+        if (query.Length >= Plugin.Settings.GetMinimumSearchCharacters()
+            && !query.Equals(_lastSubmittedQuery, StringComparison.OrdinalIgnoreCase))
+        {
             _ = RunSearchAsync();
         }
     }
@@ -334,21 +430,25 @@ internal sealed class HermesWindow
     private void DrawResultPanel()
     {
         GUILayout.BeginVertical(GUI.skin.box, GUILayout.Width(330f), GUILayout.ExpandHeight(true));
-        GUILayout.Label("SEARCH RESULTS");
+        GUILayout.Label($"SEARCH RESULTS — {_results.Count:N0}");
         GUILayout.Space(4f);
 
         _resultScroll = GUILayout.BeginScrollView(_resultScroll, GUILayout.ExpandHeight(true));
 
         if (_results.Count == 0)
         {
-            GUILayout.Label("No results loaded.");
+            HermesUi.DrawEmptyState(
+                string.IsNullOrWhiteSpace(_lastSubmittedQuery) ? "No results loaded." : $"No items matched \"{_lastSubmittedQuery}\".",
+                "Quest-only items and items without a positive handbook value are excluded.");
         }
         else
         {
-            foreach (var item in _results)
+            var visibleResults = HermesUi.LimitRows(_results, out var hiddenResults);
+            foreach (var item in visibleResults)
             {
                 DrawResultButton(item);
             }
+            HermesUi.DrawHiddenRowsNotice(hiddenResults);
         }
 
         GUILayout.EndScrollView();
@@ -358,17 +458,23 @@ internal sealed class HermesWindow
     private void DrawResultButton(HermesItemSummary item)
     {
         var selected = _selectedItem?.ItemKey == item.ItemKey;
-        var displayName = string.Equals(item.Name, item.ShortName, StringComparison.OrdinalIgnoreCase)
-            ? item.Name
-            : $"{item.Name}\n{item.ShortName}";
+        var lines = new List<string> { (selected ? "▶ " : string.Empty) + item.Name };
+        if (Plugin.Settings.ShowItemShortNames.Value
+            && !string.Equals(item.Name, item.ShortName, StringComparison.OrdinalIgnoreCase))
+        {
+            lines.Add(item.ShortName);
+        }
+        if (Plugin.Settings.ShowItemReferencePrices.Value && item.ReferencePrice.HasValue)
+        {
+            lines.Add($"Handbook ₽{item.ReferencePrice.Value:N0}");
+        }
 
-        var prefix = selected ? "▶ " : string.Empty;
-        if (GUILayout.Button(prefix + displayName, GUILayout.MinHeight(48f), GUILayout.ExpandWidth(true)))
+        if (GUILayout.Button(string.Join("
+", lines), GUILayout.MinHeight(lines.Count >= 3 ? 62f : 48f), GUILayout.ExpandWidth(true)))
         {
             _ = SelectItemAsync(item);
         }
-
-        GUILayout.Space(3f);
+        GUILayout.Space(HermesUi.SmallSpace);
     }
 
     private void DrawDetailPanel()
@@ -383,7 +489,7 @@ internal sealed class HermesWindow
 
         if (_selectedItem is null)
         {
-            GUILayout.Label("Select a search result to compare vanilla traders and the local SPT flea market.");
+            HermesUi.DrawEmptyState("Select a search result to compare vanilla traders and the local SPT flea market.", "Search by item name or use Ask HERMES from an inventory, trader, or flea context menu.");
         }
         else
         {
@@ -428,14 +534,18 @@ internal sealed class HermesWindow
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.Label(item.Name);
 
-        if (!string.Equals(item.Name, item.ShortName, StringComparison.OrdinalIgnoreCase))
+        if (Plugin.Settings.ShowItemShortNames.Value
+            && !string.Equals(item.Name, item.ShortName, StringComparison.OrdinalIgnoreCase))
         {
             GUILayout.Label($"Short name: {item.ShortName}");
         }
 
-        GUILayout.Label(item.ReferencePrice.HasValue
-            ? $"Handbook reference: ₽{item.ReferencePrice.Value:N0}"
-            : "Handbook reference: unavailable");
+        if (Plugin.Settings.ShowItemReferencePrices.Value)
+        {
+            GUILayout.Label(item.ReferencePrice.HasValue
+                ? $"Handbook reference: ₽{item.ReferencePrice.Value:N0}"
+                : "Handbook reference: unavailable");
+        }
         GUILayout.Label("Current quest, hideout, and crafting progress is shown below from the active PMC profile.");
         GUILayout.EndVertical();
     }
@@ -600,7 +710,7 @@ internal sealed class HermesWindow
                 GUILayout.Label($"Rouble equivalent: ₽{best.RoubleEquivalent:N0}");
             }
 
-            if (summary.UsesSelectedStashInstance)
+            if (summary.UsesSelectedStashInstance && Plugin.Settings.ShowFullAssemblyValuation.Value)
             {
                 GUILayout.Label($"Root item value: ₽{best.RootRoubleEquivalent:N0}");
                 GUILayout.Label($"Accepted installed value: ₽{best.InstalledComponentRoubleEquivalent:N0} ({best.IncludedWeaponAttachmentCount} attachment(s), {best.IncludedArmorInsertCount} armor insert(s))");
@@ -629,19 +739,22 @@ internal sealed class HermesWindow
             GUILayout.Label($"Rouble equivalent: ₽{offer.RoubleEquivalent:N0}");
         }
 
-        GUILayout.Label($"Root item: ₽{offer.RootRoubleEquivalent:N0}");
-        if (offer.IncludedInstalledItemCount > 0)
+        if (Plugin.Settings.ShowFullAssemblyValuation.Value)
         {
-            GUILayout.Label($"Accepted installed items: ₽{offer.InstalledComponentRoubleEquivalent:N0} ({offer.IncludedWeaponAttachmentCount} attachment(s), {offer.IncludedArmorInsertCount} armor insert(s))");
-        }
-        else
-        {
-            GUILayout.Label("Accepted installed items: none");
-        }
+            GUILayout.Label($"Root item: ₽{offer.RootRoubleEquivalent:N0}");
+            if (offer.IncludedInstalledItemCount > 0)
+            {
+                GUILayout.Label($"Accepted installed items: ₽{offer.InstalledComponentRoubleEquivalent:N0} ({offer.IncludedWeaponAttachmentCount} attachment(s), {offer.IncludedArmorInsertCount} armor insert(s))");
+            }
+            else
+            {
+                GUILayout.Label("Accepted installed items: none");
+            }
 
-        if (offer.IgnoredInstalledItemCount > 0)
-        {
-            GUILayout.Label($"Ignored installed items: {offer.IgnoredInstalledItemCount} • reference basis ₽{offer.IgnoredInstalledReferenceValue:N0}");
+            if (offer.IgnoredInstalledItemCount > 0)
+            {
+                GUILayout.Label($"Ignored installed items: {offer.IgnoredInstalledItemCount} • reference basis ₽{offer.IgnoredInstalledReferenceValue:N0}");
+            }
         }
 
         GUILayout.EndVertical();
@@ -653,10 +766,13 @@ internal sealed class HermesWindow
         GUILayout.BeginVertical(GUI.skin.box);
 
         var arrow = _marketExpanded ? "▼" : "▶";
+        var configuredMinimum = Plugin.Settings.GetMinimumComparableFleaOffers();
+        var reliable = summary.MarketPriceFromActiveOffers && summary.ComparableOfferCount >= configuredMinimum;
+        var reliabilityBadge = reliable ? "RELIABLE" : summary.MarketPriceFromActiveOffers ? "LOW SAMPLE" : "REFERENCE";
         var headline = summary.MedianPrice.HasValue
             ? summary.MarketPriceFromActiveOffers
-                ? $"Adjusted median ₽{summary.MedianPrice.Value:N0} • {summary.ValidCashOfferCount:N0} cash + {summary.ConvertedBarterOfferCount:N0} barter"
-                : $"Market reference ₽{summary.MedianPrice.Value:N0} • {summary.MarketPriceSource}"
+                ? $"[{reliabilityBadge}] adjusted median ₽{summary.MedianPrice.Value:N0} • {summary.ComparableOfferCount:N0} comparable"
+                : $"[{reliabilityBadge}] market reference ₽{summary.MedianPrice.Value:N0} • {summary.MarketPriceSource}"
             : "No flea or fallback market value";
 
         if (GUILayout.Button(
@@ -675,6 +791,11 @@ internal sealed class HermesWindow
         }
 
         GUILayout.Label(summary.SellRecommendation);
+        if (summary.MarketPriceFromActiveOffers
+            && summary.ComparableOfferCount < Plugin.Settings.GetMinimumComparableFleaOffers())
+        {
+            GUILayout.Label($"Reliability warning: {summary.ComparableOfferCount:N0} comparable offer(s); F12 minimum is {Plugin.Settings.GetMinimumComparableFleaOffers():N0}.");
+        }
 
         if (_marketExpanded)
         {
@@ -740,8 +861,11 @@ internal sealed class HermesWindow
         }
 
         GUILayout.Label($"Valid cash offers found: {summary.ValidCashOfferCount:N0}");
-        GUILayout.Label($"Converted barter offers found: {summary.ConvertedBarterOfferCount:N0}");
-        if (summary.BarterOffersUsingHandbookFallback > 0)
+        if (Plugin.Settings.ShowConvertedBarterOffers.Value)
+        {
+            GUILayout.Label($"Converted barter offers found: {summary.ConvertedBarterOfferCount:N0}");
+        }
+        if (Plugin.Settings.ShowConvertedBarterOffers.Value && summary.BarterOffersUsingHandbookFallback > 0)
         {
             GUILayout.Label($"Converted barters using handbook fallback: {summary.BarterOffersUsingHandbookFallback:N0}");
         }
@@ -808,12 +932,15 @@ internal sealed class HermesWindow
         else
         {
             GUILayout.Label($"Suggested base-item listing price: ₽{summary.SuggestedListPrice.Value:N0}");
-            GUILayout.Label(summary.EstimatedListingFee.HasValue
-                ? $"Estimated listing fee: ₽{summary.EstimatedListingFee.Value:N0}"
-                : "Estimated listing fee: unavailable");
-            GUILayout.Label(summary.EstimatedNetSale.HasValue
-                ? $"Estimated base-item net sale: ₽{summary.EstimatedNetSale.Value:N0}"
-                : "Estimated base-item net sale: unavailable");
+            if (Plugin.Settings.ShowListingFeeEstimates.Value)
+            {
+                GUILayout.Label(summary.EstimatedListingFee.HasValue
+                    ? $"Estimated listing fee: ₽{summary.EstimatedListingFee.Value:N0}"
+                    : "Estimated listing fee: unavailable");
+                GUILayout.Label(summary.EstimatedNetSale.HasValue
+                    ? $"Estimated base-item net sale: ₽{summary.EstimatedNetSale.Value:N0}"
+                    : "Estimated base-item net sale: unavailable");
+            }
         }
 
         if (summary.BestTraderSellPrice.HasValue)
@@ -861,7 +988,15 @@ internal sealed class HermesWindow
         }
         else
         {
-            foreach (var offer in summary.LowestOffers)
+            var offers = summary.LowestOffers
+                .Where(offer => Plugin.Settings.ShowConvertedBarterOffers.Value || !offer.IsBarter)
+                .Take(Plugin.Settings.GetMaximumFleaOffersDisplayed())
+                .ToList();
+            if (offers.Count == 0)
+            {
+                GUILayout.Label("No offers match the current Market Intelligence display settings.");
+            }
+            foreach (var offer in offers)
             {
                 GUILayout.BeginVertical(GUI.skin.box);
 
@@ -883,16 +1018,17 @@ internal sealed class HermesWindow
                     }
                 }
 
-                if (offer.InstalledComponentValue > 0
-                    || offer.WeaponAttachmentCount > 0
-                    || offer.ArmorInsertCount > 0)
+                if (Plugin.Settings.ShowFullAssemblyValuation.Value
+                    && (offer.InstalledComponentValue > 0
+                        || offer.WeaponAttachmentCount > 0
+                        || offer.ArmorInsertCount > 0))
                 {
                     GUILayout.Label(
                         $"Installed value: ₽{offer.InstalledComponentValue:N0} • "
                         + $"Weapon attachments: {offer.WeaponAttachmentCount:N0} • "
                         + $"Armor inserts: {offer.ArmorInsertCount:N0}");
                 }
-                else
+                else if (Plugin.Settings.ShowFullAssemblyValuation.Value)
                 {
                     GUILayout.Label("Installed value: none");
                 }
@@ -1001,7 +1137,7 @@ internal sealed class HermesWindow
                             GUILayout.Label("Fallback note: One or more required items had no active cash offer, convertible barter offer, or SPT dynamic flea-market price, so HERMES used handbook value.");
                         }
 
-                        if (payment.Requirements.Count > 0)
+                        if (Plugin.Settings.ShowDetailedBarterCalculations.Value && payment.Requirements.Count > 0)
                         {
                             GUILayout.Space(3f);
                             GUILayout.Label("Market calculation:");
@@ -1181,13 +1317,26 @@ internal sealed class HermesWindow
 
         GUI.enabled = true;
         GUILayout.Space(8f);
-        GUILayout.Label(FormatCacheStatus(), GUILayout.ExpandWidth(true));
-        GUILayout.FlexibleSpace();
-        GUILayout.Label("F8 toggles HERMES");
+        if (Plugin.Settings.ShowDiagnosticsFooter.Value)
+        {
+            GUILayout.Label(FormatDiagnosticsStatus(), GUILayout.ExpandWidth(true));
+            if (GUILayout.Button("Copy diagnostics", GUILayout.Width(125f)))
+            {
+                GUIUtility.systemCopyBuffer = BuildDiagnosticsReport();
+                _refreshStatus = "HERMES diagnostics copied to the clipboard.";
+            }
+        }
+        else
+        {
+            GUILayout.FlexibleSpace();
+        }
+
+        GUILayout.Label($"{Plugin.Settings.ToggleWindowShortcut.Value} toggles HERMES");
         GUILayout.Space(12f);
 
         if (GUILayout.Button("Close", GUILayout.Width(90f)))
         {
+            Plugin.Settings.RememberWindowPositionValue(_windowRect, Plugin.Settings.GetUiScale());
             _visible = false;
         }
 
@@ -1199,15 +1348,47 @@ internal sealed class HermesWindow
         }
     }
 
-    private string FormatCacheStatus()
+    private string FormatDiagnosticsStatus()
     {
+        var requests = HermesApiClient.GetDiagnosticsSnapshot();
         if (_cacheStatus is null || !_cacheStatus.Found)
         {
-            return "Market cache: status unavailable";
+            return $"Caches unavailable • Requests: {requests.Active:N0} active, {requests.Completed:N0} completed, {requests.Failed:N0} failed";
         }
 
-        var totalEntries = _cacheStatus.MarketUnitValueEntryCount + _cacheStatus.MarketSummaryEntryCount;
-        return $"Market cache: {totalEntries:N0} entries • {_cacheStatus.CacheHits:N0} hits / {_cacheStatus.CacheMisses:N0} misses • {_cacheStatus.TtlSeconds}s TTL";
+        var marketEntries = _cacheStatus.MarketUnitValueEntryCount + _cacheStatus.MarketSummaryEntryCount;
+        return $"Cache M/S/L: {marketEntries:N0}/{_cacheStatus.StashAnalysisEntryCount:N0}/{_cacheStatus.LoadoutAnalysisEntryCount:N0}"
+               + $" • Requests: {requests.Active:N0} active, {requests.Completed:N0} ok, {requests.Failed:N0} failed, {requests.DeduplicatedRequests:N0} shared";
+    }
+
+    private string BuildDiagnosticsReport()
+    {
+        var requests = HermesApiClient.GetDiagnosticsSnapshot();
+        var lines = new List<string>
+        {
+            "HERMES 0.1.0-alpha11.9 diagnostics",
+            $"Active tab: {_activeTab}",
+            $"Client requests: started={requests.Started}, completed={requests.Completed}, failed={requests.Failed}, active={requests.Active}",
+            $"Failures: timeout={requests.TimedOut}, transport={requests.TransportFailures}, invalid-response={requests.InvalidResponses}",
+            $"Performance: slow={requests.SlowRequests}, shared-duplicates={requests.DeduplicatedRequests}, last-duration-ms={requests.LastDurationMilliseconds}",
+            $"Last route: {requests.LastRoute}",
+            $"Last failure: {(string.IsNullOrWhiteSpace(requests.LastFailure) ? "none" : requests.LastFailure)}"
+        };
+
+        if (_cacheStatus is { Found: true })
+        {
+            var marketEntries = _cacheStatus.MarketUnitValueEntryCount + _cacheStatus.MarketSummaryEntryCount;
+            lines.Add($"Market cache: entries={marketEntries}, hits={_cacheStatus.CacheHits}, misses={_cacheStatus.CacheMisses}, writes={_cacheStatus.CacheWrites}, ttl={_cacheStatus.TtlSeconds}s");
+            lines.Add($"Stash cache: entries={_cacheStatus.StashAnalysisEntryCount}, hits={_cacheStatus.StashCacheHits}, misses={_cacheStatus.StashCacheMisses}, writes={_cacheStatus.StashCacheWrites}, ttl={_cacheStatus.StashTtlSeconds}s");
+            lines.Add($"Loadout cache: entries={_cacheStatus.LoadoutAnalysisEntryCount}, hits={_cacheStatus.LoadoutCacheHits}, misses={_cacheStatus.LoadoutCacheMisses}, writes={_cacheStatus.LoadoutCacheWrites}, ttl={_cacheStatus.LoadoutTtlSeconds}s");
+            lines.Add($"Last cache invalidation: {_cacheStatus.LastInvalidationReason}");
+        }
+        else
+        {
+            lines.Add($"Server cache status: {_cacheStatus?.Message ?? "unavailable"}");
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 
     private async Task LoadCacheStatusAsync()
@@ -1227,12 +1408,12 @@ internal sealed class HermesWindow
         }
         finally
         {
-            _nextCacheStatusRefresh = Time.realtimeSinceStartup + 10f;
+            _nextCacheStatusRefresh = Time.realtimeSinceStartup + Plugin.Settings.GetCacheStatusRefreshSeconds();
             _cacheStatusLoading = false;
         }
     }
 
-    private async Task RefreshCurrentDataAsync()
+    private async Task RefreshCurrentDataAsync(bool clearCaches = true)
     {
         if (_refreshingCurrent)
         {
@@ -1240,12 +1421,17 @@ internal sealed class HermesWindow
         }
 
         _refreshingCurrent = true;
-        _refreshStatus = "Clearing short-lived market caches and reloading the current view...";
+        _refreshStatus = clearCaches
+            ? "Clearing short-lived caches and reloading the current view..."
+            : "Reloading the current view...";
         try
         {
-            var cleared = await HermesApiClient.ClearCachesAsync();
-            _cacheStatus = cleared.Status;
-            _refreshStatus = cleared.Message;
+            if (clearCaches)
+            {
+                var cleared = await HermesApiClient.ClearCachesAsync();
+                _cacheStatus = cleared.Status;
+                _refreshStatus = cleared.Message;
+            }
 
             switch (_activeTab)
             {
@@ -1285,7 +1471,10 @@ internal sealed class HermesWindow
                     break;
             }
 
-            await LoadCacheStatusAsync();
+            if (clearCaches)
+            {
+                await LoadCacheStatusAsync();
+            }
         }
         catch (Exception ex)
         {
@@ -1323,8 +1512,9 @@ internal sealed class HermesWindow
     private async Task RunSearchAsync()
     {
         var query = _query.Trim();
-        if (query.Length == 0 || _searching)
+        if (query.Length < Plugin.Settings.GetMinimumSearchCharacters() || _searching)
         {
+            _status = $"Enter at least {Plugin.Settings.GetMinimumSearchCharacters()} character(s) to search.";
             return;
         }
 
@@ -1341,14 +1531,14 @@ internal sealed class HermesWindow
         _stashInstances = [];
         _selectedStashInstanceKey = null;
         _loadingInstancePrice = false;
-        _saleComparisonExpanded = false;
-        _marketExpanded = false;
+        _saleComparisonExpanded = Plugin.Settings.ExpandTraderComparisonByDefault.Value;
+        _marketExpanded = Plugin.Settings.ExpandMarketByDefault.Value;
         _hideoutUsageExpanded = false;
         _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
 
         try
         {
-            var response = await HermesApiClient.SearchAsync(query);
+            var response = await HermesApiClient.SearchAsync(query, Plugin.Settings.GetMaximumSearchResults());
             if (requestVersion != _searchRequestVersion)
             {
                 return;
@@ -1411,11 +1601,8 @@ internal sealed class HermesWindow
         _hideoutUsage = null;
         _stashInstances = [];
         _selectedStashInstanceKey = null;
-        _stashInstancesExpanded = true;
         _loadingInstancePrice = false;
-        _saleComparisonExpanded = false;
-        _marketExpanded = false;
-        _hideoutUsageExpanded = false;
+        ResetSectionExpansionDefaults();
         _loadingDetails = true;
         _detailScroll = Vector2.zero;
         _detailStatus = $"Analyzing traders, the local SPT flea market, hideout upgrades, and recipes for {item.Name}...";
@@ -1618,15 +1805,60 @@ internal sealed class HermesWindow
         _hideoutUsage = null;
         _stashInstances = [];
         _selectedStashInstanceKey = null;
-        _stashInstancesExpanded = true;
         _loadingInstancePrice = false;
-        _saleComparisonExpanded = false;
-        _marketExpanded = false;
-        _hideoutUsageExpanded = false;
+        ResetSectionExpansionDefaults();
         _resultScroll = Vector2.zero;
         _detailScroll = Vector2.zero;
         _status = "Search for an item or ask where it can be bought or sold.";
         _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
+    }
+
+    private void SetActiveTab(HermesTab tab)
+    {
+        if (_activeTab == tab)
+        {
+            return;
+        }
+
+        _activeTab = tab;
+        Plugin.Settings.RememberTab(GetTabName(tab));
+        if (Plugin.Settings.DetailedLogging.Value)
+        {
+            Plugin.Log.LogDebug($"HERMES active tab changed to {GetTabName(tab)}.");
+        }
+    }
+
+    private static HermesTab ParseTabName(string value)
+    {
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "hideout" => HermesTab.Hideout,
+            "crafts" or "craft" => HermesTab.Crafts,
+            "stash" => HermesTab.Stash,
+            "loadout" => HermesTab.Loadout,
+            _ => HermesTab.ItemSearch
+        };
+    }
+
+    private static string GetTabName(HermesTab tab)
+    {
+        return tab switch
+        {
+            HermesTab.Hideout => "Hideout",
+            HermesTab.Crafts => "Crafts",
+            HermesTab.Stash => "Stash",
+            HermesTab.Loadout => "Loadout",
+            _ => "Item Search"
+        };
+    }
+
+    private void ResetSectionExpansionDefaults()
+    {
+        var expanded = !Plugin.Settings.CollapseSectionsByDefault.Value;
+        _stashInstancesExpanded = expanded;
+        _saleComparisonExpanded = Plugin.Settings.ExpandTraderComparisonByDefault.Value;
+        _marketExpanded = Plugin.Settings.ExpandMarketByDefault.Value;
+        _hideoutUsageExpanded = expanded;
     }
 
     private static string FormatCount(double count)
