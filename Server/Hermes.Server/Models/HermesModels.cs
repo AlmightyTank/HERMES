@@ -254,6 +254,7 @@ public sealed record HermesHideoutAreaDetailResponse(
 public sealed record HermesHideoutRequirement(
     string Type,
     string Name,
+    string? ItemTemplateId,
     double Required,
     double Owned,
     double Missing,
@@ -267,6 +268,7 @@ public sealed record HermesHideoutRequirement(
 public sealed record HermesActiveProductionSummary(
     string StationName,
     string OutputName,
+    string? OutputTemplateId,
     int OutputQuantity,
     bool IsComplete,
     bool IsContinuous,
@@ -295,6 +297,7 @@ public sealed record HermesCraftSummary(
     string StationName,
     int RequiredStationLevel,
     string OutputName,
+    string? OutputTemplateId,
     int OutputQuantity,
     int DurationSeconds,
     bool IsAvailable,
@@ -322,6 +325,7 @@ public sealed record HermesCraftDetailResponse(
 
 public sealed record HermesCraftIngredient(
     string Name,
+    string TemplateId,
     string RequirementType,
     double Required,
     double Owned,

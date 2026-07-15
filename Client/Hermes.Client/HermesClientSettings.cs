@@ -23,6 +23,9 @@ internal sealed class HermesClientSettings
     public ConfigEntry<bool> EnableAssistantTab { get; private set; } = null!;
     public ConfigEntry<bool> ShowAssistantSuggestedPrompts { get; private set; } = null!;
     public ConfigEntry<bool> IncludeSelectedItemInAssistant { get; private set; } = null!;
+    public ConfigEntry<bool> EnableAssistantFuzzyEntityMatching { get; private set; } = null!;
+    public ConfigEntry<int> AssistantEntityConfidencePercent { get; private set; } = null!;
+    public ConfigEntry<int> MaximumAssistantAmbiguityChoices { get; private set; } = null!;
     public ConfigEntry<int> MaximumAssistantMessages { get; private set; } = null!;
 
     public ConfigEntry<int> WindowWidth { get; private set; } = null!;
@@ -193,6 +196,21 @@ internal sealed class HermesClientSettings
             "Include selected item context",
             true,
             "Allows Assistant questions such as 'What is this item worth?' to use the current Item Search or Ask HERMES selection.");
+        EnableAssistantFuzzyEntityMatching = config.Bind(
+            "Assistant",
+            "Enable fuzzy entity matching",
+            true,
+            "Allows minor spelling differences when matching player-facing item, quest, map, craft, station, and hideout-area names.");
+        AssistantEntityConfidencePercent = config.Bind(
+            "Assistant",
+            "Entity confidence percent",
+            68,
+            "Minimum local match confidence before HERMES accepts a named entity. Lower values accept broader matches; higher values require more exact names. Range: 40-100.");
+        MaximumAssistantAmbiguityChoices = config.Bind(
+            "Assistant",
+            "Maximum ambiguity choices",
+            5,
+            "Maximum possible item, quest, craft, map, station, or hideout-area matches listed when HERMES needs clarification. Range: 2-10.");
         MaximumAssistantMessages = config.Bind(
             "Assistant",
             "Maximum conversation messages",
@@ -707,6 +725,8 @@ internal sealed class HermesClientSettings
     public int GetSlowRequestWarningSeconds() => Math.Clamp(SlowRequestWarningSeconds.Value, 1, 30);
     public int GetCacheStatusRefreshSeconds() => Math.Clamp(CacheStatusRefreshSeconds.Value, 5, 60);
     public int GetMaximumAssistantMessages() => Math.Clamp(MaximumAssistantMessages.Value, 10, 200);
+    public int GetAssistantEntityConfidencePercent() => Math.Clamp(AssistantEntityConfidencePercent.Value, 40, 100);
+    public int GetMaximumAssistantAmbiguityChoices() => Math.Clamp(MaximumAssistantAmbiguityChoices.Value, 2, 10);
     public int GetWindowWidth() => Math.Clamp(WindowWidth.Value, 900, 1800);
     public int GetWindowHeight() => Math.Clamp(WindowHeight.Value, 600, 1100);
     public float GetWindowOpacity() => Math.Clamp(WindowOpacity.Value, 0.55f, 1f);

@@ -202,10 +202,17 @@ internal sealed class HermesCraftPanel
                     $"{craft.StationName} L{craft.RequiredStationLevel} • {FormatDuration(craft.DurationSeconds)} • [{badge}]\n" +
                     $"Cash {cashProfit} • Economic {economicProfit} ({percent:N1}%) • ₽{craft.EstimatedEconomicProfitPerHour:N0}/h";
 
+        GUILayout.BeginHorizontal();
         if (GUILayout.Button(label, GUILayout.MinHeight(76f), GUILayout.ExpandWidth(true)))
         {
             _ = SelectCraftAsync(craft);
         }
+        if (!string.IsNullOrWhiteSpace(craft.OutputTemplateId)
+            && GUILayout.Button("Ask HERMES", GUILayout.Width(104f), GUILayout.MinHeight(76f)))
+        {
+            Plugin.Instance?.OpenForPreviewItem(craft.OutputTemplateId, "craft output");
+        }
+        GUILayout.EndHorizontal();
         GUILayout.Space(HermesUi.SmallSpace);
     }
 
@@ -243,6 +250,11 @@ internal sealed class HermesCraftPanel
         GUILayout.BeginHorizontal();
         GUILayout.Label($"{craft.OutputQuantity:N0} × {craft.OutputName}");
         GUILayout.FlexibleSpace();
+        if (!string.IsNullOrWhiteSpace(craft.OutputTemplateId)
+            && GUILayout.Button("Ask HERMES", GUILayout.Width(104f)))
+        {
+            Plugin.Instance?.OpenForPreviewItem(craft.OutputTemplateId, "craft output");
+        }
         GUILayout.Label(craft.CanStartNow ? "READY NOW" : craft.IsAvailable ? "AVAILABLE" : craft.Status.ToUpperInvariant());
         GUILayout.EndHorizontal();
         GUILayout.Label($"Station: {craft.StationName} Level {craft.RequiredStationLevel} • Base duration: {FormatDuration(craft.DurationSeconds)}");
@@ -304,6 +316,11 @@ internal sealed class HermesCraftPanel
             GUILayout.BeginHorizontal();
             GUILayout.Label($"{(ingredient.IsMet ? "✓" : "✗")} {ingredient.Name}");
             GUILayout.FlexibleSpace();
+            if (!string.IsNullOrWhiteSpace(ingredient.TemplateId)
+                && GUILayout.Button("Ask HERMES", GUILayout.Width(104f)))
+            {
+                Plugin.Instance?.OpenForPreviewItem(ingredient.TemplateId, "craft ingredient");
+            }
             GUILayout.Label(ingredient.IsReusableTool ? "REUSABLE TOOL" : ingredient.RequirementType.ToUpperInvariant());
             GUILayout.EndHorizontal();
             GUILayout.Label($"Owned: {FormatCount(ingredient.Owned)} • Used: {FormatCount(ingredient.OwnedUsed)} / {FormatCount(ingredient.Required)}" +

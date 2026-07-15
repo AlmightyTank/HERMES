@@ -826,6 +826,7 @@ public sealed class HermesHideoutService(
             return new HermesHideoutRequirement(
                 "Item",
                 catalogItem.Name,
+                requirement.TemplateId,
                 required,
                 owned,
                 missing,
@@ -851,6 +852,7 @@ public sealed class HermesHideoutService(
             return new HermesHideoutRequirement(
                 "Area",
                 areaName,
+                null,
                 requiredLevel,
                 ownedLevel,
                 Math.Max(0, requiredLevel - ownedLevel),
@@ -876,6 +878,7 @@ public sealed class HermesHideoutService(
             return new HermesHideoutRequirement(
                 "Trader",
                 traderName,
+                null,
                 requiredLevel,
                 ownedLevel,
                 Math.Max(0, requiredLevel - ownedLevel),
@@ -897,6 +900,7 @@ public sealed class HermesHideoutService(
             return new HermesHideoutRequirement(
                 "Skill",
                 skillName,
+                null,
                 requiredLevel,
                 ownedLevel,
                 Math.Max(0, requiredLevel - ownedLevel),
@@ -921,6 +925,7 @@ public sealed class HermesHideoutService(
             return new HermesHideoutRequirement(
                 "Quest",
                 questName,
+                null,
                 1,
                 complete ? 1 : 0,
                 complete ? 0 : 1,
@@ -935,6 +940,7 @@ public sealed class HermesHideoutService(
         return new HermesHideoutRequirement(
             string.IsNullOrWhiteSpace(type) ? "Requirement" : FormatDisplayName(type),
             string.IsNullOrWhiteSpace(type) ? "Additional requirement" : FormatDisplayName(type),
+            null,
             1,
             1,
             0,
@@ -1096,11 +1102,13 @@ public sealed class HermesHideoutService(
         var economicInputValue = ownedIngredientValue + additionalCashCost + unavailableEconomicEstimate;
 
         var outputValue = 0L;
+        string? outputTemplateId = null;
         if (MongoId.IsValidMongoId(craft.OutputTemplateId))
         {
             var outputItem = catalogService.ResolveTemplate(new MongoId(craft.OutputTemplateId));
             if (outputItem is not null)
             {
+                outputTemplateId = craft.OutputTemplateId;
                 var valuation = GetItemValuation(outputItem, sessionId, valuationCache, includeLivePricing);
                 var unitOutputValue = valuation.EconomicUnitValue
                                       ?? valuation.HandbookUnitValue
@@ -1120,6 +1128,7 @@ public sealed class HermesHideoutService(
             craft.StationName,
             craft.RequiredStationLevel,
             craft.OutputName,
+            outputTemplateId,
             craft.OutputQuantity,
             craft.DurationSeconds,
             isAvailable,
@@ -1250,6 +1259,7 @@ public sealed class HermesHideoutService(
 
             output.Add(new HermesCraftIngredient(
                 catalogItem.Name,
+                requirement.TemplateId,
                 FormatDisplayName(requirement.Type),
                 required,
                 owned,
@@ -1507,9 +1517,16 @@ public sealed class HermesHideoutService(
                     ? "In production"
                     : "Paused";
 
+            var outputTemplateId = craft is not null
+                                   && MongoId.IsValidMongoId(craft.OutputTemplateId)
+                                   && catalogService.ResolveTemplate(new MongoId(craft.OutputTemplateId)) is not null
+                ? craft.OutputTemplateId
+                : null;
+
             output.Add(new HermesActiveProductionSummary(
                 stationName,
                 outputName,
+                outputTemplateId,
                 outputQuantity,
                 production.IsComplete,
                 production.IsContinuous,

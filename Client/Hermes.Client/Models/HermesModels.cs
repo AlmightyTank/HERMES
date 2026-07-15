@@ -284,6 +284,7 @@ public sealed class HermesHideoutRequirement
 {
     public string Type { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
+    public string? ItemTemplateId { get; set; }
     public double Required { get; set; }
     public double Owned { get; set; }
     public double Missing { get; set; }
@@ -299,6 +300,7 @@ public sealed class HermesActiveProductionSummary
 {
     public string StationName { get; set; } = string.Empty;
     public string OutputName { get; set; } = string.Empty;
+    public string? OutputTemplateId { get; set; }
     public int OutputQuantity { get; set; }
     public bool IsComplete { get; set; }
     public bool IsContinuous { get; set; }
@@ -333,6 +335,7 @@ public sealed class HermesCraftSummary
     public string StationName { get; set; } = string.Empty;
     public int RequiredStationLevel { get; set; }
     public string OutputName { get; set; } = string.Empty;
+    public string? OutputTemplateId { get; set; }
     public int OutputQuantity { get; set; }
     public int DurationSeconds { get; set; }
     public bool IsAvailable { get; set; }
@@ -364,6 +367,7 @@ public sealed class HermesCraftDetailResponse
 public sealed class HermesCraftIngredient
 {
     public string Name { get; set; } = string.Empty;
+    public string TemplateId { get; set; } = string.Empty;
     public string RequirementType { get; set; } = string.Empty;
     public double Required { get; set; }
     public double Owned { get; set; }

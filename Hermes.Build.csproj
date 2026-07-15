@@ -21,7 +21,7 @@
     <DistRoot>$(HermesRoot)\dist</DistRoot>
     <ServerDist>$(DistRoot)\SPT\user\mods\HERMES</ServerDist>
     <ClientDist>$(DistRoot)\BepInEx\plugins\HERMES</ClientDist>
-    <PackagePath>$(HermesRoot)\HERMES-0.1.0-alpha12.0.zip</PackagePath>
+    <PackagePath>$(HermesRoot)\HERMES-0.1.0-alpha12.1.zip</PackagePath>
 
     <ServerOutput>$(HermesRoot)\Server\Hermes.Server\bin\$(Configuration)\Hermes.Server.dll</ServerOutput>
     <ClientOutput>$(HermesRoot)\Client\Hermes.Client\bin\$(Configuration)\Hermes.Client.dll</ClientOutput>

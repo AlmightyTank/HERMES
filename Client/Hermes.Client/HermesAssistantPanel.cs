@@ -6,18 +6,6 @@ namespace Hermes.Client;
 
 internal sealed class HermesAssistantPanel
 {
-    private enum AssistantIntent
-    {
-        Help,
-        Loadout,
-        RaidPlanner,
-        Stash,
-        Crafts,
-        Hideout,
-        Item,
-        Unknown
-    }
-
     private sealed class AssistantAction
     {
         public AssistantAction(string label, string tabName)
@@ -44,6 +32,21 @@ internal sealed class HermesAssistantPanel
         public string Text { get; }
         public string Source { get; }
         public IReadOnlyList<AssistantAction> Actions { get; }
+    }
+
+    private sealed class ItemResolution
+    {
+        public HermesItemSummary? Item { get; init; }
+        public IReadOnlyList<HermesItemSummary> Alternatives { get; init; } = Array.Empty<HermesItemSummary>();
+        public int Score { get; init; }
+        public bool IsAmbiguous { get; init; }
+    }
+
+    private sealed class DynamicEntityMatch
+    {
+        public HermesAssistantEntityKind Kind { get; init; }
+        public string Name { get; init; } = string.Empty;
+        public int Score { get; init; }
     }
 
     private static readonly string[] SuggestedPrompts =
@@ -281,8 +284,14 @@ internal sealed class HermesAssistantPanel
 
         try
         {
-            var intent = DetectIntent(prompt, selectedItem);
-            var response = await BuildResponseAsync(intent, prompt, selectedItem, selectedInstanceKey);
+            var interpretation = HermesAssistantIntentEngine.Interpret(
+                prompt,
+                selectedItem is not null && Plugin.Settings.IncludeSelectedItemInAssistant.Value);
+            var response = await BuildResponseAsync(
+                interpretation,
+                prompt,
+                selectedItem,
+                selectedInstanceKey);
             if (requestVersion != _requestVersion)
             {
                 return;
@@ -313,68 +322,22 @@ internal sealed class HermesAssistantPanel
         }
     }
 
-    private static AssistantIntent DetectIntent(string prompt, HermesItemSummary? selectedItem)
-    {
-        var text = prompt.ToLowerInvariant();
-        if (ContainsAny(text, "what can you do", "help", "commands", "capabilities"))
-        {
-            return AssistantIntent.Help;
-        }
-
-        if (ContainsAny(text, "best raid", "which raid", "what raid", "best map", "which map", "raid planner", "active quests", "quests can i"))
-        {
-            return AssistantIntent.RaidPlanner;
-        }
-
-        if (ContainsAny(text, "safe to sell", "safely sell", "stash cleanup", "clean my stash", "cleanup", "duplicate", "stash value", "stash"))
-        {
-            return AssistantIntent.Stash;
-        }
-
-        if (selectedItem is not null && ReferencesSelectedItem(text))
-        {
-            return AssistantIntent.Item;
-        }
-
-        if (ContainsAny(text, "craft", "recipe", "profitable", "overnight"))
-        {
-            return AssistantIntent.Crafts;
-        }
-
-        if (ContainsAny(text, "hideout", "upgrade", "station"))
-        {
-            return AssistantIntent.Hideout;
-        }
-
-        if (ContainsAny(text, "ready", "loadout", "ammo", "magazine", "medical", "bleed", "fracture", "pain", "armor", "weapon", "insured", "insurance", "risk", "hydration", "energy"))
-        {
-            return AssistantIntent.Loadout;
-        }
-
-        if (ContainsAny(text, "worth", "price", "flea", "trader", "buy", "sell", "item"))
-        {
-            return AssistantIntent.Item;
-        }
-
-        return AssistantIntent.Unknown;
-    }
-
     private static async Task<AssistantMessage> BuildResponseAsync(
-        AssistantIntent intent,
+        HermesAssistantInterpretation interpretation,
         string prompt,
         HermesItemSummary? selectedItem,
         string? selectedInstanceKey)
     {
-        return intent switch
+        return interpretation.Intent switch
         {
-            AssistantIntent.Help => BuildHelpResponse(),
-            AssistantIntent.Loadout => await BuildLoadoutResponseAsync(prompt),
-            AssistantIntent.RaidPlanner => await BuildRaidPlannerResponseAsync(),
-            AssistantIntent.Stash => await BuildStashResponseAsync(),
-            AssistantIntent.Crafts => await BuildCraftResponseAsync(prompt),
-            AssistantIntent.Hideout => await BuildHideoutResponseAsync(),
-            AssistantIntent.Item => await BuildItemResponseAsync(prompt, selectedItem, selectedInstanceKey),
-            _ => await BuildUnknownResponseAsync(prompt, selectedItem, selectedInstanceKey)
+            HermesAssistantIntent.Help => BuildHelpResponse(),
+            HermesAssistantIntent.Loadout => await BuildLoadoutResponseAsync(prompt),
+            HermesAssistantIntent.RaidPlanner => await BuildRaidPlannerResponseAsync(prompt),
+            HermesAssistantIntent.Stash => await BuildStashResponseAsync(),
+            HermesAssistantIntent.Crafts => await BuildCraftResponseAsync(prompt),
+            HermesAssistantIntent.Hideout => await BuildHideoutResponseAsync(prompt),
+            HermesAssistantIntent.Item => await BuildItemResponseAsync(prompt, selectedItem, selectedInstanceKey),
+            _ => await BuildDynamicEntityResponseAsync(prompt, selectedItem, selectedInstanceKey)
         };
     }
 
@@ -389,7 +352,7 @@ internal sealed class HermesAssistantPanel
             "• Hideout upgrades, missing materials, active production, and available crafts",
             "• Selected-item trader, flea, quest, hideout, and crafting use",
             string.Empty,
-            "Alpha12.0 uses deterministic intent matching and current HERMES data. It does not buy, sell, insure, equip, move, craft, or complete anything."
+            "Alpha12.1 uses deterministic intent and entity matching and current HERMES data. It does not buy, sell, insure, equip, move, craft, or complete anything."
         ]);
 
         return new AssistantMessage(
@@ -493,7 +456,7 @@ internal sealed class HermesAssistantPanel
             ]);
     }
 
-    private static async Task<AssistantMessage> BuildRaidPlannerResponseAsync()
+    private static async Task<AssistantMessage> BuildRaidPlannerResponseAsync(string prompt)
     {
         var response = await HermesApiClient.GetLoadoutSummaryAsync(
             Plugin.Settings.CreateLoadoutRequestSettings());
@@ -504,12 +467,7 @@ internal sealed class HermesAssistantPanel
 
         var plans = response.RaidPlans
             .Where(plan => plan.ActiveQuestCount > 0)
-            .OrderBy(plan => plan.MissingRequirementCount)
-            .ThenByDescending(plan => plan.ActiveQuestCount)
-            .ThenByDescending(plan => plan.ObjectiveCount - plan.CompletedObjectiveCount)
-            .ThenBy(plan => plan.MapName, StringComparer.OrdinalIgnoreCase)
             .ToList();
-
         if (plans.Count == 0)
         {
             return new AssistantMessage(
@@ -519,21 +477,206 @@ internal sealed class HermesAssistantPanel
                 [new AssistantAction("Open Raid Planner", "Loadout/Raid Planner")]);
         }
 
-        var best = plans[0];
+        var questRows = plans
+            .SelectMany(plan => plan.Quests.Select(quest => new { Plan = plan, Quest = quest }))
+            .GroupBy(row => row.Quest.QuestName, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        var questCandidates = HermesAssistantIntentEngine.RankCandidates(
+            prompt,
+            questRows,
+            row => row.Quest.QuestName);
+
+        var mapAlias = HermesAssistantIntentEngine.ResolveMapAlias(prompt, plans.Select(plan => plan.MapName));
+        var mapCandidates = HermesAssistantIntentEngine.RankCandidates(
+            prompt,
+            plans,
+            plan => plan.MapName);
+
+        var questTop = questCandidates.FirstOrDefault();
+        var mapTop = mapCandidates.FirstOrDefault();
+        var explicitlyQuestFocused = ContainsAny(prompt, "quest", "objective", "what do i need for", "requirements for");
+        if (questTop is not null
+            && HermesAssistantIntentEngine.IsConfident(questTop.Score)
+            && (explicitlyQuestFocused || mapTop is null || questTop.Score > mapTop.Score))
+        {
+            if (HermesAssistantIntentEngine.IsAmbiguous(questCandidates))
+            {
+                return BuildAmbiguityResponse(
+                    "quest",
+                    questCandidates.Select(candidate => candidate.Name),
+                    "Loadout/Raid Planner");
+            }
+
+            return BuildQuestPlanResponse(response, questTop.Name);
+        }
+
+        HermesRaidPlanSummary? selectedMap = null;
+        if (!string.IsNullOrWhiteSpace(mapAlias))
+        {
+            selectedMap = plans.FirstOrDefault(plan =>
+                plan.MapName.Equals(mapAlias, StringComparison.OrdinalIgnoreCase));
+        }
+        else if (mapTop is not null && HermesAssistantIntentEngine.IsConfident(mapTop.Score))
+        {
+            if (HermesAssistantIntentEngine.IsAmbiguous(mapCandidates))
+            {
+                return BuildAmbiguityResponse(
+                    "map",
+                    mapCandidates.Select(candidate => candidate.Name),
+                    "Loadout/Raid Planner");
+            }
+
+            selectedMap = mapTop.Value;
+        }
+
+        if (selectedMap is not null)
+        {
+            return BuildMapPlanResponse(selectedMap);
+        }
+
+        var rankedPlans = plans
+            .OrderBy(plan => plan.MissingRequirementCount)
+            .ThenByDescending(plan => plan.ActiveQuestCount)
+            .ThenByDescending(plan => plan.ObjectiveCount - plan.CompletedObjectiveCount)
+            .ThenBy(plan => plan.MapName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var best = rankedPlans[0];
         var builder = new StringBuilder();
         builder.AppendLine($"Recommended map: {best.MapName}");
         builder.AppendLine($"Plan status: {best.Status}");
         builder.AppendLine($"Active quests: {best.ActiveQuestCount:N0}");
         builder.AppendLine($"Incomplete objectives: {Math.Max(0, best.ObjectiveCount - best.CompletedObjectiveCount):N0}");
         builder.AppendLine($"Missing pre-raid requirements: {best.MissingRequirementCount:N0}");
+        AppendPlanRequirements(builder, best);
 
-        var missing = best.CombinedRequirements
-            .Where(requirement => !requirement.IsSatisfied && !requirement.AcquireInRaid)
-            .Take(5)
+        builder.AppendLine();
+        builder.AppendLine("Other strong options:");
+        foreach (var plan in rankedPlans.Skip(1).Take(3))
+        {
+            builder.AppendLine($"• {plan.MapName}: {plan.ActiveQuestCount:N0} quest(s), {Math.Max(0, plan.ObjectiveCount - plan.CompletedObjectiveCount):N0} incomplete objective(s), {plan.MissingRequirementCount:N0} missing requirement(s)");
+        }
+
+        return new AssistantMessage(
+            false,
+            builder.ToString().TrimEnd(),
+            "RAID PLANNER • BEST MAP",
+            [new AssistantAction("Open Raid Planner", "Loadout/Raid Planner")]);
+    }
+
+    private static AssistantMessage BuildMapPlanResponse(HermesRaidPlanSummary plan)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"{plan.MapName} raid plan");
+        builder.AppendLine($"Status: {plan.Status}");
+        builder.AppendLine($"Active quests: {plan.ActiveQuestCount:N0}");
+        builder.AppendLine($"Objectives: {plan.CompletedObjectiveCount:N0}/{plan.ObjectiveCount:N0} complete");
+        builder.AppendLine($"Missing pre-raid requirements: {plan.MissingRequirementCount:N0}");
+
+        if (plan.Quests.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("Active quests:");
+            foreach (var quest in plan.Quests
+                         .OrderByDescending(quest => quest.MissingRequirementCount)
+                         .ThenBy(quest => quest.QuestName, StringComparer.OrdinalIgnoreCase)
+                         .Take(10))
+            {
+                builder.AppendLine($"• {quest.QuestName} — {quest.CompletedObjectiveCount:N0}/{quest.ObjectiveCount:N0} objectives • {quest.Status}");
+            }
+        }
+
+        AppendPlanRequirements(builder, plan);
+        return new AssistantMessage(
+            false,
+            builder.ToString().TrimEnd(),
+            $"RAID PLANNER • {plan.MapName.ToUpperInvariant()}",
+            [new AssistantAction("Open Raid Planner", "Loadout/Raid Planner")]);
+    }
+
+    private static AssistantMessage BuildQuestPlanResponse(
+        HermesLoadoutSummaryResponse response,
+        string questName)
+    {
+        var matches = response.RaidPlans
+            .SelectMany(plan => plan.Quests
+                .Where(quest => quest.QuestName.Equals(questName, StringComparison.OrdinalIgnoreCase))
+                .Select(quest => new { Plan = plan, Quest = quest }))
             .ToList();
-        var acquire = best.CombinedRequirements
+        if (matches.Count == 0)
+        {
+            return new AssistantMessage(
+                false,
+                $"I recognized {questName}, but it is not present in the current active Raid Planner snapshot.",
+                "QUEST RESOLUTION",
+                [new AssistantAction("Open Raid Planner", "Loadout/Raid Planner")]);
+        }
+
+        var match = matches
+            .OrderByDescending(row => row.Quest.ObjectiveCount - row.Quest.CompletedObjectiveCount)
+            .First();
+        var builder = new StringBuilder();
+        builder.AppendLine(match.Quest.QuestName);
+        builder.AppendLine($"Trader: {match.Quest.TraderName}");
+        builder.AppendLine($"Map: {match.Plan.MapName}");
+        builder.AppendLine($"Status: {match.Quest.Status}");
+        builder.AppendLine($"Objectives: {match.Quest.CompletedObjectiveCount:N0}/{match.Quest.ObjectiveCount:N0} complete");
+
+        var objectives = match.Quest.Objectives
+            .Where(objective => !objective.IsCompleted || Plugin.Settings.ShowCompletedQuestObjectives.Value)
+            .Take(10)
+            .ToList();
+        if (objectives.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("Objectives:");
+            foreach (var objective in objectives)
+            {
+                builder.AppendLine($"• [{objective.Status}] {objective.Description}");
+            }
+        }
+
+        var requirements = match.Plan.CombinedRequirements
+            .Where(requirement => requirement.QuestNames.Any(name =>
+                name.Equals(match.Quest.QuestName, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+        if (requirements.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("Quest requirements:");
+            foreach (var requirement in requirements.Take(10))
+            {
+                if (requirement.AcquireInRaid)
+                {
+                    builder.AppendLine($"• Acquire during raid: {requirement.RequiredEquipment} — {requirement.Note}");
+                }
+                else if (requirement.IsSatisfied)
+                {
+                    builder.AppendLine($"• Ready: {requirement.RequiredEquipment} × {FormatCount(requirement.RequiredQuantity)}");
+                }
+                else
+                {
+                    builder.AppendLine($"• Missing: {requirement.RequiredEquipment} × {FormatCount(requirement.MissingQuantity)} — {requirement.RequirementKind}");
+                }
+            }
+        }
+
+        return new AssistantMessage(
+            false,
+            builder.ToString().TrimEnd(),
+            "QUEST • RAID PLANNER",
+            [new AssistantAction("Open Raid Planner", "Loadout/Raid Planner")]);
+    }
+
+    private static void AppendPlanRequirements(StringBuilder builder, HermesRaidPlanSummary plan)
+    {
+        var missing = plan.CombinedRequirements
+            .Where(requirement => !requirement.IsSatisfied && !requirement.AcquireInRaid)
+            .Take(6)
+            .ToList();
+        var acquire = plan.CombinedRequirements
             .Where(requirement => requirement.AcquireInRaid)
-            .Take(4)
+            .Take(5)
             .ToList();
 
         if (missing.Count > 0)
@@ -555,19 +698,6 @@ internal sealed class HermesAssistantPanel
                 builder.AppendLine($"• {requirement.RequiredEquipment} — {requirement.Note}");
             }
         }
-
-        builder.AppendLine();
-        builder.AppendLine("Other strong options:");
-        foreach (var plan in plans.Skip(1).Take(3))
-        {
-            builder.AppendLine($"• {plan.MapName}: {plan.ActiveQuestCount:N0} quest(s), {Math.Max(0, plan.ObjectiveCount - plan.CompletedObjectiveCount):N0} incomplete objective(s), {plan.MissingRequirementCount:N0} missing requirement(s)");
-        }
-
-        return new AssistantMessage(
-            false,
-            builder.ToString().TrimEnd(),
-            "RAID PLANNER",
-            [new AssistantAction("Open Raid Planner", "Loadout/Raid Planner")]);
     }
 
     private static async Task<AssistantMessage> BuildStashResponseAsync()
@@ -621,6 +751,63 @@ internal sealed class HermesAssistantPanel
             return Failure(response.Message, "CRAFTS");
         }
 
+        var outputRepresentatives = response.Crafts
+            .Where(craft => !string.IsNullOrWhiteSpace(craft.OutputName))
+            .GroupBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(craft => craft.CanStartNow)
+                .ThenByDescending(craft => craft.IsAvailable)
+                .ThenByDescending(craft => craft.EstimatedEconomicProfit)
+                .First())
+            .ToList();
+        var outputCandidates = HermesAssistantIntentEngine.RankCandidates(
+            prompt,
+            outputRepresentatives,
+            craft => craft.OutputName);
+        var stationNames = response.Crafts
+            .Select(craft => craft.StationName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var stationCandidates = HermesAssistantIntentEngine.RankCandidates(
+            prompt,
+            stationNames,
+            name => name);
+
+        var outputTop = outputCandidates.FirstOrDefault();
+        var stationTop = stationCandidates.FirstOrDefault();
+        var asksForSpecificRecipe = ContainsAny(
+            prompt,
+            "why can", "why cant", "why can't", "cannot craft", "can't craft", "can i craft",
+            "what do i need", "requirements", "recipe for", "make ", "produce ", "craft ");
+        if (outputTop is not null
+            && HermesAssistantIntentEngine.IsConfident(outputTop.Score)
+            && (asksForSpecificRecipe || stationTop is null || outputTop.Score >= stationTop.Score))
+        {
+            if (HermesAssistantIntentEngine.IsAmbiguous(outputCandidates))
+            {
+                return BuildAmbiguityResponse(
+                    "craft output",
+                    outputCandidates.Select(candidate => candidate.Name),
+                    "Crafts");
+            }
+
+            return await BuildSpecificCraftResponseAsync(response, outputTop.Name);
+        }
+
+        if (stationTop is not null && HermesAssistantIntentEngine.IsConfident(stationTop.Score))
+        {
+            if (HermesAssistantIntentEngine.IsAmbiguous(stationCandidates))
+            {
+                return BuildAmbiguityResponse(
+                    "crafting station",
+                    stationCandidates.Select(candidate => candidate.Name),
+                    "Crafts");
+            }
+
+            return BuildStationCraftResponse(response, stationTop.Name, prompt);
+        }
+
         var text = prompt.ToLowerInvariant();
         IEnumerable<HermesCraftSummary> selected = response.Crafts;
         string heading;
@@ -644,8 +831,137 @@ internal sealed class HermesAssistantPanel
             heading = "Crafts ready now";
         }
 
+        return BuildCraftListResponse(response, selected, heading, "CRAFT ANALYSIS");
+    }
+
+    private static async Task<AssistantMessage> BuildSpecificCraftResponseAsync(
+        HermesCraftsResponse response,
+        string outputName)
+    {
+        var matching = response.Crafts
+            .Where(craft => craft.OutputName.Equals(outputName, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(craft => craft.CanStartNow)
+            .ThenByDescending(craft => craft.IsAvailable)
+            .ThenByDescending(craft => craft.EstimatedEconomicProfit)
+            .ToList();
+        if (matching.Count == 0)
+        {
+            return new AssistantMessage(
+                false,
+                $"I recognized {outputName}, but no current craft recipe was returned for it.",
+                "CRAFT RESOLUTION",
+                [new AssistantAction("Open Crafts", "Crafts")]);
+        }
+
+        var selected = matching[0];
+        var detail = await HermesApiClient.GetCraftDetailAsync(selected.CraftKey);
+        var builder = new StringBuilder();
+        builder.AppendLine($"{selected.OutputQuantity:N0} × {selected.OutputName}");
+        builder.AppendLine($"Station: {selected.StationName} level {selected.RequiredStationLevel:N0}");
+        builder.AppendLine($"Status: {selected.Status}");
+        builder.AppendLine($"Duration: {FormatDuration(selected.DurationSeconds)}");
+        builder.AppendLine($"Available: {(selected.IsAvailable ? "Yes" : "No")} • Ready now: {(selected.CanStartNow ? "Yes" : "No")}");
+
+        if (detail.Found)
+        {
+            if (!string.IsNullOrWhiteSpace(detail.RequiredQuestName))
+            {
+                builder.AppendLine($"Quest unlock: {detail.RequiredQuestName} — {(detail.RequiredQuestComplete ? "complete" : "not complete")}");
+            }
+
+            var missing = detail.Ingredients
+                .Where(ingredient => ingredient.Missing > 0d || !ingredient.IsMet)
+                .OrderByDescending(ingredient => ingredient.Missing)
+                .ThenBy(ingredient => ingredient.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            builder.AppendLine();
+            if (missing.Count == 0)
+            {
+                builder.AppendLine("Ingredients: all listed requirements are currently met.");
+            }
+            else
+            {
+                builder.AppendLine("Missing requirements:");
+                foreach (var ingredient in missing.Take(10))
+                {
+                    var tool = ingredient.IsReusableTool ? " reusable tool" : string.Empty;
+                    builder.AppendLine($"• {ingredient.Name}: own {FormatCount(ingredient.Owned)}/{FormatCount(ingredient.Required)} • missing {FormatCount(ingredient.Missing)}{tool}");
+                }
+            }
+
+            var reservedOrUnavailable = detail.Ingredients
+                .Where(ingredient => ingredient.UnavailableQuantity > 0d)
+                .Take(5)
+                .ToList();
+            if (reservedOrUnavailable.Count > 0)
+            {
+                builder.AppendLine();
+                builder.AppendLine("Acquisition gaps:");
+                foreach (var ingredient in reservedOrUnavailable)
+                {
+                    builder.AppendLine($"• {ingredient.Name}: {FormatCount(ingredient.UnavailableQuantity)} cannot currently be sourced by the configured plan");
+                }
+            }
+        }
+
+        builder.AppendLine();
+        builder.AppendLine($"Estimated additional cash: ₽{selected.EstimatedAdditionalCashCost:N0}");
+        builder.AppendLine($"Economic input value: ₽{selected.EstimatedEconomicInputValue:N0}");
+        builder.AppendLine($"Output value: ₽{selected.EstimatedOutputValue:N0}");
+        builder.AppendLine($"Economic profit: ₽{selected.EstimatedEconomicProfit:N0} • ₽{selected.EstimatedEconomicProfitPerHour:N0}/h");
+
+        if (matching.Count > 1)
+        {
+            builder.AppendLine();
+            builder.AppendLine($"HERMES found {matching.Count:N0} recipes for this output. The best currently usable recipe is shown above.");
+            foreach (var alternative in matching.Skip(1).Take(3))
+            {
+                builder.AppendLine($"• Alternative: {alternative.StationName} L{alternative.RequiredStationLevel} — {alternative.Status}");
+            }
+        }
+
+        return new AssistantMessage(
+            false,
+            builder.ToString().TrimEnd(),
+            "CRAFT • RECIPE",
+            [new AssistantAction("Open Crafts", "Crafts")]);
+    }
+
+    private static AssistantMessage BuildStationCraftResponse(
+        HermesCraftsResponse response,
+        string stationName,
+        string prompt)
+    {
+        IEnumerable<HermesCraftSummary> selected = response.Crafts.Where(craft =>
+            craft.StationName.Equals(stationName, StringComparison.OrdinalIgnoreCase));
+        string heading;
+        if (ContainsAny(prompt, "profitable", "profit"))
+        {
+            selected = selected.Where(craft => craft.EstimatedEconomicProfit >= Plugin.Settings.GetMinimumCraftProfit());
+            heading = $"Profitable crafts at {stationName}";
+        }
+        else if (ContainsAny(prompt, "available", "ready", "can craft", "can i make"))
+        {
+            selected = selected.Where(craft => craft.CanStartNow);
+            heading = $"Crafts ready now at {stationName}";
+        }
+        else
+        {
+            heading = $"Crafts at {stationName}";
+        }
+
+        return BuildCraftListResponse(response, selected, heading, $"CRAFT STATION • {stationName.ToUpperInvariant()}");
+    }
+
+    private static AssistantMessage BuildCraftListResponse(
+        HermesCraftsResponse response,
+        IEnumerable<HermesCraftSummary> selected,
+        string heading,
+        string source)
+    {
         var rows = selected
-            .OrderByDescending(craft => craft.EstimatedEconomicProfitPerHour)
+            .OrderByDescending(craft => craft.CanStartNow)
+            .ThenByDescending(craft => craft.EstimatedEconomicProfitPerHour)
             .ThenByDescending(craft => craft.EstimatedEconomicProfit)
             .Take(8)
             .ToList();
@@ -660,7 +976,7 @@ internal sealed class HermesAssistantPanel
         {
             foreach (var craft in rows)
             {
-                builder.AppendLine($"• {craft.OutputQuantity:N0} × {craft.OutputName} at {craft.StationName} L{craft.RequiredStationLevel}: {FormatDuration(craft.DurationSeconds)} • economic profit ₽{craft.EstimatedEconomicProfit:N0} • ₽{craft.EstimatedEconomicProfitPerHour:N0}/h");
+                builder.AppendLine($"• {craft.OutputQuantity:N0} × {craft.OutputName} at {craft.StationName} L{craft.RequiredStationLevel}: {craft.Status} • {FormatDuration(craft.DurationSeconds)} • profit ₽{craft.EstimatedEconomicProfit:N0} • ₽{craft.EstimatedEconomicProfitPerHour:N0}/h");
             }
         }
 
@@ -672,16 +988,35 @@ internal sealed class HermesAssistantPanel
         return new AssistantMessage(
             false,
             builder.ToString().TrimEnd(),
-            "CRAFT ANALYSIS",
+            source,
             [new AssistantAction("Open Crafts", "Crafts")]);
     }
 
-    private static async Task<AssistantMessage> BuildHideoutResponseAsync()
+    private static async Task<AssistantMessage> BuildHideoutResponseAsync(string prompt)
     {
         var response = await HermesApiClient.GetHideoutSummaryAsync();
         if (!response.Found)
         {
             return Failure(response.Message, "HIDEOUT");
+        }
+
+        var areaCandidates = HermesAssistantIntentEngine.RankCandidates(
+            prompt,
+            response.Areas,
+            area => area.Name,
+            area => GetHideoutAliases(area.Name));
+        var areaTop = areaCandidates.FirstOrDefault();
+        if (areaTop is not null && HermesAssistantIntentEngine.IsConfident(areaTop.Score))
+        {
+            if (HermesAssistantIntentEngine.IsAmbiguous(areaCandidates))
+            {
+                return BuildAmbiguityResponse(
+                    "hideout area",
+                    areaCandidates.Select(candidate => candidate.Name),
+                    "Hideout");
+            }
+
+            return await BuildHideoutAreaResponseAsync(response, areaTop.Value);
         }
 
         var actionable = response.Areas
@@ -720,6 +1055,109 @@ internal sealed class HermesAssistantPanel
             [new AssistantAction("Open Hideout", "Hideout")]);
     }
 
+    private static async Task<AssistantMessage> BuildHideoutAreaResponseAsync(
+        HermesHideoutSummaryResponse summary,
+        HermesHideoutAreaSummary area)
+    {
+        var detail = await HermesApiClient.GetHideoutAreaAsync(area.AreaKey);
+        var builder = new StringBuilder();
+        builder.AppendLine(area.Name);
+        builder.AppendLine($"Level: {area.CurrentLevel:N0}/{area.MaximumLevel:N0}");
+        if (area.TargetLevel.HasValue)
+        {
+            builder.AppendLine($"Next target: level {area.TargetLevel.Value:N0}");
+        }
+        builder.AppendLine($"Status: {area.Status}");
+        if (area.IsConstructing && area.SecondsUntilComplete.HasValue)
+        {
+            builder.AppendLine($"Construction remaining: {FormatDuration(Convert.ToInt32(Math.Min(int.MaxValue, area.SecondsUntilComplete.Value)))}");
+        }
+
+        if (detail.Found)
+        {
+            var missing = detail.Requirements
+                .Where(requirement => !requirement.IsMet || requirement.Missing > 0d)
+                .OrderByDescending(requirement => requirement.Missing)
+                .ThenBy(requirement => requirement.Type, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(requirement => requirement.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            builder.AppendLine();
+            if (missing.Count == 0)
+            {
+                builder.AppendLine("Requirements: all listed requirements are currently met.");
+            }
+            else
+            {
+                builder.AppendLine("Missing requirements:");
+                foreach (var requirement in missing.Take(12))
+                {
+                    if (requirement.Type.Equals("Item", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var fir = requirement.FoundInRaidRequired ? " • FIR required" : string.Empty;
+                        var source = string.IsNullOrWhiteSpace(requirement.AcquisitionSource)
+                            ? string.Empty
+                            : $" • {requirement.AcquisitionSource}";
+                        builder.AppendLine($"• {requirement.Name}: own {FormatCount(requirement.Owned)}/{FormatCount(requirement.Required)} • missing {FormatCount(requirement.Missing)}{fir}{source}");
+                    }
+                    else
+                    {
+                        var details = string.IsNullOrWhiteSpace(requirement.Details)
+                            ? string.Empty
+                            : $" — {requirement.Details}";
+                        builder.AppendLine($"• {requirement.Type}: {requirement.Name}{details}");
+                    }
+                }
+            }
+
+            builder.AppendLine();
+            builder.AppendLine($"Estimated missing acquisition cost: ₽{detail.EstimatedMissingAcquisitionCost:N0}");
+            if (detail.ConstructionSeconds > 0)
+            {
+                builder.AppendLine($"Construction duration: {FormatDuration(detail.ConstructionSeconds)}");
+            }
+        }
+
+        if (area.Name.Contains("Generator", StringComparison.OrdinalIgnoreCase))
+        {
+            builder.AppendLine();
+            builder.AppendLine($"Generator active: {(summary.Resources.GeneratorActive ? "Yes" : "No")}");
+            builder.AppendLine($"Fuel containers: {summary.Resources.FuelContainerCount:N0} • total fuel resource: {summary.Resources.FuelResourceRemaining:N0}");
+            if (summary.Resources.EstimatedGeneratorRuntimeSeconds.HasValue)
+            {
+                builder.AppendLine($"Estimated runtime: {FormatDuration(Convert.ToInt32(Math.Min(int.MaxValue, summary.Resources.EstimatedGeneratorRuntimeSeconds.Value)))}");
+            }
+        }
+
+        return new AssistantMessage(
+            false,
+            builder.ToString().TrimEnd(),
+            "HIDEOUT • AREA",
+            [new AssistantAction("Open Hideout", "Hideout")]);
+    }
+
+    private static IEnumerable<string> GetHideoutAliases(string areaName)
+    {
+        if (areaName.Contains("Intelligence", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "intel center";
+        }
+
+        if (areaName.Contains("Medical", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "medstation";
+        }
+
+        if (areaName.Contains("Nutrition", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "nutrition unit";
+        }
+
+        if (areaName.Contains("Shooting", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "shooting range";
+        }
+    }
+
     private static async Task<AssistantMessage> BuildItemResponseAsync(
         string prompt,
         HermesItemSummary? selectedItem,
@@ -728,21 +1166,45 @@ internal sealed class HermesAssistantPanel
         var useSelectedContext = selectedItem is not null
                                  && Plugin.Settings.IncludeSelectedItemInAssistant.Value
                                  && ReferencesSelectedItem(prompt);
-        var item = useSelectedContext
-            ? selectedItem
-            : await ResolveItemFromPromptAsync(prompt);
+        if (useSelectedContext)
+        {
+            return await BuildResolvedItemResponseAsync(
+                prompt,
+                selectedItem!,
+                selectedInstanceKey,
+                true);
+        }
 
-        if (item is null)
+        var resolution = await ResolveItemFromPromptAsync(prompt);
+        if (resolution.IsAmbiguous)
+        {
+            return BuildAmbiguityResponse(
+                "item",
+                resolution.Alternatives.Select(item =>
+                    string.IsNullOrWhiteSpace(item.ShortName) || item.ShortName.Equals(item.Name, StringComparison.OrdinalIgnoreCase)
+                        ? item.Name
+                        : $"{item.Name} ({item.ShortName})"),
+                "Item Search");
+        }
+
+        if (resolution.Item is null)
         {
             return new AssistantMessage(
                 false,
-                "I could not identify a supported player-facing item in that question. Select an item through Item Search or Ask HERMES, then ask about “this item.”",
+                "I could not identify a supported player-facing item in that question. Use a more exact item name, select an item through Item Search, or use Ask HERMES from an item row.",
                 "ITEM RESOLUTION",
                 [new AssistantAction("Open Item Search", "Item Search")]);
         }
 
-        var useSelectedInstance = useSelectedContext
-                                  && selectedItem!.ItemKey.Equals(item.ItemKey, StringComparison.OrdinalIgnoreCase);
+        return await BuildResolvedItemResponseAsync(prompt, resolution.Item, null, false);
+    }
+
+    private static async Task<AssistantMessage> BuildResolvedItemResponseAsync(
+        string prompt,
+        HermesItemSummary item,
+        string? selectedInstanceKey,
+        bool useSelectedInstance)
+    {
         var traderTask = HermesApiClient.GetTraderSummaryAsync(
             item.ItemKey,
             useSelectedInstance ? selectedInstanceKey : null);
@@ -800,6 +1262,37 @@ internal sealed class HermesAssistantPanel
             builder.AppendLine($"• Active quest requirements: {activeQuestUses:N0} • future quest requirements: {futureQuestUses:N0}");
             builder.AppendLine($"• Next hideout upgrade uses: {nextUpgrades:N0}");
             builder.AppendLine($"• Produced by recipes: {usage.ProducedBy.Count:N0} • used by recipes: {usage.UsedBy.Count:N0}");
+
+            if (ContainsAny(prompt, "need", "quest", "hideout", "craft"))
+            {
+                var active = usage.QuestUses
+                    .Where(use => use.IsActive && !use.ConditionCompleted)
+                    .Take(5)
+                    .ToList();
+                var upgrades = usage.UpgradeUses
+                    .Where(use => !use.IsMet)
+                    .OrderByDescending(use => use.IsNextUpgrade)
+                    .Take(5)
+                    .ToList();
+                if (active.Count > 0)
+                {
+                    builder.AppendLine();
+                    builder.AppendLine("Active quest uses:");
+                    foreach (var use in active)
+                    {
+                        builder.AppendLine($"• {use.QuestName}: {use.ProgressText}");
+                    }
+                }
+                if (upgrades.Count > 0)
+                {
+                    builder.AppendLine();
+                    builder.AppendLine("Hideout uses:");
+                    foreach (var use in upgrades)
+                    {
+                        builder.AppendLine($"• {use.AreaName} L{use.TargetLevel}: own {FormatCount(use.Owned)}/{FormatCount(use.Required)} • missing {FormatCount(use.Missing)}");
+                    }
+                }
+            }
         }
 
         var bestTrader = trader.BestSellOffer?.RoubleEquivalent ?? 0L;
@@ -818,7 +1311,7 @@ internal sealed class HermesAssistantPanel
             [new AssistantAction("Open Item Search", "Item Search")]);
     }
 
-    private static async Task<AssistantMessage> BuildUnknownResponseAsync(
+    private static async Task<AssistantMessage> BuildDynamicEntityResponseAsync(
         string prompt,
         HermesItemSummary? selectedItem,
         string? selectedInstanceKey)
@@ -827,52 +1320,278 @@ internal sealed class HermesAssistantPanel
             && Plugin.Settings.IncludeSelectedItemInAssistant.Value
             && ReferencesSelectedItem(prompt))
         {
-            return await BuildItemResponseAsync(prompt, selectedItem, selectedInstanceKey);
+            return await BuildResolvedItemResponseAsync(prompt, selectedItem, selectedInstanceKey, true);
         }
 
-        var resolved = await ResolveItemFromPromptAsync(prompt);
-        if (resolved is not null)
+        var loadoutTask = HermesApiClient.GetLoadoutSummaryAsync(
+            Plugin.Settings.CreateLoadoutRequestSettings());
+        var craftTask = HermesApiClient.GetCraftsAsync();
+        var hideoutTask = HermesApiClient.GetHideoutSummaryAsync();
+        var itemTask = ResolveItemFromPromptAsync(prompt);
+        await Task.WhenAll(loadoutTask, craftTask, hideoutTask, itemTask);
+
+        var loadout = loadoutTask.Result;
+        var crafts = craftTask.Result;
+        var hideout = hideoutTask.Result;
+        var itemResolution = itemTask.Result;
+        var matches = new List<DynamicEntityMatch>();
+
+        if (loadout.Found)
         {
-            return await BuildItemResponseAsync(prompt, resolved, null);
+            var questNames = loadout.RaidPlans
+                .SelectMany(plan => plan.Quests)
+                .Select(quest => quest.QuestName)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var questTop = HermesAssistantIntentEngine.RankCandidates(prompt, questNames, name => name).FirstOrDefault();
+            if (questTop is not null)
+            {
+                matches.Add(new DynamicEntityMatch
+                {
+                    Kind = HermesAssistantEntityKind.Quest,
+                    Name = questTop.Name,
+                    Score = questTop.Score
+                });
+            }
+
+            var mapAlias = HermesAssistantIntentEngine.ResolveMapAlias(
+                prompt,
+                loadout.RaidPlans.Select(plan => plan.MapName));
+            if (!string.IsNullOrWhiteSpace(mapAlias))
+            {
+                matches.Add(new DynamicEntityMatch
+                {
+                    Kind = HermesAssistantEntityKind.Map,
+                    Name = mapAlias,
+                    Score = 100
+                });
+            }
+            else
+            {
+                var mapTop = HermesAssistantIntentEngine.RankCandidates(
+                    prompt,
+                    loadout.RaidPlans,
+                    plan => plan.MapName).FirstOrDefault();
+                if (mapTop is not null)
+                {
+                    matches.Add(new DynamicEntityMatch
+                    {
+                        Kind = HermesAssistantEntityKind.Map,
+                        Name = mapTop.Name,
+                        Score = mapTop.Score
+                    });
+                }
+            }
+        }
+
+        if (crafts.Found)
+        {
+            var outputNames = crafts.Crafts
+                .Select(craft => craft.OutputName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var outputTop = HermesAssistantIntentEngine.RankCandidates(prompt, outputNames, name => name).FirstOrDefault();
+            if (outputTop is not null)
+            {
+                matches.Add(new DynamicEntityMatch
+                {
+                    Kind = HermesAssistantEntityKind.Craft,
+                    Name = outputTop.Name,
+                    Score = outputTop.Score
+                });
+            }
+
+            var stationNames = crafts.Crafts
+                .Select(craft => craft.StationName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var stationTop = HermesAssistantIntentEngine.RankCandidates(prompt, stationNames, name => name).FirstOrDefault();
+            if (stationTop is not null)
+            {
+                matches.Add(new DynamicEntityMatch
+                {
+                    Kind = HermesAssistantEntityKind.CraftingStation,
+                    Name = stationTop.Name,
+                    Score = stationTop.Score
+                });
+            }
+        }
+
+        if (hideout.Found)
+        {
+            var areaTop = HermesAssistantIntentEngine.RankCandidates(
+                prompt,
+                hideout.Areas,
+                area => area.Name,
+                area => GetHideoutAliases(area.Name)).FirstOrDefault();
+            if (areaTop is not null)
+            {
+                matches.Add(new DynamicEntityMatch
+                {
+                    Kind = HermesAssistantEntityKind.HideoutArea,
+                    Name = areaTop.Name,
+                    Score = areaTop.Score
+                });
+            }
+        }
+
+        if (itemResolution.Item is not null)
+        {
+            matches.Add(new DynamicEntityMatch
+            {
+                Kind = HermesAssistantEntityKind.Item,
+                Name = itemResolution.Item.Name,
+                Score = itemResolution.Score
+            });
+        }
+
+        var ranked = matches
+            .Where(match => HermesAssistantIntentEngine.IsConfident(match.Score))
+            .OrderByDescending(match => match.Score)
+            .ThenBy(match => DynamicEntityPriority(match.Kind))
+            .ToList();
+        if (ranked.Count > 1
+            && ranked[1].Score >= ranked[0].Score - 5
+            && (ranked[0].Kind != ranked[1].Kind
+                || !ranked[0].Name.Equals(ranked[1].Name, StringComparison.OrdinalIgnoreCase)))
+        {
+            return BuildAmbiguityResponse(
+                "subject",
+                ranked.Select(match => $"{FriendlyEntityKind(match.Kind)}: {match.Name}"),
+                "Assistant");
+        }
+
+        var best = ranked.FirstOrDefault();
+        if (best is not null)
+        {
+            switch (best.Kind)
+            {
+                case HermesAssistantEntityKind.Quest when loadout.Found:
+                    return BuildQuestPlanResponse(loadout, best.Name);
+                case HermesAssistantEntityKind.Map when loadout.Found:
+                {
+                    var plan = loadout.RaidPlans.FirstOrDefault(candidate =>
+                        candidate.MapName.Equals(best.Name, StringComparison.OrdinalIgnoreCase));
+                    if (plan is not null)
+                    {
+                        return BuildMapPlanResponse(plan);
+                    }
+                    break;
+                }
+                case HermesAssistantEntityKind.Craft when crafts.Found:
+                    return await BuildSpecificCraftResponseAsync(crafts, best.Name);
+                case HermesAssistantEntityKind.CraftingStation when crafts.Found:
+                    return BuildStationCraftResponse(crafts, best.Name, prompt);
+                case HermesAssistantEntityKind.HideoutArea when hideout.Found:
+                {
+                    var area = hideout.Areas.FirstOrDefault(candidate =>
+                        candidate.Name.Equals(best.Name, StringComparison.OrdinalIgnoreCase));
+                    if (area is not null)
+                    {
+                        return await BuildHideoutAreaResponseAsync(hideout, area);
+                    }
+                    break;
+                }
+                case HermesAssistantEntityKind.Item when itemResolution.Item is not null:
+                    return await BuildResolvedItemResponseAsync(prompt, itemResolution.Item, null, false);
+            }
+        }
+
+        if (itemResolution.IsAmbiguous)
+        {
+            return BuildAmbiguityResponse(
+                "item",
+                itemResolution.Alternatives.Select(item => item.Name),
+                "Item Search");
         }
 
         return new AssistantMessage(
             false,
-            "I could not map that question to a supported Alpha12.0 intent. Try asking about loadout readiness, the best raid, safe-to-sell stash items, ready crafts, hideout upgrades, or a selected item. Follow-up conversational context is planned for a later Alpha12 build.",
-            "LOCAL INTENT ENGINE",
+            "I could not confidently identify the requested item, quest, map, craft, crafting station, or hideout area. Use a more exact player-facing name, or ask a general question about loadout readiness, the best raid, stash surplus, crafts, or hideout upgrades.",
+            "LOCAL INTENT • ENTITY ENGINE",
             [
-                new AssistantAction("Open Loadout", "Loadout"),
-                new AssistantAction("Open Stash", "Stash"),
+                new AssistantAction("Open Item Search", "Item Search"),
+                new AssistantAction("Open Raid Planner", "Loadout/Raid Planner"),
                 new AssistantAction("Open Crafts", "Crafts")
             ]);
     }
 
-    private static async Task<HermesItemSummary?> ResolveItemFromPromptAsync(string prompt)
+    private static async Task<ItemResolution> ResolveItemFromPromptAsync(string prompt)
     {
-        var queries = BuildItemQueries(prompt).ToList();
+        var queries = BuildItemQueries(prompt)
+            .Where(query => query.Length >= Plugin.Settings.GetMinimumSearchCharacters())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var matches = new Dictionary<string, HermesItemSummary>(StringComparer.OrdinalIgnoreCase);
+        var exactMatches = new Dictionary<string, HermesItemSummary>(StringComparer.OrdinalIgnoreCase);
         foreach (var query in queries)
         {
-            if (query.Length < Plugin.Settings.GetMinimumSearchCharacters())
+            var response = await HermesApiClient.SearchAsync(query, 12);
+            foreach (var item in response.Results)
             {
-                continue;
-            }
-
-            var response = await HermesApiClient.SearchAsync(query, 8);
-            var exact = response.Results.FirstOrDefault(item =>
-                item.Name.Equals(query, StringComparison.OrdinalIgnoreCase)
-                || item.ShortName.Equals(query, StringComparison.OrdinalIgnoreCase));
-            if (exact is not null)
-            {
-                return exact;
-            }
-
-            if (response.Results.Count == 1)
-            {
-                return response.Results[0];
+                matches[item.ItemKey] = item;
+                if (item.Name.Equals(query, StringComparison.OrdinalIgnoreCase)
+                    || item.ShortName.Equals(query, StringComparison.OrdinalIgnoreCase))
+                {
+                    exactMatches[item.ItemKey] = item;
+                }
             }
         }
 
-        return null;
+        if (exactMatches.Count == 1)
+        {
+            var exact = exactMatches.Values.First();
+            return new ItemResolution
+            {
+                Item = exact,
+                Alternatives = [exact],
+                Score = 100
+            };
+        }
+
+        if (exactMatches.Count > 1)
+        {
+            return new ItemResolution
+            {
+                Alternatives = exactMatches.Values
+                    .Take(Plugin.Settings.GetMaximumAssistantAmbiguityChoices())
+                    .ToList(),
+                Score = 100,
+                IsAmbiguous = true
+            };
+        }
+
+        if (matches.Count == 0)
+        {
+            return new ItemResolution();
+        }
+
+        var candidates = HermesAssistantIntentEngine.RankCandidates(
+            prompt,
+            matches.Values,
+            item => item.Name,
+            item => string.IsNullOrWhiteSpace(item.ShortName) ? [] : [item.ShortName]);
+        var top = candidates.FirstOrDefault();
+        if (top is null)
+        {
+            return new ItemResolution();
+        }
+
+        var alternatives = candidates
+            .Take(Plugin.Settings.GetMaximumAssistantAmbiguityChoices())
+            .Select(candidate => candidate.Value)
+            .ToList();
+        var ambiguous = HermesAssistantIntentEngine.IsAmbiguous(candidates)
+                        || !HermesAssistantIntentEngine.IsConfident(top.Score);
+        return new ItemResolution
+        {
+            Item = ambiguous ? null : top.Value,
+            Alternatives = alternatives,
+            Score = top.Score,
+            IsAmbiguous = ambiguous && alternatives.Count > 1
+        };
     }
 
     private static IEnumerable<string> BuildItemQueries(string prompt)
@@ -921,13 +1640,21 @@ internal sealed class HermesAssistantPanel
         {
             yield return normalized;
         }
+
+        var subject = HermesAssistantIntentEngine.ExtractSubject(trimmed);
+        if (!string.IsNullOrWhiteSpace(subject)
+            && !subject.Equals(trimmed, StringComparison.OrdinalIgnoreCase)
+            && !subject.Equals(normalized, StringComparison.OrdinalIgnoreCase))
+        {
+            yield return subject;
+        }
     }
 
     private void AddWelcomeMessage()
     {
         AddMessage(new AssistantMessage(
             false,
-            "Alpha12.0 Assistant is online. Ask a question using the buttons below or type your own. Answers are built from current local HERMES data and never perform game actions.",
+            "Alpha12.1 Assistant is online. Ask a question using the buttons below or type your own. Answers are built from current local HERMES data and never perform game actions.",
             "LOCAL ASSISTANT",
             [
                 new AssistantAction("Open Loadout", "Loadout"),
@@ -957,6 +1684,58 @@ internal sealed class HermesAssistantPanel
         };
     }
 
+    private static AssistantMessage BuildAmbiguityResponse(
+        string entityType,
+        IEnumerable<string> names,
+        string tabName)
+    {
+        var choices = names
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(Plugin.Settings.GetMaximumAssistantAmbiguityChoices())
+            .ToList();
+        var builder = new StringBuilder();
+        builder.AppendLine($"I found more than one possible {entityType} match. Use one of these exact player-facing names:");
+        foreach (var choice in choices)
+        {
+            builder.AppendLine($"• {choice}");
+        }
+
+        return new AssistantMessage(
+            false,
+            builder.ToString().TrimEnd(),
+            "ENTITY AMBIGUITY",
+            [new AssistantAction($"Open {tabName}", tabName)]);
+    }
+
+    private static int DynamicEntityPriority(HermesAssistantEntityKind kind)
+    {
+        return kind switch
+        {
+            HermesAssistantEntityKind.Quest => 0,
+            HermesAssistantEntityKind.Map => 1,
+            HermesAssistantEntityKind.HideoutArea => 2,
+            HermesAssistantEntityKind.CraftingStation => 3,
+            HermesAssistantEntityKind.Craft => 4,
+            HermesAssistantEntityKind.Item => 5,
+            _ => 10
+        };
+    }
+
+    private static string FriendlyEntityKind(HermesAssistantEntityKind kind)
+    {
+        return kind switch
+        {
+            HermesAssistantEntityKind.Map => "Map",
+            HermesAssistantEntityKind.Quest => "Quest",
+            HermesAssistantEntityKind.Craft => "Craft",
+            HermesAssistantEntityKind.CraftingStation => "Crafting station",
+            HermesAssistantEntityKind.HideoutArea => "Hideout area",
+            HermesAssistantEntityKind.Item => "Item",
+            _ => "Subject"
+        };
+    }
+
     private static AssistantMessage Failure(string? message, string source)
     {
         return new AssistantMessage(
@@ -967,27 +1746,12 @@ internal sealed class HermesAssistantPanel
 
     private static bool ReferencesSelectedItem(string text)
     {
-        var normalized = $" {text.Trim().ToLowerInvariant()} ";
-        return ContainsAny(
-            normalized,
-            " this item ",
-            " selected item ",
-            " that item ",
-            " sell this ",
-            " buy this ",
-            " need this ",
-            " does this ",
-            " is this ",
-            " what is this ",
-            " it worth ",
-            " sell it ",
-            " buy it ",
-            " need it ");
+        return HermesAssistantIntentEngine.ReferencesSelectedItem(text);
     }
 
     private static bool ContainsAny(string text, params string[] values)
     {
-        return values.Any(value => text.Contains(value, StringComparison.OrdinalIgnoreCase));
+        return HermesAssistantIntentEngine.ContainsAny(text, values);
     }
 
     private static string YesNo(bool value) => value ? "Covered" : "Missing";

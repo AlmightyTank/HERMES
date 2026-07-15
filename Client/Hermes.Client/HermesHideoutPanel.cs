@@ -304,6 +304,11 @@ internal sealed class HermesHideoutPanel
             GUILayout.BeginHorizontal();
             GUILayout.Label($"{(requirement.IsMet ? "✓" : "✗")} {requirement.Name}");
             GUILayout.FlexibleSpace();
+            if (!string.IsNullOrWhiteSpace(requirement.ItemTemplateId)
+                && GUILayout.Button("Ask HERMES", GUILayout.Width(104f)))
+            {
+                Plugin.Instance?.OpenForPreviewItem(requirement.ItemTemplateId, "hideout requirement");
+            }
             GUILayout.Label(requirement.Type);
             GUILayout.EndHorizontal();
 
@@ -450,7 +455,15 @@ internal sealed class HermesHideoutPanel
             GUILayout.FlexibleSpace();
             GUILayout.Label(production.IsComplete ? "READY TO COLLECT" : production.Status);
             GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
             GUILayout.Label($"{production.OutputQuantity:N0} × {production.OutputName}");
+            GUILayout.FlexibleSpace();
+            if (!string.IsNullOrWhiteSpace(production.OutputTemplateId)
+                && GUILayout.Button("Ask HERMES", GUILayout.Width(104f)))
+            {
+                Plugin.Instance?.OpenForPreviewItem(production.OutputTemplateId, "hideout production output");
+            }
+            GUILayout.EndHorizontal();
             GUILayout.Label(production.IsComplete ? "Ready to collect" : $"Time remaining: {FormatDuration(production.SecondsRemaining)}");
             GUILayout.EndVertical();
         }
