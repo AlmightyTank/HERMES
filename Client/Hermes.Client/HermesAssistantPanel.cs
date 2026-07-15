@@ -51,8 +51,10 @@ internal sealed class HermesAssistantPanel
 
     private static readonly string[] SuggestedPrompts =
     [
-        "Am I ready for a raid?",
+        "What should I do next?",
         "What is the best raid for me right now?",
+        "Should I craft or raid?",
+        "How should I prepare for Ground Zero?",
         "What items can I safely sell?",
         "What crafts are ready now?",
         "What hideout upgrades need attention?"
@@ -61,6 +63,7 @@ internal sealed class HermesAssistantPanel
     private static GUIStyle? _messageStyle;
 
     private readonly List<AssistantMessage> _messages = [];
+    private readonly HermesAssistantConversationContext _conversationContext = new();
     private Vector2 _conversationScroll;
     private string _input = string.Empty;
     private string _status = "Ask HERMES about your current profile, loadout, quests, stash, hideout, crafts, or a selected item.";
@@ -68,6 +71,7 @@ internal sealed class HermesAssistantPanel
     private bool _loading;
     private int _requestVersion;
     private bool _scrollToBottom;
+    private string _profileContextToken = string.Empty;
 
     public HermesAssistantPanel()
     {
@@ -85,7 +89,7 @@ internal sealed class HermesAssistantPanel
             _status,
             _loading);
 
-        DrawContext(selectedItem);
+        DrawContext(selectedItem, selectedInstanceKey);
         GUILayout.Space(HermesUi.SmallSpace);
         DrawConversation(navigate);
         GUILayout.Space(HermesUi.StandardSpace);
@@ -96,6 +100,7 @@ internal sealed class HermesAssistantPanel
     {
         _requestVersion++;
         _messages.Clear();
+        _conversationContext.Reset();
         _input = string.Empty;
         _lastPrompt = string.Empty;
         _status = "Conversation cleared. Ask HERMES a new question.";
@@ -114,21 +119,49 @@ internal sealed class HermesAssistantPanel
         await SubmitPromptAsync(_lastPrompt, selectedItem, selectedInstanceKey, false);
     }
 
-    private void DrawContext(HermesItemSummary? selectedItem)
+    private void DrawContext(HermesItemSummary? selectedItem, string? selectedInstanceKey)
     {
-        GUILayout.BeginHorizontal(GUI.skin.box);
-        GUILayout.Label("CONTEXT", GUILayout.Width(76f));
-        if (selectedItem is not null && Plugin.Settings.IncludeSelectedItemInAssistant.Value)
+        _conversationContext.UpdateSelectedItem(selectedItem, selectedInstanceKey);
+        if (!Plugin.Settings.ShowAssistantConversationContext.Value)
         {
-            GUILayout.Label($"Selected item: {selectedItem.Name}", GUILayout.ExpandWidth(true));
+            return;
+        }
+
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("CONTEXT", GUILayout.Width(76f));
+        var current = _conversationContext.Current;
+        if (current is not null)
+        {
+            GUILayout.Label($"Conversation: {current.DisplayKind} — {current.Name}", GUILayout.ExpandWidth(true));
+            if (GUILayout.Button("Forget", GUILayout.Width(62f), GUILayout.Height(HermesUi.ToolbarHeight)))
+            {
+                _conversationContext.ForgetCurrent();
+                _status = "Forgot the current Assistant conversation subject.";
+            }
         }
         else
         {
-            GUILayout.Label("Current PMC profile and configured HERMES readiness/reservation settings", GUILayout.ExpandWidth(true));
+            GUILayout.Label("Conversation: no remembered subject", GUILayout.ExpandWidth(true));
         }
 
         GUILayout.Label("LOCAL • READ ONLY", GUILayout.Width(130f));
         GUILayout.EndHorizontal();
+
+        if (selectedItem is not null && Plugin.Settings.IncludeSelectedItemInAssistant.Value)
+        {
+            GUILayout.Label($"Selected item: {selectedItem.Name}");
+        }
+        else if (Plugin.Settings.EnableAssistantFollowUpContext.Value)
+        {
+            GUILayout.Label("Follow-up context is enabled for resolved items, quests, maps, crafts, stations, and hideout areas.");
+        }
+        else
+        {
+            GUILayout.Label("Follow-up context is disabled in BepInEx/F12.");
+        }
+
+        GUILayout.EndVertical();
     }
 
     private void DrawConversation(Action<string> navigate)
@@ -274,31 +307,74 @@ internal sealed class HermesAssistantPanel
         }
 
         var requestVersion = ++_requestVersion;
-        _lastPrompt = prompt;
         _loading = true;
         _status = $"Analyzing: {prompt}";
-        if (appendUserMessage)
-        {
-            AddMessage(new AssistantMessage(true, prompt, "QUESTION"));
-        }
 
         try
         {
-            var interpretation = HermesAssistantIntentEngine.Interpret(
-                prompt,
-                selectedItem is not null && Plugin.Settings.IncludeSelectedItemInAssistant.Value);
-            var response = await BuildResponseAsync(
-                interpretation,
-                prompt,
-                selectedItem,
-                selectedInstanceKey);
+            await EnsureProfileContextAsync();
             if (requestVersion != _requestVersion)
             {
                 return;
             }
 
+            _lastPrompt = prompt;
+            if (appendUserMessage)
+            {
+                AddMessage(new AssistantMessage(true, prompt, "QUESTION"));
+            }
+
+            if (_conversationContext.TryHandleCommand(prompt, out var contextResponse))
+            {
+                AddMessage(new AssistantMessage(false, contextResponse, "CONVERSATION CONTEXT"));
+                _status = "Updated local conversation context.";
+                return;
+            }
+
+            var contextResolution = _conversationContext.Resolve(
+                prompt,
+                selectedItem,
+                selectedInstanceKey);
+            var effectivePrompt = contextResolution.Prompt;
+            var contextOwnsItemSelection = contextResolution.UsedContext
+                                            && contextResolution.Subject?.Kind == HermesAssistantEntityKind.Item;
+            var effectiveSelectedItem = contextOwnsItemSelection
+                ? contextResolution.SelectedItem
+                : contextResolution.SelectedItem ?? selectedItem;
+            var effectiveInstanceKey = contextOwnsItemSelection
+                ? contextResolution.SelectedInstanceKey
+                : contextResolution.SelectedInstanceKey ?? selectedInstanceKey;
+            var interpretation = HermesAssistantIntentEngine.Interpret(
+                effectivePrompt,
+                effectiveSelectedItem is not null && Plugin.Settings.IncludeSelectedItemInAssistant.Value);
+            var response = await BuildResponseAsync(
+                interpretation,
+                effectivePrompt,
+                effectiveSelectedItem,
+                effectiveInstanceKey);
+            if (requestVersion != _requestVersion)
+            {
+                return;
+            }
+
+            _conversationContext.RememberResponse(
+                response.Source,
+                response.Text,
+                effectiveSelectedItem,
+                effectiveInstanceKey);
+            if (contextResolution.UsedContext)
+            {
+                response = new AssistantMessage(
+                    response.IsUser,
+                    response.Text,
+                    response.Source + " • FOLLOW-UP",
+                    response.Actions);
+            }
+
             AddMessage(response);
-            _status = $"Answered locally using {response.Source.ToLowerInvariant()} data.";
+            _status = contextResolution.UsedContext && contextResolution.Subject is not null
+                ? $"Answered using remembered {contextResolution.Subject.DisplayKind.ToLowerInvariant()} context: {contextResolution.Subject.Name}."
+                : $"Answered locally using {response.Source.ToLowerInvariant()} data.";
         }
         catch (Exception ex)
         {
@@ -322,6 +398,54 @@ internal sealed class HermesAssistantPanel
         }
     }
 
+    private async Task EnsureProfileContextAsync()
+    {
+        if (!Plugin.Settings.ResetAssistantContextOnProfileChange.Value)
+        {
+            return;
+        }
+
+        HermesProfileContextResponse response;
+        try
+        {
+            response = await HermesApiClient.GetProfileContextAsync();
+        }
+        catch (Exception ex)
+        {
+            if (Plugin.Settings.DetailedLogging.Value)
+            {
+                Plugin.Log.LogWarning($"[HERMES Assistant] Profile context check failed: {ex.Message}");
+            }
+            return;
+        }
+
+        if (!response.Found || string.IsNullOrWhiteSpace(response.ContextToken))
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_profileContextToken))
+        {
+            _profileContextToken = response.ContextToken;
+            return;
+        }
+
+        if (_profileContextToken.Equals(response.ContextToken, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _profileContextToken = response.ContextToken;
+        _conversationContext.Reset();
+        _messages.Clear();
+        _lastPrompt = string.Empty;
+        AddWelcomeMessage();
+        AddMessage(new AssistantMessage(
+            false,
+            "The active PMC profile changed. HERMES cleared the previous conversation subject so follow-up questions cannot use another profile's context.",
+            "CONTEXT RESET"));
+    }
+
     private static async Task<AssistantMessage> BuildResponseAsync(
         HermesAssistantInterpretation interpretation,
         string prompt,
@@ -331,6 +455,7 @@ internal sealed class HermesAssistantPanel
         return interpretation.Intent switch
         {
             HermesAssistantIntent.Help => BuildHelpResponse(),
+            HermesAssistantIntent.CrossSystem => await BuildCrossSystemResponseAsync(prompt),
             HermesAssistantIntent.Loadout => await BuildLoadoutResponseAsync(prompt),
             HermesAssistantIntent.RaidPlanner => await BuildRaidPlannerResponseAsync(prompt),
             HermesAssistantIntent.Stash => await BuildStashResponseAsync(),
@@ -352,7 +477,7 @@ internal sealed class HermesAssistantPanel
             "• Hideout upgrades, missing materials, active production, and available crafts",
             "• Selected-item trader, flea, quest, hideout, and crafting use",
             string.Empty,
-            "Alpha12.1 uses deterministic intent and entity matching and current HERMES data. It does not buy, sell, insure, equip, move, craft, or complete anything."
+            "Alpha12.3 also remembers resolved items, quests, maps, crafts, stations, and hideout areas for follow-up questions. You can ask \"why?\", \"what key?\", \"where do I use it?\", or choose an ambiguity result with \"the second one\". It does not buy, sell, insure, equip, move, craft, or complete anything."
         ]);
 
         return new AssistantMessage(
@@ -362,6 +487,227 @@ internal sealed class HermesAssistantPanel
             [
                 new AssistantAction("Open Item Search", "Item Search"),
                 new AssistantAction("Open Loadout", "Loadout")
+            ]);
+    }
+
+
+    private static async Task<AssistantMessage> BuildCrossSystemResponseAsync(string prompt)
+    {
+        if (!Plugin.Settings.EnableAssistantCrossSystemReasoning.Value)
+        {
+            return new AssistantMessage(
+                false,
+                "Cross-system reasoning is disabled in BepInEx/F12. Enable Assistant → Enable cross-system reasoning to rank combined next steps.",
+                "CROSS-SYSTEM REASONING");
+        }
+
+        var loadoutTask = HermesApiClient.GetLoadoutSummaryAsync(
+            Plugin.Settings.CreateLoadoutRequestSettings());
+        var stashTask = HermesApiClient.GetStashSummaryAsync(
+            Plugin.Settings.CreateStashRequestSettings());
+        var craftsTask = HermesApiClient.GetCraftsAsync();
+        var hideoutTask = HermesApiClient.GetHideoutSummaryAsync();
+        await Task.WhenAll(loadoutTask, stashTask, craftsTask, hideoutTask);
+
+        var loadout = await loadoutTask;
+        var stash = await stashTask;
+        var crafts = await craftsTask;
+        var hideout = await hideoutTask;
+        if (!loadout.Found && !stash.Found && !crafts.Found && !hideout.Found)
+        {
+            return new AssistantMessage(
+                false,
+                "HERMES could not read any of the current loadout, Raid Planner, stash, craft, or hideout snapshots.",
+                "CROSS-SYSTEM REASONING");
+        }
+
+        var mapName = loadout.Found
+            ? HermesAssistantIntentEngine.ResolveMapAlias(
+                prompt,
+                loadout.RaidPlans.Select(plan => plan.MapName))
+            : null;
+        if (!string.IsNullOrWhiteSpace(mapName))
+        {
+            var plan = loadout.RaidPlans.FirstOrDefault(candidate =>
+                candidate.MapName.Equals(mapName, StringComparison.OrdinalIgnoreCase));
+            if (plan is not null)
+            {
+                return BuildMapPreparationResponse(loadout, plan);
+            }
+        }
+
+        if (ContainsAny(prompt, "craft or raid", "should i craft or raid"))
+        {
+            return BuildCraftOrRaidResponse(loadout, crafts);
+        }
+
+        var recommendations = HermesAssistantReasoningEngine.BuildRecommendations(
+            loadout,
+            stash,
+            crafts,
+            hideout,
+            Plugin.Settings.PreferPreparedRaidRecommendations.Value,
+            Plugin.Settings.IncludeEconomicAssistantRecommendations.Value,
+            Plugin.Settings.GetMaximumAssistantRecommendations());
+        var builder = new StringBuilder();
+        builder.AppendLine("Ranked next steps:");
+        if (recommendations.Count == 0)
+        {
+            builder.AppendLine("• No actionable recommendation was found in the current snapshots. Open the individual tabs to inspect their complete data.");
+        }
+        else
+        {
+            for (var index = 0; index < recommendations.Count; index++)
+            {
+                var recommendation = recommendations[index];
+                builder.AppendLine($"{index + 1}. [{recommendation.Category}] {recommendation.Title}");
+                builder.AppendLine($"   Why: {recommendation.Detail}");
+            }
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("Snapshot used:");
+        builder.AppendLine($"• Loadout: {(loadout.Found ? $"{loadout.Readiness} {loadout.ReadinessScore}/100" : "unavailable")}");
+        builder.AppendLine($"• Raid plans: {(loadout.Found ? loadout.RaidPlans.Count(plan => plan.ActiveQuestCount > 0).ToString("N0") : "unavailable")}");
+        builder.AppendLine($"• Stash surplus: {(stash.Found ? FormatCount(stash.PotentiallySellQuantity) : "unavailable")}");
+        builder.AppendLine($"• Ready crafts: {(crafts.Found ? crafts.Crafts.Count(craft => craft.CanStartNow).ToString("N0") : "unavailable")}");
+        builder.AppendLine($"• Ready hideout upgrades: {(hideout.Found ? hideout.ReadyAreaCount.ToString("N0") : "unavailable")}");
+
+        var actions = recommendations
+            .Select(recommendation => new AssistantAction($"Open {recommendation.Category}", recommendation.TabName))
+            .GroupBy(action => action.TabName, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .Take(4)
+            .ToList();
+        if (actions.Count == 0)
+        {
+            actions.Add(new AssistantAction("Open Loadout", "Loadout"));
+        }
+
+        return new AssistantMessage(
+            false,
+            builder.ToString().TrimEnd(),
+            "CROSS-SYSTEM REASONING",
+            actions);
+    }
+
+    private static AssistantMessage BuildMapPreparationResponse(
+        HermesLoadoutSummaryResponse loadout,
+        HermesRaidPlanSummary plan)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"Preparation plan: {plan.MapName}");
+        builder.AppendLine($"Raid plan: {plan.Status} • {plan.ActiveQuestCount:N0} active quest(s) • {Math.Max(0, plan.ObjectiveCount - plan.CompletedObjectiveCount):N0} incomplete objective(s)");
+        builder.AppendLine($"Current loadout: {loadout.Readiness} ({loadout.ReadinessScore}/100)");
+        AppendPlanRequirements(builder, plan);
+
+        var warnings = loadout.Warnings
+            .OrderBy(warning => SeverityRank(warning.Severity))
+            .ThenBy(warning => warning.Category, StringComparer.OrdinalIgnoreCase)
+            .Take(6)
+            .ToList();
+        builder.AppendLine();
+        builder.AppendLine("Before deployment:");
+        if (warnings.Count == 0 && plan.MissingRequirementCount == 0)
+        {
+            builder.AppendLine("• No loadout or encoded pre-raid requirement issue was detected with the current F12 thresholds.");
+        }
+        else
+        {
+            foreach (var warning in warnings)
+            {
+                builder.AppendLine($"• [{warning.Category}] {warning.Message}");
+            }
+        }
+
+        var acquire = plan.CombinedRequirements
+            .Where(requirement => requirement.AcquireInRaid && !requirement.IsSatisfied)
+            .ToList();
+        if (acquire.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("Acquire during raid:");
+            foreach (var requirement in acquire.Take(6))
+            {
+                builder.AppendLine($"• {requirement.RequiredEquipment}: {requirement.Note}");
+            }
+        }
+
+        return new AssistantMessage(
+            false,
+            builder.ToString().TrimEnd(),
+            $"CROSS-SYSTEM • {plan.MapName.ToUpperInvariant()}",
+            [
+                new AssistantAction("Open Raid Planner", "Loadout/Raid Planner"),
+                new AssistantAction("Open Loadout", "Loadout")
+            ]);
+    }
+
+    private static AssistantMessage BuildCraftOrRaidResponse(
+        HermesLoadoutSummaryResponse loadout,
+        HermesCraftsResponse crafts)
+    {
+        var bestRaid = loadout.Found
+            ? HermesAssistantReasoningEngine.RankRaids(
+                    loadout,
+                    Plugin.Settings.PreferPreparedRaidRecommendations.Value)
+                .FirstOrDefault()
+            : null;
+        var bestCraft = crafts.Found
+            ? crafts.Crafts
+                .Where(craft => craft.CanStartNow && !craft.IsActive && !craft.IsComplete)
+                .OrderByDescending(craft => craft.EstimatedEconomicProfitPerHour)
+                .ThenByDescending(craft => craft.EstimatedEconomicProfit)
+                .FirstOrDefault()
+            : null;
+
+        var builder = new StringBuilder();
+        builder.AppendLine("Craft versus raid:");
+        if (bestRaid is not null)
+        {
+            builder.AppendLine($"• Raid: {bestRaid.Plan.MapName} — {bestRaid.Plan.Status}; {string.Join("; ", bestRaid.Reasons)}.");
+        }
+        else
+        {
+            builder.AppendLine("• Raid: no active map-specific quest plan is available.");
+        }
+
+        if (bestCraft is not null)
+        {
+            builder.AppendLine($"• Craft: {bestCraft.OutputQuantity:N0} × {bestCraft.OutputName} at {bestCraft.StationName} — ready now, {FormatDuration(bestCraft.DurationSeconds)}, estimated profit ₽{bestCraft.EstimatedEconomicProfit:N0} (₽{bestCraft.EstimatedEconomicProfitPerHour:N0}/h).");
+        }
+        else
+        {
+            builder.AppendLine("• Craft: no ready recipe matches the current state.");
+        }
+
+        builder.AppendLine();
+        if (loadout.Found && loadout.CriticalCount > 0)
+        {
+            builder.AppendLine("Recommendation: fix the critical loadout findings first. A ready craft can run while you correct the loadout.");
+        }
+        else if (bestRaid is not null && bestRaid.Plan.MissingRequirementCount == 0)
+        {
+            builder.AppendLine(bestCraft is not null
+                ? $"Recommendation: start {bestCraft.OutputName}, then run {bestRaid.Plan.MapName} while the station works."
+                : $"Recommendation: run {bestRaid.Plan.MapName}; it is the strongest current quest plan and has no missing encoded pre-raid requirement.");
+        }
+        else if (bestCraft is not null)
+        {
+            builder.AppendLine($"Recommendation: start {bestCraft.OutputName} while resolving the missing raid requirements.");
+        }
+        else
+        {
+            builder.AppendLine("Recommendation: inspect Raid Planner and Crafts directly; neither side currently has a clear ready action.");
+        }
+
+        return new AssistantMessage(
+            false,
+            builder.ToString().TrimEnd(),
+            "CROSS-SYSTEM • CRAFT OR RAID",
+            [
+                new AssistantAction("Open Raid Planner", "Loadout/Raid Planner"),
+                new AssistantAction("Open Crafts", "Crafts")
             ]);
     }
 
@@ -535,25 +881,25 @@ internal sealed class HermesAssistantPanel
             return BuildMapPlanResponse(selectedMap);
         }
 
-        var rankedPlans = plans
-            .OrderBy(plan => plan.MissingRequirementCount)
-            .ThenByDescending(plan => plan.ActiveQuestCount)
-            .ThenByDescending(plan => plan.ObjectiveCount - plan.CompletedObjectiveCount)
-            .ThenBy(plan => plan.MapName, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        var best = rankedPlans[0];
+        var rankedPlans = HermesAssistantReasoningEngine.RankRaids(
+            response,
+            Plugin.Settings.PreferPreparedRaidRecommendations.Value);
+        var bestRanking = rankedPlans[0];
+        var best = bestRanking.Plan;
         var builder = new StringBuilder();
         builder.AppendLine($"Recommended map: {best.MapName}");
         builder.AppendLine($"Plan status: {best.Status}");
         builder.AppendLine($"Active quests: {best.ActiveQuestCount:N0}");
         builder.AppendLine($"Incomplete objectives: {Math.Max(0, best.ObjectiveCount - best.CompletedObjectiveCount):N0}");
         builder.AppendLine($"Missing pre-raid requirements: {best.MissingRequirementCount:N0}");
+        builder.AppendLine($"Why: {string.Join("; ", bestRanking.Reasons)}.");
         AppendPlanRequirements(builder, best);
 
         builder.AppendLine();
         builder.AppendLine("Other strong options:");
-        foreach (var plan in rankedPlans.Skip(1).Take(3))
+        foreach (var ranking in rankedPlans.Skip(1).Take(3))
         {
+            var plan = ranking.Plan;
             builder.AppendLine($"• {plan.MapName}: {plan.ActiveQuestCount:N0} quest(s), {Math.Max(0, plan.ObjectiveCount - plan.CompletedObjectiveCount):N0} incomplete objective(s), {plan.MissingRequirementCount:N0} missing requirement(s)");
         }
 
@@ -1654,7 +2000,7 @@ internal sealed class HermesAssistantPanel
     {
         AddMessage(new AssistantMessage(
             false,
-            "Alpha12.1 Assistant is online. Ask a question using the buttons below or type your own. Answers are built from current local HERMES data and never perform game actions.",
+            "Alpha12.3 Assistant is online with follow-up context and cross-system reasoning. Ask a question, then continue with phrases such as \"why?\", \"what key?\", or \"where do I use it?\" Answers are built from current local HERMES data and never perform game actions.",
             "LOCAL ASSISTANT",
             [
                 new AssistantAction("Open Loadout", "Loadout"),

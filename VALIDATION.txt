@@ -1,14 +1,25 @@
-HERMES 0.1.0-alpha12.1.1 validation
+HERMES 0.1.0-alpha12.3 validation
 
-C# syntax: PASS (33 files)
-Project XML: PASS (3 files)
-Embedded Ask HERMES PNG: PASS (128x128 RGBA with transparency)
-Context-menu sprite wiring: PASS
-DynamicInteractionClass icon parameter: PASS (UnityEngine.Sprite)
-Unity ImageConversion.LoadImage API: PASS
-ImageConversionModule project reference: PASS
-Version consistency: PASS
-Clean source tree: PASS
-Read-only behavior: unchanged
+C# source files: 35 passed lexical string/comment/delimiter validation
+Project XML files: 3 passed
+F12 ConfigEntry declarations: 115
+F12 config.Bind assignments: 115
+Shared client/server model property-order pairs: 53 passed
+Profile-context model field parity: passed
+Profile-context route and client API wiring: passed
+Opaque SHA-256 profile token generation: passed
+Follow-up prompt expansion wiring: passed
+Recent subject memory and retention bound: passed
+Ambiguity ordinal-choice resolution wiring: passed
+Conversation-context commands: passed
+Profile-change context invalidation wiring: passed
+Selected-item versus remembered-item precedence check: passed
+Cross-system and entity-recognition regression wiring: passed
+Read-only client transport audit: passed
+Capability metadata: passed
+Version consistency: passed
+Build-artifact exclusion: passed
+Item Search multiline string correction: passed
 
-Local Build -> Rebuild Solution is still required against C:\RealSPT.
+Compilation note:
+The container does not provide dotnet/MSBuild or a C# compiler. Rebuild HERMES.sln locally against SPT 4.0.13 for authoritative compile and runtime validation.

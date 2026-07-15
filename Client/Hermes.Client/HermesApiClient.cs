@@ -21,6 +21,17 @@ internal static class HermesApiClient
     private static TimeSpan LongRequestTimeout => TimeSpan.FromSeconds(
         Plugin.Settings.GetLongRequestTimeoutSeconds());
 
+    public static Task<HermesProfileContextResponse> GetProfileContextAsync()
+    {
+        return GetDataAsync(
+            "/hermes/profile/context",
+            () => new HermesProfileContextResponse
+            {
+                Found = false,
+                Message = "HERMES could not resolve the active PMC profile context."
+            });
+    }
+
     public static Task<HermesSearchResponse> SearchAsync(string query, int maximumResults)
     {
         var boundedMaximum = Math.Clamp(maximumResults, 5, 50);

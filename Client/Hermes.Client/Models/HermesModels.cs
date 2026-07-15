@@ -1,6 +1,13 @@
 namespace Hermes.Client.Models;
 
 
+public sealed class HermesProfileContextResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public string ContextToken { get; set; } = string.Empty;
+}
+
 public sealed class HermesCacheStatusResponse
 {
     public bool Found { get; set; }

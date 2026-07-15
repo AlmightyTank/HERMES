@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using Hermes.Server.Models;
 using Hermes.Server.Services;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.DI;
@@ -19,6 +22,15 @@ public sealed class HermesDynamicRouter(
     : DynamicRouter(
         jsonUtil,
         [
+            new RouteAction(
+                "/hermes/profile/context",
+                (_, _, sessionId, _) =>
+                {
+                    var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"HERMES:PROFILE:{sessionId}"));
+                    var token = Convert.ToHexString(bytes).ToLowerInvariant();
+                    var response = new HermesProfileContextResponse(true, null, token);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
             new RouteAction(
                 "/hermes/search/",
                 (url, _, _, _) =>

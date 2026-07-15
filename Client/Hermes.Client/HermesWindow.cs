@@ -273,7 +273,7 @@ internal sealed class HermesWindow
                 WindowId,
                 _windowRect,
                 DrawWindow,
-                "HERMES 0.1.0-alpha12.1.1 — Local Intent Engine");
+                "HERMES 0.1.0-alpha12.3 — Follow-Up Context");
         }
         finally
         {
@@ -1379,7 +1379,7 @@ internal sealed class HermesWindow
         var requests = HermesApiClient.GetDiagnosticsSnapshot();
         var lines = new List<string>
         {
-            "HERMES 0.1.0-alpha12.1.1 diagnostics",
+            "HERMES 0.1.0-alpha12.3 diagnostics",
             $"Active tab: {_activeTab}",
             $"Client requests: started={requests.Started}, completed={requests.Completed}, failed={requests.Failed}, active={requests.Active}",
             $"Failures: timeout={requests.TimedOut}, transport={requests.TransportFailures}, invalid-response={requests.InvalidResponses}",

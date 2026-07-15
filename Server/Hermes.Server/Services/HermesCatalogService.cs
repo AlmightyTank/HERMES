@@ -50,7 +50,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
 
         return new HermesStatusResponse(
             "HERMES",
-            "0.1.0-alpha12.1.1",
+            "0.1.0-alpha12.3",
             "4.0.13",
             true,
             [
@@ -208,7 +208,19 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "assistant-specific-quest-and-map-answers",
                 "assistant-specific-craft-blocker-explanations",
                 "assistant-specific-hideout-area-explanations",
-                "configurable-assistant-entity-confidence"
+                "configurable-assistant-entity-confidence",
+                "assistant-cross-system-reasoning",
+                "ranked-next-step-recommendations",
+                "quest-density-and-readiness-raid-ranking",
+                "map-specific-preparation-explanations",
+                "craft-versus-raid-comparison",
+                "configurable-economic-assistant-recommendations",
+                "assistant-follow-up-conversation-context",
+                "assistant-pronoun-and-shorthand-resolution",
+                "assistant-recent-subject-memory",
+                "assistant-ambiguity-ordinal-selection",
+                "assistant-profile-context-invalidation",
+                "configurable-assistant-context-memory"
             ]);
     }
 

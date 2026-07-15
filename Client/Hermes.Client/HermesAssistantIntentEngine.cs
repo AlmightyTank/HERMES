@@ -5,6 +5,7 @@ namespace Hermes.Client;
 internal enum HermesAssistantIntent
 {
     Help,
+    CrossSystem,
     Loadout,
     RaidPlanner,
     Stash,
@@ -103,6 +104,25 @@ internal static class HermesAssistantIntentEngine
         if (ContainsAny(normalized, "what can you do", "help", "commands", "capabilities"))
         {
             return new HermesAssistantInterpretation(HermesAssistantIntent.Help, referencesSelectedItem, normalized, subject);
+        }
+
+        if (ContainsAny(
+                normalized,
+                "what should i do next",
+                "what do i do next",
+                "what is most important",
+                "what's most important",
+                "prioritize my next steps",
+                "prioritize my tasks",
+                "next best step",
+                "best use of my time",
+                "should i craft or raid",
+                "craft or raid",
+                "how should i prepare",
+                "prepare me for",
+                "what should i fix first"))
+        {
+            return new HermesAssistantInterpretation(HermesAssistantIntent.CrossSystem, referencesSelectedItem, normalized, subject);
         }
 
         if (referencesSelectedItem)

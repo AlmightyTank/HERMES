@@ -7,6 +7,11 @@ public sealed record HermesStatusResponse(
     bool ReadOnly,
     string[] Capabilities);
 
+public sealed record HermesProfileContextResponse(
+    bool Found,
+    string? Message,
+    string ContextToken);
+
 
 public sealed record HermesCacheStatusResponse(
     bool Found,

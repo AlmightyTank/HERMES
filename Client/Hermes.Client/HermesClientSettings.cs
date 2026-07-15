@@ -26,6 +26,14 @@ internal sealed class HermesClientSettings
     public ConfigEntry<bool> EnableAssistantFuzzyEntityMatching { get; private set; } = null!;
     public ConfigEntry<int> AssistantEntityConfidencePercent { get; private set; } = null!;
     public ConfigEntry<int> MaximumAssistantAmbiguityChoices { get; private set; } = null!;
+    public ConfigEntry<bool> EnableAssistantCrossSystemReasoning { get; private set; } = null!;
+    public ConfigEntry<int> MaximumAssistantRecommendations { get; private set; } = null!;
+    public ConfigEntry<bool> PreferPreparedRaidRecommendations { get; private set; } = null!;
+    public ConfigEntry<bool> IncludeEconomicAssistantRecommendations { get; private set; } = null!;
+    public ConfigEntry<bool> EnableAssistantFollowUpContext { get; private set; } = null!;
+    public ConfigEntry<bool> ShowAssistantConversationContext { get; private set; } = null!;
+    public ConfigEntry<int> MaximumAssistantContextSubjects { get; private set; } = null!;
+    public ConfigEntry<bool> ResetAssistantContextOnProfileChange { get; private set; } = null!;
     public ConfigEntry<int> MaximumAssistantMessages { get; private set; } = null!;
 
     public ConfigEntry<int> WindowWidth { get; private set; } = null!;
@@ -211,6 +219,46 @@ internal sealed class HermesClientSettings
             "Maximum ambiguity choices",
             5,
             "Maximum possible item, quest, craft, map, station, or hideout-area matches listed when HERMES needs clarification. Range: 2-10.");
+        EnableAssistantCrossSystemReasoning = config.Bind(
+            "Assistant",
+            "Enable cross-system reasoning",
+            true,
+            "Allows Alpha12.2 to rank next steps using loadout, Raid Planner, stash, crafts, and hideout data together.");
+        MaximumAssistantRecommendations = config.Bind(
+            "Assistant",
+            "Maximum ranked recommendations",
+            5,
+            "Maximum cross-system next steps shown in one Assistant answer. Range: 3-10.");
+        PreferPreparedRaidRecommendations = config.Bind(
+            "Assistant",
+            "Prefer prepared raid plans",
+            true,
+            "Gives prepared maps an additional ranking bonus when HERMES recommends the best current raid.");
+        IncludeEconomicAssistantRecommendations = config.Bind(
+            "Assistant",
+            "Include economic recommendations",
+            true,
+            "Allows cross-system answers to recommend profitable ready crafts, safe-to-sell surplus, and stash cleanup opportunities.");
+        EnableAssistantFollowUpContext = config.Bind(
+            "Assistant",
+            "Enable follow-up conversation context",
+            true,
+            "Allows Alpha12.3 to remember resolved items, quests, maps, crafts, stations, and hideout areas for follow-up questions such as 'where do I use it?' or 'what key?'.");
+        ShowAssistantConversationContext = config.Bind(
+            "Assistant",
+            "Show conversation context",
+            true,
+            "Shows the remembered conversation subject and selected-item context above the Assistant conversation.");
+        MaximumAssistantContextSubjects = config.Bind(
+            "Assistant",
+            "Maximum remembered subjects",
+            6,
+            "Maximum recent item, quest, map, craft, station, and hideout-area subjects retained for the current local conversation. Range: 1-12.");
+        ResetAssistantContextOnProfileChange = config.Bind(
+            "Assistant",
+            "Reset context when PMC profile changes",
+            true,
+            "Clears the local Assistant conversation and remembered subjects when the active SPT profile token changes, preventing follow-ups from using a previous PMC's context.");
         MaximumAssistantMessages = config.Bind(
             "Assistant",
             "Maximum conversation messages",
@@ -727,6 +775,8 @@ internal sealed class HermesClientSettings
     public int GetMaximumAssistantMessages() => Math.Clamp(MaximumAssistantMessages.Value, 10, 200);
     public int GetAssistantEntityConfidencePercent() => Math.Clamp(AssistantEntityConfidencePercent.Value, 40, 100);
     public int GetMaximumAssistantAmbiguityChoices() => Math.Clamp(MaximumAssistantAmbiguityChoices.Value, 2, 10);
+    public int GetMaximumAssistantRecommendations() => Math.Clamp(MaximumAssistantRecommendations.Value, 3, 10);
+    public int GetMaximumAssistantContextSubjects() => Math.Clamp(MaximumAssistantContextSubjects.Value, 1, 12);
     public int GetWindowWidth() => Math.Clamp(WindowWidth.Value, 900, 1800);
     public int GetWindowHeight() => Math.Clamp(WindowHeight.Value, 600, 1100);
     public float GetWindowOpacity() => Math.Clamp(WindowOpacity.Value, 0.55f, 1f);
