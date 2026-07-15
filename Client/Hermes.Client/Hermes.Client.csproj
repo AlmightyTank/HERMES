@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0-alpha12.1</Version>
+    <Version>0.1.0-alpha12.1.1</Version>
     <OutputType>Library</OutputType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDependencyFile>false</GenerateDependencyFile>
@@ -52,6 +52,10 @@
       <HintPath>$(EftManaged)\UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.ImageConversionModule">
+      <HintPath>$(EftManaged)\UnityEngine.ImageConversionModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.TextRenderingModule">
       <HintPath>$(EftManaged)\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
@@ -60,6 +64,10 @@
       <HintPath>$(EftManaged)\UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\ask_hermes.png" LogicalName="Hermes.Client.Assets.ask_hermes.png" />
   </ItemGroup>
 
   <Target Name="ValidateSptClientReferences" BeforeTargets="ResolveReferences" Condition="'$(DesignTimeBuild)' != 'true'">
@@ -79,6 +87,8 @@
            Text="Missing UnityEngine.CoreModule.dll at '$(EftManaged)\UnityEngine.CoreModule.dll'." />
     <Error Condition="!Exists('$(EftManaged)\UnityEngine.IMGUIModule.dll')"
            Text="Missing UnityEngine.IMGUIModule.dll at '$(EftManaged)\UnityEngine.IMGUIModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.ImageConversionModule.dll')"
+           Text="Missing UnityEngine.ImageConversionModule.dll at '$(EftManaged)\UnityEngine.ImageConversionModule.dll'." />
     <Error Condition="!Exists('$(EftManaged)\UnityEngine.TextRenderingModule.dll')"
            Text="Missing UnityEngine.TextRenderingModule.dll at '$(EftManaged)\UnityEngine.TextRenderingModule.dll'." />
     <Error Condition="!Exists('$(EftManaged)\UnityEngine.InputLegacyModule.dll')"

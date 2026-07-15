@@ -84,7 +84,7 @@ internal sealed class AskHermesContextMenuPatch : ModulePatch
                 InteractionDictionaryKey,
                 "Ask HERMES",
                 action,
-                null);
+                HermesIconService.AskHermesIcon);
         }
         catch (Exception ex)
         {

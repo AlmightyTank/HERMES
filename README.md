@@ -1,48 +1,12 @@
-# HERMES 0.1.0-alpha12.1
+# HERMES 0.1.0-alpha12.1.1
 
-## Alpha12.1 — Local intent and entity recognition
+## Ask HERMES context-menu icon
 
-Alpha12.1 expands the local Assistant from broad topic matching into a deterministic intent-and-entity engine. It remains fully local, profile-backed, read-only, and does not require or contact an external AI service.
-
-### Recognized entities
-
-HERMES can now resolve player-facing names for:
-
-- Active quests present in the current Raid Planner snapshot.
-- Raid maps and common map aliases such as `Ground Zero`, `GroundZero`, and `GZ`.
-- Craft outputs and crafting stations.
-- Hideout areas and common names such as `Medstation` and `Intel Center`.
-- Catalog items and item short names.
-- The exact currently selected item when the question says `this item`, `that item`, or `it`.
-
-### Specific deterministic answers
-
-Examples now supported include:
-
-- `What do I need for Saving the Mole?`
-- `What quests do I have on Ground Zero?`
-- `Am I ready for Customs?`
-- `Why can't I craft Salewa?`
-- `What can I craft at Workbench?`
-- `What does Medstation need?`
-- `Do I need Salewa?`
-- `Where should I sell the selected item?`
-
-Quest answers show localized objectives, map, trader, completion state, missing pre-raid equipment, inferred route keys, and acquire-during-raid requirements. Craft answers show station level, quest locks, missing ingredients, acquisition gaps, duration, and configured profitability. Hideout-area answers show current/target level, progression or material blockers, missing quantities, source estimates, construction time, and generator state when relevant.
-
-### Ambiguity handling
-
-When several entities are equally plausible, HERMES no longer silently selects the first result. It lists a bounded set of exact player-facing names and asks the player to use one of them. This applies across items, quests, maps, recipes, crafting stations, and hideout areas.
-
-### New BepInEx/F12 settings
-
-Under **Assistant**:
-
-- **Enable fuzzy entity matching** — tolerates minor spelling differences.
-- **Entity confidence percent** — minimum confidence before HERMES accepts a named subject, from 40 to 100.
-- **Maximum ambiguity choices** — number of possible matches shown, from 2 to 10.
-
-Persistent multi-message follow-up context is still reserved for Alpha12.3. Alpha12.1 interprets each new question independently, while selected-item context remains available.
+- Adds the winged-feather HERMES icon to the EFT `Ask HERMES` item interaction shown beneath Discard.
+- Embeds `Assets/ask_hermes.png` directly into `Hermes.Client.dll`; no loose texture file is deployed.
+- Loads the icon lazily as a Unity `Sprite` and passes it through the existing `DynamicInteractionClass` icon argument.
+- Falls back to the text-only action if the embedded image cannot be decoded, so the menu action remains usable.
+- Adds the required `UnityEngine.ImageConversionModule.dll` client reference.
 
 ## Alpha12.0.1 — Ask HERMES from Crafts and Hideout
 

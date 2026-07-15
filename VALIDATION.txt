@@ -1,16 +1,14 @@
-HERMES 0.1.0-alpha12.1 validation
+HERMES 0.1.0-alpha12.1.1 validation
 
-- 32 C# files passed tree-sitter C# syntax parsing.
-- No duplicate method, constructor, or local-function parameter names were found.
-- 3 project files passed XML validation.
-- All 107 BepInEx/F12 ConfigEntry properties are bound exactly once.
-- 52 shared client/server response models passed property-order parity.
-- Local intent routing covers loadout, Raid Planner, stash, crafts, hideout, items, and unknown-subject probing.
-- Entity recognition covers active quests, maps/aliases, craft outputs, crafting stations, hideout areas/aliases, and item names/short names.
-- Ambiguous exact and fuzzy matches use the configured bounded choice list instead of silently selecting a result.
-- Named quest, map, craft, station, and hideout-area response builders are wired to existing HERMES read services.
-- Assistant API usage remains read-only; no write/action route is called.
-- Alpha12.1 capability flags and version strings are consistent.
-- No bin, obj, dist, or .vs directories are included.
+C# syntax: PASS (33 files)
+Project XML: PASS (3 files)
+Embedded Ask HERMES PNG: PASS (128x128 RGBA with transparency)
+Context-menu sprite wiring: PASS
+DynamicInteractionClass icon parameter: PASS (UnityEngine.Sprite)
+Unity ImageConversion.LoadImage API: PASS
+ImageConversionModule project reference: PASS
+Version consistency: PASS
+Clean source tree: PASS
+Read-only behavior: unchanged
 
-An actual Visual Studio/MSBuild compile was not run because the container does not include the .NET SDK or MSBuild. Rebuild locally against SPT 4.0.13.
+Local Build -> Rebuild Solution is still required against C:\RealSPT.
