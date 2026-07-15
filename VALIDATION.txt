@@ -1,0 +1,17 @@
+HERMES 0.1.0-alpha12.0 validation
+
+PASS: 31 C# files parsed without syntax or missing-node errors.
+PASS: Method and constructor parameter names contain no duplicates.
+PASS: 3 project files parsed as valid XML.
+PASS: 104 ConfigEntry settings are declared and bound exactly once.
+PASS: 52 shared client/server models retain property-order parity.
+PASS: Assistant tab, selected-item context, refresh, clear, and navigation wiring detected.
+PASS: Assistant uses existing loadout, stash, craft, hideout, trader, market, item-search, and item-usage APIs.
+PASS: Raid Planner navigation opens the Loadout Raid Planner sub-view.
+PASS: No client StringSplitOptions.TrimEntries dependency was introduced.
+PASS: Unity Text Rendering reference remains configured.
+PASS: No stale alpha11.9.1 version strings remain.
+PASS: No bin, obj, dist, or .vs directories are included.
+PASS: Assistant implementation contains no inventory, trader, flea, craft, insurance, or quest write operations.
+
+LIMITATION: The container does not include the .NET SDK/MSBuild, so a real compile and in-game runtime test must be performed locally against SPT 4.0.13.

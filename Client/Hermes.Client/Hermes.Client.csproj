@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0-alpha11.9</Version>
+    <Version>0.1.0-alpha12.0</Version>
     <OutputType>Library</OutputType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDependencyFile>false</GenerateDependencyFile>
@@ -52,6 +52,10 @@
       <HintPath>$(EftManaged)\UnityEngine.IMGUIModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule">
+      <HintPath>$(EftManaged)\UnityEngine.TextRenderingModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.InputLegacyModule">
       <HintPath>$(EftManaged)\UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
@@ -75,6 +79,8 @@
            Text="Missing UnityEngine.CoreModule.dll at '$(EftManaged)\UnityEngine.CoreModule.dll'." />
     <Error Condition="!Exists('$(EftManaged)\UnityEngine.IMGUIModule.dll')"
            Text="Missing UnityEngine.IMGUIModule.dll at '$(EftManaged)\UnityEngine.IMGUIModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.TextRenderingModule.dll')"
+           Text="Missing UnityEngine.TextRenderingModule.dll at '$(EftManaged)\UnityEngine.TextRenderingModule.dll'." />
     <Error Condition="!Exists('$(EftManaged)\UnityEngine.InputLegacyModule.dll')"
            Text="Missing UnityEngine.InputLegacyModule.dll at '$(EftManaged)\UnityEngine.InputLegacyModule.dll'." />
   </Target>

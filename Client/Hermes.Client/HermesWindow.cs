@@ -7,6 +7,7 @@ internal sealed class HermesWindow
 {
     private enum HermesTab
     {
+        Assistant,
         ItemSearch,
         Hideout,
         Crafts,
@@ -34,6 +35,7 @@ internal sealed class HermesWindow
     private bool _stashInstancesExpanded = true;
     private bool _loadingInstancePrice;
     private HermesTab _activeTab;
+    private readonly HermesAssistantPanel _assistantPanel = new();
     private readonly HermesHideoutPanel _hideoutPanel = new();
     private readonly HermesCraftPanel _craftPanel = new();
     private readonly HermesStashPanel _stashPanel = new();
@@ -271,7 +273,7 @@ internal sealed class HermesWindow
                 WindowId,
                 _windowRect,
                 DrawWindow,
-                "HERMES 0.1.0-alpha11.9 — Release Stabilization");
+                "HERMES 0.1.0-alpha12.0 — Local Assistant");
         }
         finally
         {
@@ -287,6 +289,11 @@ internal sealed class HermesWindow
 
     private void DrawWindow(int windowId)
     {
+        if (_activeTab == HermesTab.Assistant && !Plugin.Settings.EnableAssistantTab.Value)
+        {
+            SetActiveTab(HermesTab.ItemSearch);
+        }
+
         GUILayout.BeginVertical();
 
         HermesUi.DrawAppHeader(
@@ -298,6 +305,9 @@ internal sealed class HermesWindow
 
         switch (_activeTab)
         {
+            case HermesTab.Assistant:
+                _assistantPanel.Draw(_selectedItem, _selectedStashInstanceKey, NavigateToTab);
+                break;
             case HermesTab.Hideout:
                 _hideoutPanel.Draw();
                 break;
@@ -325,6 +335,10 @@ internal sealed class HermesWindow
     private void DrawTabs()
     {
         GUILayout.BeginHorizontal();
+        if (Plugin.Settings.EnableAssistantTab.Value)
+        {
+            DrawTabButton(HermesTab.Assistant, "Assistant");
+        }
         DrawTabButton(HermesTab.ItemSearch, "Item Search");
         DrawTabButton(HermesTab.Hideout, "Hideout");
         DrawTabButton(HermesTab.Crafts, "Crafts");
@@ -336,7 +350,7 @@ internal sealed class HermesWindow
 
     private void DrawTabButton(HermesTab tab, string label)
     {
-        if (HermesUi.DrawTabButton(label, _activeTab == tab, 145f))
+        if (HermesUi.DrawTabButton(label, _activeTab == tab, 128f))
         {
             SetActiveTab(tab);
         }
@@ -469,8 +483,7 @@ internal sealed class HermesWindow
             lines.Add($"Handbook ₽{item.ReferencePrice.Value:N0}");
         }
 
-        if (GUILayout.Button(string.Join("
-", lines), GUILayout.MinHeight(lines.Count >= 3 ? 62f : 48f), GUILayout.ExpandWidth(true)))
+        if (GUILayout.Button(string.Join("\n", lines), GUILayout.MinHeight(lines.Count >= 3 ? 62f : 48f), GUILayout.ExpandWidth(true)))
         {
             _ = SelectItemAsync(item);
         }
@@ -1366,7 +1379,7 @@ internal sealed class HermesWindow
         var requests = HermesApiClient.GetDiagnosticsSnapshot();
         var lines = new List<string>
         {
-            "HERMES 0.1.0-alpha11.9 diagnostics",
+            "HERMES 0.1.0-alpha12.0 diagnostics",
             $"Active tab: {_activeTab}",
             $"Client requests: started={requests.Started}, completed={requests.Completed}, failed={requests.Failed}, active={requests.Active}",
             $"Failures: timeout={requests.TimedOut}, transport={requests.TransportFailures}, invalid-response={requests.InvalidResponses}",
@@ -1435,6 +1448,9 @@ internal sealed class HermesWindow
 
             switch (_activeTab)
             {
+                case HermesTab.Assistant:
+                    await _assistantPanel.RefreshLastAsync(_selectedItem, _selectedStashInstanceKey);
+                    break;
                 case HermesTab.Hideout:
                     await _hideoutPanel.RefreshFromServerAsync(false, true);
                     break;
@@ -1491,6 +1507,9 @@ internal sealed class HermesWindow
     {
         switch (_activeTab)
         {
+            case HermesTab.Assistant:
+                _assistantPanel.Clear();
+                break;
             case HermesTab.Hideout:
                 _hideoutPanel.Clear();
                 break;
@@ -1813,8 +1832,27 @@ internal sealed class HermesWindow
         _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
     }
 
+    private void NavigateToTab(string tabName)
+    {
+        var parts = tabName.Split(new[] { '/' }, 2, StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Trim())
+            .ToArray();
+        var tab = ParseTabName(parts.ElementAtOrDefault(0) ?? tabName);
+        if (tab == HermesTab.Loadout && parts.Length > 1)
+        {
+            _loadoutPanel.OpenView(parts[1]);
+        }
+
+        SetActiveTab(tab);
+    }
+
     private void SetActiveTab(HermesTab tab)
     {
+        if (tab == HermesTab.Assistant && !Plugin.Settings.EnableAssistantTab.Value)
+        {
+            tab = HermesTab.ItemSearch;
+        }
+
         if (_activeTab == tab)
         {
             return;
@@ -1830,20 +1868,26 @@ internal sealed class HermesWindow
 
     private static HermesTab ParseTabName(string value)
     {
-        return value.Trim().ToLowerInvariant() switch
+        var tab = value.Trim().ToLowerInvariant() switch
         {
+            "assistant" or "chat" => HermesTab.Assistant,
             "hideout" => HermesTab.Hideout,
             "crafts" or "craft" => HermesTab.Crafts,
             "stash" => HermesTab.Stash,
             "loadout" => HermesTab.Loadout,
             _ => HermesTab.ItemSearch
         };
+
+        return tab == HermesTab.Assistant && !Plugin.Settings.EnableAssistantTab.Value
+            ? HermesTab.ItemSearch
+            : tab;
     }
 
     private static string GetTabName(HermesTab tab)
     {
         return tab switch
         {
+            HermesTab.Assistant => "Assistant",
             HermesTab.Hideout => "Hideout",
             HermesTab.Crafts => "Crafts",
             HermesTab.Stash => "Stash",

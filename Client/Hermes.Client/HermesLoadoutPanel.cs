@@ -124,6 +124,16 @@ internal sealed class HermesLoadoutPanel
         }
     }
 
+    public void OpenView(string viewName)
+    {
+        InitializeDefaults();
+        _view = ParseLoadoutView(viewName);
+        if (_view == LoadoutView.ValueInsurance && !Plugin.Settings.ShowValueAndInsurance.Value)
+        {
+            _view = LoadoutView.Overview;
+        }
+    }
+
     public void Clear()
     {
         _requestVersion++;
@@ -1114,8 +1124,8 @@ internal sealed class HermesLoadoutPanel
 
         var style = new GUIStyle(GUI.skin.label)
         {
-            alignment = TextAnchor.MiddleCenter,
-            fontStyle = FontStyle.Bold
+            alignment = UnityEngine.TextAnchor.MiddleCenter,
+            fontStyle = UnityEngine.FontStyle.Bold
         };
         GUI.Label(rect, label, style);
     }

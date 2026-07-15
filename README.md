@@ -1,60 +1,66 @@
-# HERMES 0.1.0-alpha11.9
+# HERMES 0.1.0-alpha12.0
 
-## Alpha11.9 — Stabilization, diagnostics, and release validation
+## Alpha12.0 — Local conversational Assistant
 
-Alpha11.9 is the final Alpha11 reliability pass before the conversational-assistant work begins. HERMES remains completely read-only.
+Alpha12.0 adds the first dedicated HERMES Assistant tab. It is deterministic, local, and fully read-only. It does not require an API key and does not transmit profile, inventory, quest, market, or loadout data to an external service.
 
-### Request reliability
+### Assistant interface
 
-- Identical read-only requests that overlap now share one in-flight server request by default.
-- Duplicate-request sharing can be disabled under **Reliability** in BepInEx/F12.
-- Timeout handling still leaves the underlying SPT request observable so late failures are logged instead of becoming unobserved task exceptions.
-- Server response envelopes are validated before deserialization. Explicit SPT error responses, missing data payloads, empty responses, and client/server model mismatches now produce actionable errors instead of silent fallback objects.
-- The slow-request warning threshold is configurable from 1–30 seconds.
-- Existing stale-response version guards remain active in Item Search, Hideout, Crafts, Stash, and Loadout.
+- Dedicated Assistant main tab.
+- Single-line prompt composer with Enter-to-submit support.
+- Local conversation history with configurable retention.
+- Suggested prompt buttons.
+- Copy button on every HERMES answer.
+- Clear-conversation control.
+- Visible selected-item context.
+- Clickable navigation into Item Search, Hideout, Crafts, Stash, Loadout, and the Raid Planner view.
+- Existing global Refresh can rerun the last Assistant question against a fresh server snapshot.
 
-### Client request diagnostics
+### Deterministic Alpha12.0 intents
 
-The client tracks:
+The local intent engine can answer questions about:
 
-- Started, active, completed, and failed requests.
-- Timeouts, transport failures, and invalid responses.
-- Slow requests.
-- Duplicate client requests satisfied by an existing in-flight request.
-- Last route, last duration, and last failure.
+- General HERMES capabilities.
+- Current loadout readiness and configured warning thresholds.
+- Weapon magazines, loaded ammunition, and compatible spare rounds.
+- Medical treatment coverage and healing resource.
+- Insurance state and at-risk replacement value.
+- Best current Raid Planner map based on active quests, incomplete objectives, and missing pre-raid requirements.
+- Stash safe-to-sell quantities, cleanup candidates, recoverable cells, and top sale recommendations.
+- Ready, profitable, and overnight crafts using existing Craft settings.
+- Hideout upgrade status, missing-material pressure, productions, generator, and fuel state.
+- Selected-item trader value, flea estimate, replacement cost, quest use, hideout use, and crafting use.
+- Item-name resolution for simple questions such as `What is Salewa worth?`.
 
-The footer can show a compact health summary. **Copy diagnostics** places a plain-text report on the clipboard without exporting the PMC profile or inventory contents.
-
-### Cache diagnostics
-
-The cache-status route and footer now report independent statistics for:
-
-- Shared market-price and market-summary caches.
-- Profile-aware Stash analysis cache.
-- Profile-aware Loadout analysis cache.
-
-Entry counts, hits, misses, writes, and TTL values are visible. Global Refresh still clears all three cache groups.
+All factual values come from existing HERMES services. The Assistant does not maintain a second market, quest, stash, craft, or loadout calculation path.
 
 ### New BepInEx/F12 settings
 
-Under **Reliability**:
+Under **Assistant**:
 
-- Share duplicate in-flight requests.
-- Slow request warning seconds.
-- Cache status refresh seconds.
-- Show diagnostics footer.
+- Enable Assistant tab.
+- Show suggested prompts.
+- Include selected item context.
+- Maximum conversation messages, from 10 to 200.
 
-### Release-safety audit
+The global **Default opening tab** setting now accepts `Assistant`.
 
-- Client/server cache-status model parity was expanded and checked.
-- Stash and Loadout cache counters purge expired entries before reporting counts.
-- Cache clears return a post-clear status covering all cache groups.
-- Long Stash and Loadout analysis requests retain the minimum 30-second client timeout.
-- Market fallback order, reservation policy, readiness logic, and every read-only safety restriction remain unchanged.
+### Current Alpha12 boundary
 
-## Alpha11.8 — Loadout and Raid Planner polish
+Alpha12.0 recognizes supported intents per question. Persistent follow-up subject resolution is planned for a later Alpha12 build. For example, a selected item can be referenced as `this item`, but a completely new unnamed subject is not inferred from several messages earlier.
 
-Alpha11.8 completes the final Loadout and Raid Planner interface/settings pass before the Alpha11.9 reliability audit. HERMES remains fully read-only.
+HERMES remains read-only. It does not buy, sell, list, move, equip, insure, craft, accept, or complete anything.
+
+## Alpha11.9.1 — Unity text-enum compile correction
+
+- Added an explicit client reference to `UnityEngine.TextRenderingModule.dll`.
+- Added build-time validation for the Text Rendering module under the configured SPT managed directory.
+- Fixes missing `TextAnchor` and `FontStyle` symbols used by the Loadout readiness progress bar.
+- No runtime behavior, UI layout, cache logic, or analysis calculations changed.
+
+## Alpha11.9 — Loadout and Raid Planner polish
+
+Alpha11.9 completes the final Loadout and Raid Planner interface/settings pass before the Alpha11.9 reliability audit. HERMES remains fully read-only.
 
 ### Server-evaluated Loadout settings
 

@@ -20,6 +20,11 @@ internal sealed class HermesClientSettings
     public ConfigEntry<int> CacheStatusRefreshSeconds { get; private set; } = null!;
     public ConfigEntry<bool> ShowDiagnosticsFooter { get; private set; } = null!;
 
+    public ConfigEntry<bool> EnableAssistantTab { get; private set; } = null!;
+    public ConfigEntry<bool> ShowAssistantSuggestedPrompts { get; private set; } = null!;
+    public ConfigEntry<bool> IncludeSelectedItemInAssistant { get; private set; } = null!;
+    public ConfigEntry<int> MaximumAssistantMessages { get; private set; } = null!;
+
     public ConfigEntry<int> WindowWidth { get; private set; } = null!;
     public ConfigEntry<int> WindowHeight { get; private set; } = null!;
     public ConfigEntry<float> WindowOpacity { get; private set; } = null!;
@@ -129,8 +134,8 @@ internal sealed class HermesClientSettings
         DefaultOpeningTab = config.Bind(
             "General",
             "Default opening tab",
-            "Item Search",
-            "Tab shown when HERMES opens and remembered-tab behavior is disabled. Options: Item Search, Hideout, Crafts, Stash, Loadout.");
+            "Assistant",
+            "Tab shown when HERMES opens and remembered-tab behavior is disabled. Options: Assistant, Item Search, Hideout, Crafts, Stash, Loadout.");
         RememberLastSelectedTab = config.Bind(
             "General",
             "Remember last selected tab",
@@ -172,6 +177,27 @@ internal sealed class HermesClientSettings
             "Show diagnostics footer",
             true,
             "Shows client request health and market/stash/loadout cache counts in the HERMES footer.");
+
+        EnableAssistantTab = config.Bind(
+            "Assistant",
+            "Enable Assistant tab",
+            true,
+            "Shows the Alpha12 local conversational Assistant tab. The Assistant is deterministic, read-only, and does not use an external AI service.");
+        ShowAssistantSuggestedPrompts = config.Bind(
+            "Assistant",
+            "Show suggested prompts",
+            true,
+            "Shows quick prompt buttons beneath the Assistant conversation.");
+        IncludeSelectedItemInAssistant = config.Bind(
+            "Assistant",
+            "Include selected item context",
+            true,
+            "Allows Assistant questions such as 'What is this item worth?' to use the current Item Search or Ask HERMES selection.");
+        MaximumAssistantMessages = config.Bind(
+            "Assistant",
+            "Maximum conversation messages",
+            40,
+            "Maximum user and HERMES messages retained in the current local conversation. Range: 10-200.");
 
         WindowWidth = config.Bind(
             "Interface",
@@ -680,6 +706,7 @@ internal sealed class HermesClientSettings
     public int GetLongRequestTimeoutSeconds() => Math.Max(30, GetRequestTimeoutSeconds());
     public int GetSlowRequestWarningSeconds() => Math.Clamp(SlowRequestWarningSeconds.Value, 1, 30);
     public int GetCacheStatusRefreshSeconds() => Math.Clamp(CacheStatusRefreshSeconds.Value, 5, 60);
+    public int GetMaximumAssistantMessages() => Math.Clamp(MaximumAssistantMessages.Value, 10, 200);
     public int GetWindowWidth() => Math.Clamp(WindowWidth.Value, 900, 1800);
     public int GetWindowHeight() => Math.Clamp(WindowHeight.Value, 600, 1100);
     public float GetWindowOpacity() => Math.Clamp(WindowOpacity.Value, 0.55f, 1f);
@@ -778,6 +805,7 @@ internal sealed class HermesClientSettings
         var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
         return normalized switch
         {
+            "assistant" or "chat" => "Assistant",
             "hideout" => "Hideout",
             "craft" or "crafts" => "Crafts",
             "stash" => "Stash",
