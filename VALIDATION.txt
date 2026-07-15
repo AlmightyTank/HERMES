@@ -1,25 +1,17 @@
-HERMES 0.1.0-alpha12.3 validation
+HERMES 0.1.0-alpha12.4.1 validation report
 
-C# source files: 35 passed lexical string/comment/delimiter validation
-Project XML files: 3 passed
-F12 ConfigEntry declarations: 115
-F12 config.Bind assignments: 115
-Shared client/server model property-order pairs: 53 passed
-Profile-context model field parity: passed
-Profile-context route and client API wiring: passed
-Opaque SHA-256 profile token generation: passed
-Follow-up prompt expansion wiring: passed
-Recent subject memory and retention bound: passed
-Ambiguity ordinal-choice resolution wiring: passed
-Conversation-context commands: passed
-Profile-change context invalidation wiring: passed
-Selected-item versus remembered-item precedence check: passed
-Cross-system and entity-recognition regression wiring: passed
-Read-only client transport audit: passed
-Capability metadata: passed
-Version consistency: passed
-Build-artifact exclusion: passed
-Item Search multiline string correction: passed
+PASS - 36 C# files parsed without tree-sitter syntax errors.
+PASS - 3 project files parsed as valid XML.
+PASS - 131 BepInEx/F12 ConfigEntry properties are declared and bound.
+PASS - 31 shared client/server models match property order.
+PASS - Persistent notice cards no longer use OverlayExpiresAt/OverlayExpired.
+PASS - Every card body routes through navigate(notice.TargetTab).
+PASS - Close action dismisses without navigation.
+PASS - Cards use the embedded HERMES icon and severity accent styling.
+PASS - Closed-window and open-window overlay paths are wired.
+PASS - Open-window cards render after GUI.Window for top-most click handling.
+PASS - Unity IMGUI, text-rendering, and image-conversion references remain present.
+PASS - Version strings are consistent at 0.1.0-alpha12.4.1.
+PASS - Source tree contains no bin, obj, dist, or .vs directories.
 
-Compilation note:
-The container does not provide dotnet/MSBuild or a C# compiler. Rebuild HERMES.sln locally against SPT 4.0.13 for authoritative compile and runtime validation.
+Not performed here: local Visual Studio/MSBuild compilation against C:\RealSPT and in-game runtime verification on SPT 4.0.13.

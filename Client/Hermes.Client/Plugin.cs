@@ -36,7 +36,7 @@ public sealed class Plugin : BaseUnityPlugin
             Logger.LogError($"Ask HERMES context action could not be enabled: {ex}");
         }
 
-        Logger.LogInfo($"HERMES 0.1.0-alpha12.3 loaded. Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");
+        Logger.LogInfo($"HERMES 0.1.0-alpha12.4.1 loaded. Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");
     }
 
     internal void OpenForInventoryItem(string profileItemId)
@@ -66,6 +66,8 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void Update()
     {
+        _window?.Tick();
+
         if (Settings.ToggleWindowShortcut.Value.IsDown())
         {
             _window?.Toggle();

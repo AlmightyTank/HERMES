@@ -36,6 +36,7 @@ internal sealed class HermesWindow
     private bool _loadingInstancePrice;
     private HermesTab _activeTab;
     private readonly HermesAssistantPanel _assistantPanel = new();
+    private readonly HermesAssistantNoticeService _noticeService = new();
     private readonly HermesHideoutPanel _hideoutPanel = new();
     private readonly HermesCraftPanel _craftPanel = new();
     private readonly HermesStashPanel _stashPanel = new();
@@ -233,10 +234,16 @@ internal sealed class HermesWindow
         }
     }
 
+    public void Tick()
+    {
+        _noticeService.Tick();
+    }
+
     public void Draw()
     {
         if (!_visible)
         {
+            _noticeService.DrawOverlay(false, false, OpenNoticeTarget);
             return;
         }
 
@@ -273,7 +280,7 @@ internal sealed class HermesWindow
                 WindowId,
                 _windowRect,
                 DrawWindow,
-                "HERMES 0.1.0-alpha12.3 — Follow-Up Context");
+                "HERMES 0.1.0-alpha12.4.1 — Proactive Assistant");
         }
         finally
         {
@@ -285,6 +292,12 @@ internal sealed class HermesWindow
         {
             Plugin.Settings.RememberWindowPositionValue(_windowRect, scale);
         }
+
+        // Draw last so persistent EFT-style notice cards remain clickable above the HERMES window.
+        _noticeService.DrawOverlay(
+            true,
+            _activeTab == HermesTab.Assistant,
+            OpenNoticeTarget);
     }
 
     private void DrawWindow(int windowId)
@@ -306,6 +319,8 @@ internal sealed class HermesWindow
         switch (_activeTab)
         {
             case HermesTab.Assistant:
+                _noticeService.DrawInbox(OpenNoticeTarget);
+                GUILayout.Space(HermesUi.StandardSpace);
                 _assistantPanel.Draw(_selectedItem, _selectedStashInstanceKey, NavigateToTab);
                 break;
             case HermesTab.Hideout:
@@ -1371,7 +1386,8 @@ internal sealed class HermesWindow
 
         var marketEntries = _cacheStatus.MarketUnitValueEntryCount + _cacheStatus.MarketSummaryEntryCount;
         return $"Cache M/S/L: {marketEntries:N0}/{_cacheStatus.StashAnalysisEntryCount:N0}/{_cacheStatus.LoadoutAnalysisEntryCount:N0}"
-               + $" • Requests: {requests.Active:N0} active, {requests.Completed:N0} ok, {requests.Failed:N0} failed, {requests.DeduplicatedRequests:N0} shared";
+               + $" • Requests: {requests.Active:N0} active, {requests.Completed:N0} ok, {requests.Failed:N0} failed, {requests.DeduplicatedRequests:N0} shared"
+               + $" • Notices: {_noticeService.ActiveNoticeCount:N0}";
     }
 
     private string BuildDiagnosticsReport()
@@ -1379,13 +1395,14 @@ internal sealed class HermesWindow
         var requests = HermesApiClient.GetDiagnosticsSnapshot();
         var lines = new List<string>
         {
-            "HERMES 0.1.0-alpha12.3 diagnostics",
+            "HERMES 0.1.0-alpha12.4.1 diagnostics",
             $"Active tab: {_activeTab}",
             $"Client requests: started={requests.Started}, completed={requests.Completed}, failed={requests.Failed}, active={requests.Active}",
             $"Failures: timeout={requests.TimedOut}, transport={requests.TransportFailures}, invalid-response={requests.InvalidResponses}",
             $"Performance: slow={requests.SlowRequests}, shared-duplicates={requests.DeduplicatedRequests}, last-duration-ms={requests.LastDurationMilliseconds}",
             $"Last route: {requests.LastRoute}",
-            $"Last failure: {(string.IsNullOrWhiteSpace(requests.LastFailure) ? "none" : requests.LastFailure)}"
+            $"Last failure: {(string.IsNullOrWhiteSpace(requests.LastFailure) ? "none" : requests.LastFailure)}",
+            $"Assistant notices: {_noticeService.GetDiagnosticsSummary()}"
         };
 
         if (_cacheStatus is { Found: true })
@@ -1449,6 +1466,7 @@ internal sealed class HermesWindow
             switch (_activeTab)
             {
                 case HermesTab.Assistant:
+                    await _noticeService.RefreshNowAsync();
                     await _assistantPanel.RefreshLastAsync(_selectedItem, _selectedStashInstanceKey);
                     break;
                 case HermesTab.Hideout:
@@ -1830,6 +1848,12 @@ internal sealed class HermesWindow
         _detailScroll = Vector2.zero;
         _status = "Search for an item or ask where it can be bought or sold.";
         _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
+    }
+
+    private void OpenNoticeTarget(string tabName)
+    {
+        _visible = true;
+        NavigateToTab(tabName);
     }
 
     private void NavigateToTab(string tabName)

@@ -36,6 +36,23 @@ internal sealed class HermesClientSettings
     public ConfigEntry<bool> ResetAssistantContextOnProfileChange { get; private set; } = null!;
     public ConfigEntry<int> MaximumAssistantMessages { get; private set; } = null!;
 
+    public ConfigEntry<bool> EnableProactiveAssistantNotices { get; private set; } = null!;
+    public ConfigEntry<int> AssistantNoticeCheckIntervalMinutes { get; private set; } = null!;
+    public ConfigEntry<int> AssistantNoticeCooldownMinutes { get; private set; } = null!;
+    public ConfigEntry<int> AssistantNoticeAutoDismissSeconds { get; private set; } = null!;
+    public ConfigEntry<int> MaximumVisibleAssistantNotices { get; private set; } = null!;
+    public ConfigEntry<bool> ShowAssistantNoticesWhenClosed { get; private set; } = null!;
+    public ConfigEntry<bool> ShowAssistantNoticesDuringRaid { get; private set; } = null!;
+    public ConfigEntry<bool> OnlyNotifyAssistantNoticeChanges { get; private set; } = null!;
+    public ConfigEntry<bool> NotifyLoadoutReadiness { get; private set; } = null!;
+    public ConfigEntry<bool> NotifyHighValueUninsuredItems { get; private set; } = null!;
+    public ConfigEntry<bool> NotifyCompletedHideoutProduction { get; private set; } = null!;
+    public ConfigEntry<bool> NotifyReadyHideoutUpgrades { get; private set; } = null!;
+    public ConfigEntry<bool> NotifyReadyProfitableCrafts { get; private set; } = null!;
+    public ConfigEntry<int> MinimumAssistantNoticeCraftProfit { get; private set; } = null!;
+    public ConfigEntry<bool> NotifyStashOpportunities { get; private set; } = null!;
+    public ConfigEntry<int> MinimumAssistantNoticeStashValue { get; private set; } = null!;
+
     public ConfigEntry<int> WindowWidth { get; private set; } = null!;
     public ConfigEntry<int> WindowHeight { get; private set; } = null!;
     public ConfigEntry<float> WindowOpacity { get; private set; } = null!;
@@ -264,6 +281,87 @@ internal sealed class HermesClientSettings
             "Maximum conversation messages",
             40,
             "Maximum user and HERMES messages retained in the current local conversation. Range: 10-200.");
+
+        EnableProactiveAssistantNotices = config.Bind(
+            "Assistant Notices",
+            "Enable proactive notices",
+            true,
+            "Periodically checks current read-only HERMES data and surfaces meaningful loadout, hideout, craft, insurance, and optional stash notices.");
+        AssistantNoticeCheckIntervalMinutes = config.Bind(
+            "Assistant Notices",
+            "Check interval minutes",
+            5,
+            "Minutes between automatic proactive checks. Manual Check now remains available in the Assistant tab. Range: 1-60.");
+        AssistantNoticeCooldownMinutes = config.Bind(
+            "Assistant Notices",
+            "Repeat cooldown minutes",
+            30,
+            "Minimum time before the same unchanged condition can be shown again when change-only mode is disabled. Range: 5-240.");
+        AssistantNoticeAutoDismissSeconds = config.Bind(
+            "Assistant Notices",
+            "Overlay auto-dismiss seconds",
+            0,
+            "Compatibility setting retained from Alpha12.4. EFT-style notice cards now remain visible until opened or dismissed, so this value is ignored.");
+        MaximumVisibleAssistantNotices = config.Bind(
+            "Assistant Notices",
+            "Maximum visible notices",
+            3,
+            "Maximum proactive notice cards shown on screen at one time. Range: 1-5.");
+        ShowAssistantNoticesWhenClosed = config.Bind(
+            "Assistant Notices",
+            "Show notices while HERMES is closed",
+            true,
+            "Shows compact notice cards even when the main HERMES window is closed.");
+        ShowAssistantNoticesDuringRaid = config.Bind(
+            "Assistant Notices",
+            "Show notices during raid",
+            false,
+            "Allows automatic checks and notice overlays while an EFT raid is active. Disabled by default to avoid combat distractions.");
+        OnlyNotifyAssistantNoticeChanges = config.Bind(
+            "Assistant Notices",
+            "Only notify on changes",
+            true,
+            "Shows a condition once and waits for it to clear before notifying again. Disable to permit repeat notices after the configured cooldown.");
+        NotifyLoadoutReadiness = config.Bind(
+            "Assistant Notices",
+            "Loadout readiness notices",
+            true,
+            "Notifies when the current loadout has critical readiness warnings.");
+        NotifyHighValueUninsuredItems = config.Bind(
+            "Assistant Notices",
+            "High-value uninsured notices",
+            true,
+            "Notifies when current uninsured at-risk value meets the configured Loadout high-value threshold.");
+        NotifyCompletedHideoutProduction = config.Bind(
+            "Assistant Notices",
+            "Completed production notices",
+            true,
+            "Notifies when hideout production is complete and ready to collect.");
+        NotifyReadyHideoutUpgrades = config.Bind(
+            "Assistant Notices",
+            "Ready hideout upgrade notices",
+            true,
+            "Notifies when one or more hideout areas are ready to upgrade.");
+        NotifyReadyProfitableCrafts = config.Bind(
+            "Assistant Notices",
+            "Ready profitable craft notices",
+            true,
+            "Notifies when a currently startable craft meets the minimum economic-profit threshold.");
+        MinimumAssistantNoticeCraftProfit = config.Bind(
+            "Assistant Notices",
+            "Minimum craft notice profit",
+            25000,
+            "Minimum estimated economic profit required for a ready-craft notice. Range: 0-10,000,000 roubles.");
+        NotifyStashOpportunities = config.Bind(
+            "Assistant Notices",
+            "Stash opportunity notices",
+            false,
+            "Enables periodic Stash analysis notices for cleanup and safe-to-sell surplus. Disabled by default because Stash analysis is the heaviest notice check.");
+        MinimumAssistantNoticeStashValue = config.Bind(
+            "Assistant Notices",
+            "Minimum stash notice value",
+            100000,
+            "Minimum cleanup or safe-to-sell value required for a Stash notice. Range: 0-100,000,000 roubles.");
 
         WindowWidth = config.Bind(
             "Interface",
@@ -777,6 +875,13 @@ internal sealed class HermesClientSettings
     public int GetMaximumAssistantAmbiguityChoices() => Math.Clamp(MaximumAssistantAmbiguityChoices.Value, 2, 10);
     public int GetMaximumAssistantRecommendations() => Math.Clamp(MaximumAssistantRecommendations.Value, 3, 10);
     public int GetMaximumAssistantContextSubjects() => Math.Clamp(MaximumAssistantContextSubjects.Value, 1, 12);
+    public int GetAssistantNoticeCheckIntervalMinutes() => Math.Clamp(AssistantNoticeCheckIntervalMinutes.Value, 1, 60);
+    public int GetAssistantNoticeCooldownMinutes() => Math.Clamp(AssistantNoticeCooldownMinutes.Value, 5, 240);
+    public int GetAssistantNoticeAutoDismissSeconds() => Math.Clamp(AssistantNoticeAutoDismissSeconds.Value, 0, 120);
+    public int GetMaximumVisibleAssistantNotices() => Math.Clamp(MaximumVisibleAssistantNotices.Value, 1, 5);
+    public int GetMinimumAssistantNoticeCraftProfit() => Math.Clamp(MinimumAssistantNoticeCraftProfit.Value, 0, 10_000_000);
+    public int GetMinimumAssistantNoticeStashValue() => Math.Clamp(MinimumAssistantNoticeStashValue.Value, 0, 100_000_000);
+    public int GetHighValueUninsuredThreshold() => Math.Clamp(HighValueUninsuredThreshold.Value, 0, 10_000_000);
     public int GetWindowWidth() => Math.Clamp(WindowWidth.Value, 900, 1800);
     public int GetWindowHeight() => Math.Clamp(WindowHeight.Value, 600, 1100);
     public float GetWindowOpacity() => Math.Clamp(WindowOpacity.Value, 0.55f, 1f);

@@ -1,48 +1,38 @@
-# HERMES Alpha12.3 Release Checklist
+# HERMES 0.1.0-alpha12.4.1 Release Checklist
 
 ## Build
 
-- [ ] Rebuild `HERMES.sln` against SPT 4.0.13.
-- [ ] Confirm `Hermes.Client.dll` and `Hermes.Server.dll` deploy to the configured SPT installation.
-- [ ] Start the server and confirm version `0.1.0-alpha12.3`.
-- [ ] Start the client and confirm the title shows `Follow-Up Context`.
+- [ ] Open `HERMES.sln` in Visual Studio.
+- [ ] Confirm the configured SPT root points to `C:\RealSPT`.
+- [ ] Run **Build → Rebuild Solution**.
+- [ ] Confirm client and server modules auto-deploy without errors.
+- [ ] Start SPT.Server and confirm HERMES reports `0.1.0-alpha12.4.1`.
 
-## Follow-up context
+## Notice behavior
 
-- [ ] Ask `What do I need for Saving the Mole?`, then ask `What key?` and confirm the quest remains the subject.
-- [ ] Ask about a named item, then ask `Where do I use it?` and confirm the same item is analyzed.
-- [ ] Ask about a named craft, then ask `Why?` or `What is missing?` and confirm the same recipe is used.
-- [ ] Ask about a hideout area, then ask `Is it ready?` and confirm the same area is used.
-- [ ] Ask about a map, then ask `What quests are there?` and confirm the same map is used.
-- [ ] Ask `What are we talking about?` and confirm the current and recent subjects are shown.
-- [ ] Use the **Forget** button and confirm the next older subject becomes current.
-- [ ] Use `Clear context` and confirm all remembered subjects are removed.
-- [ ] Use **Clear chat** and confirm messages and subjects are cleared together.
+- [ ] Enable proactive notices and use **Check now** in the Assistant tab.
+- [ ] Confirm critical Loadout warnings create at most one Loadout notice.
+- [ ] Confirm a high-value uninsured item creates a Value & Insurance notice.
+- [ ] Complete a hideout production and confirm the completion notice.
+- [ ] Confirm a ready hideout upgrade is reported when enabled.
+- [ ] Confirm a ready profitable craft respects the minimum-profit threshold.
+- [ ] Enable Stash notices and confirm the minimum-value threshold is respected.
+- [ ] Confirm **Only notify on changes** prevents unchanged conditions from repeating.
+- [ ] Disable change-only mode and confirm the repeat cooldown is respected.
+- [ ] Confirm overlay cards remain visible until opened or dismissed and remain in the Assistant inbox history.
+- [ ] Confirm clicking anywhere on a notice card navigates to the correct HERMES tab and sub-view.
+- [ ] Confirm automatic checks pause during a raid when raid notices are disabled.
+- [ ] Confirm profile switching clears prior notice state.
 
-## Ambiguity choices
+## Safety
 
-- [ ] Trigger an item ambiguity and answer `the second one`.
-- [ ] Trigger a quest or craft ambiguity and answer with an option number.
-- [ ] Confirm the selected ambiguity choice becomes the current subject.
+- [ ] Confirm no notice action buys, sells, lists, equips, moves, insures, crafts, collects, accepts, or completes anything.
 
-## Profile safety
+## Persistent notice test
 
-- [ ] Confirm `/hermes/profile/context` returns a successful opaque token response.
-- [ ] Switch SPT profiles and confirm the Assistant conversation/context is reset when the F12 setting is enabled.
-- [ ] Disable profile-change reset and confirm HERMES does not automatically clear context.
-- [ ] Confirm no raw session/profile identifier is displayed in the UI or diagnostics.
-
-## F12 settings
-
-- [ ] Disable follow-up context and confirm pronouns are no longer expanded from previous subjects.
-- [ ] Disable context display and confirm the context box is hidden.
-- [ ] Change maximum remembered subjects and confirm recent-subject retention is bounded.
-
-## Regression
-
-- [ ] Named item, quest, craft, station, map, and hideout-area recognition still works.
-- [ ] Cross-system recommendations still work.
-- [ ] Ask HERMES context-menu icon appears below Discard.
-- [ ] Craft and Hideout item Ask HERMES buttons still open exact item context.
-- [ ] Item Search, Hideout, Crafts, Stash, Loadout, and Raid Planner still load.
-- [ ] No action modifies inventory, quests, hideout, insurance, flea, or traders.
+- [ ] Generate a proactive notice while HERMES is closed.
+- [ ] Confirm the card appears at the lower-right in EFT style.
+- [ ] Confirm it remains visible for more than 20 seconds.
+- [ ] Click the card body and confirm HERMES opens to the intended tab/sub-view.
+- [ ] Generate another notice and use × to dismiss it without opening HERMES.
+- [ ] Confirm cards remain clickable above the open HERMES window.
