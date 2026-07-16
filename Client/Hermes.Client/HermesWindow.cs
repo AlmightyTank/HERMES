@@ -12,13 +12,17 @@ internal sealed class HermesWindow
         Hideout,
         Crafts,
         Stash,
-        Loadout
+        Loadout,
+        RaidPlanner
     }
 
-    private const int WindowId = 0x4845524D;
+    private const float EmbeddedOuterPadding = 6f;
+    private const float EmbeddedHeaderHeight = 48f;
+    private const float EmbeddedNavigationWidth = 188f;
+    private const float EmbeddedCompactNavigationHeight = 70f;
+    private const float EmbeddedGap = 6f;
+    private const float EmbeddedRailBreakpoint = 1080f;
 
-    private Rect _windowRect;
-    private float _lastUiScale = 1f;
     private Vector2 _resultScroll;
     private Vector2 _detailScroll;
     private string _query = string.Empty;
@@ -27,6 +31,7 @@ internal sealed class HermesWindow
     private string _status = "Search for an item or ask where it can be bought or sold.";
     private string _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
     private bool _visible;
+    private bool _nativeMode;
     private bool _searching;
     private bool _loadingDetails;
     private bool _saleComparisonExpanded;
@@ -61,21 +66,46 @@ internal sealed class HermesWindow
 
     public HermesWindow()
     {
-        _lastUiScale = Plugin.Settings.GetUiScale();
-        var position = Plugin.Settings.GetInitialWindowPosition(_lastUiScale);
-        _windowRect = new Rect(
-            position.x,
-            position.y,
-            Plugin.Settings.GetWindowWidth() / _lastUiScale,
-            Plugin.Settings.GetWindowHeight() / _lastUiScale);
         _activeTab = ParseTabName(Plugin.Settings.GetOpeningTabName());
         ResetSectionExpansionDefaults();
     }
 
     public void Toggle()
     {
-        _visible = !_visible;
-        if (_visible && Plugin.Settings.AutomaticallyRefreshWhenOpened.Value)
+        if (!HermesNativeScreenRegistry.TryToggle() && Plugin.Settings.DetailedLogging.Value)
+        {
+            Plugin.Log?.LogDebug("HERMES inventory tab is unavailable because no Character or in-raid InventoryScreen is open.");
+        }
+    }
+
+    internal void SetNativeVisibility(bool visible)
+    {
+        if (visible)
+        {
+            _nativeMode = true;
+            _visible = true;
+            OnPresentationOpened();
+            return;
+        }
+
+        if (_nativeMode)
+        {
+            _visible = false;
+            _nativeMode = false;
+        }
+    }
+
+    private void EnsurePresentationVisible()
+    {
+        if (!HermesNativeScreenRegistry.TryShow() && Plugin.Settings.DetailedLogging.Value)
+        {
+            Plugin.Log?.LogDebug("HERMES could not open because no Character or in-raid InventoryScreen is active.");
+        }
+    }
+
+    private void OnPresentationOpened()
+    {
+        if (Plugin.Settings.AutomaticallyRefreshWhenOpened.Value)
         {
             _ = RefreshCurrentDataAsync(false);
         }
@@ -88,7 +118,7 @@ internal sealed class HermesWindow
             return;
         }
 
-        _visible = true;
+        EnsurePresentationVisible();
         SetActiveTab(HermesTab.ItemSearch);
         _ = OpenForInventoryItemAsync(profileItemId);
     }
@@ -105,7 +135,7 @@ internal sealed class HermesWindow
             return;
         }
 
-        _visible = true;
+        EnsurePresentationVisible();
         SetActiveTab(HermesTab.ItemSearch);
         _ = OpenForPreviewItemAsync(templateId, sourceLabel);
     }
@@ -241,7 +271,13 @@ internal sealed class HermesWindow
 
     public void Draw()
     {
-        if (!_visible)
+        // Alpha12.6.1 keeps the standalone floating window removed. HERMES renders only inside
+        // the main Character screen or the in-raid InventoryScreen tab.
+    }
+
+    internal void DrawEmbedded(Rect rect)
+    {
+        if (!_visible || !_nativeMode || rect.width < 480f || rect.height < 320f)
         {
             return;
         }
@@ -254,62 +290,251 @@ internal sealed class HermesWindow
             _ = LoadCacheStatusAsync();
         }
 
-        var originalMatrix = GUI.matrix;
         var originalColor = GUI.color;
-        var scale = Plugin.Settings.GetUiScale();
-        if (Math.Abs(scale - _lastUiScale) > 0.001f)
-        {
-            var physicalX = _windowRect.x * _lastUiScale;
-            var physicalY = _windowRect.y * _lastUiScale;
-            _windowRect.x = physicalX / scale;
-            _windowRect.y = physicalY / scale;
-            _lastUiScale = scale;
-        }
-
-        _windowRect.width = Plugin.Settings.GetWindowWidth() / scale;
-        _windowRect.height = Plugin.Settings.GetWindowHeight() / scale;
-        _windowRect.x = Mathf.Clamp(_windowRect.x, 0f, Math.Max(0f, Screen.width / scale - _windowRect.width));
-        _windowRect.y = Mathf.Clamp(_windowRect.y, 0f, Math.Max(0f, Screen.height / scale - _windowRect.height));
-
+        var originalEnabled = GUI.enabled;
         try
         {
-            GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
-            GUI.color = new Color(1f, 1f, 1f, Plugin.Settings.GetWindowOpacity());
-            _windowRect = GUI.Window(
-                WindowId,
-                _windowRect,
-                DrawWindow,
-                "HERMES 0.1.0-alpha12.4.2 — Native EFT Notifications");
+            GUI.color = Color.white;
+            GUI.enabled = true;
+
+            var workspace = new Rect(
+                EmbeddedOuterPadding,
+                EmbeddedOuterPadding,
+                Math.Max(0f, rect.width - EmbeddedOuterPadding * 2f),
+                Math.Max(0f, rect.height - EmbeddedOuterPadding * 2f));
+
+            GUI.Box(workspace, GUIContent.none);
+
+            var headerRect = new Rect(
+                workspace.x + EmbeddedGap,
+                workspace.y + EmbeddedGap,
+                workspace.width - EmbeddedGap * 2f,
+                EmbeddedHeaderHeight);
+
+            DrawInventoryHeader(headerRect);
+
+            var contentTop = headerRect.yMax + EmbeddedGap;
+            var availableHeight = Math.Max(120f, workspace.yMax - EmbeddedGap - contentTop);
+            if (workspace.width >= EmbeddedRailBreakpoint)
+            {
+                var navigationWidth = Mathf.Clamp(
+                    workspace.width * 0.115f,
+                    172f,
+                    EmbeddedNavigationWidth);
+                var navigationRect = new Rect(
+                    headerRect.x,
+                    contentTop,
+                    navigationWidth,
+                    availableHeight);
+                var bodyRect = new Rect(
+                    navigationRect.xMax + EmbeddedGap,
+                    contentTop,
+                    Math.Max(260f, headerRect.xMax - (navigationRect.xMax + EmbeddedGap)),
+                    availableHeight);
+
+                DrawInventoryNavigationRail(navigationRect);
+                DrawInventoryBody(bodyRect);
+            }
+            else
+            {
+                var navigationRect = new Rect(
+                    headerRect.x,
+                    contentTop,
+                    headerRect.width,
+                    EmbeddedCompactNavigationHeight);
+                var bodyRect = new Rect(
+                    headerRect.x,
+                    navigationRect.yMax + EmbeddedGap,
+                    headerRect.width,
+                    Math.Max(100f, workspace.yMax - EmbeddedGap - (navigationRect.yMax + EmbeddedGap)));
+
+                DrawCompactInventoryNavigation(navigationRect);
+                DrawInventoryBody(bodyRect);
+            }
         }
         finally
         {
-            GUI.matrix = originalMatrix;
+            GUI.enabled = originalEnabled;
             GUI.color = originalColor;
         }
-
-        if (Event.current.type == EventType.MouseUp)
-        {
-            Plugin.Settings.RememberWindowPositionValue(_windowRect, scale);
-        }
-
     }
 
-    private void DrawWindow(int windowId)
+    private void DrawInventoryHeader(Rect rect)
+    {
+        GUILayout.BeginArea(rect, GUI.skin.box);
+        GUILayout.BeginHorizontal();
+
+        GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
+        GUILayout.Label($"HERMES  /  {GetTabDisplayName(_activeTab).ToUpperInvariant()}");
+        if (Plugin.Settings.ShowHelpText.Value && rect.width >= 900f)
+        {
+            GUILayout.Label("Read-only inventory intelligence and raid planning.");
+        }
+        else if (!string.IsNullOrWhiteSpace(_refreshStatus))
+        {
+            GUILayout.Label(_refreshStatus);
+        }
+        GUILayout.EndVertical();
+
+        GUILayout.Space(8f);
+        if (rect.width >= 760f)
+        {
+            if (GUILayout.Button("Reset", GUILayout.Width(72f), GUILayout.Height(28f)))
+            {
+                ClearCurrentTab();
+            }
+        }
+
+        GUI.enabled = !_refreshingCurrent;
+        if (GUILayout.Button(
+                _refreshingCurrent ? "Working..." : "Refresh",
+                GUILayout.Width(84f),
+                GUILayout.Height(28f)))
+        {
+            _ = RefreshCurrentDataAsync();
+        }
+        GUI.enabled = true;
+
+        if (GUILayout.Button("Back", GUILayout.Width(72f), GUILayout.Height(28f)))
+        {
+            HermesNativeScreenRegistry.TryReturnToInventory();
+        }
+
+        GUILayout.EndHorizontal();
+        GUILayout.EndArea();
+    }
+
+    private void DrawInventoryNavigationRail(Rect rect)
+    {
+        EnsureEnabledTabSelected();
+
+        GUILayout.BeginArea(rect, GUI.skin.box);
+        GUILayout.Label("WORKSPACES");
+        GUILayout.Space(2f);
+
+        if (Plugin.Settings.EnableAssistantTab.Value)
+        {
+            DrawNavigationButton(HermesTab.Assistant, "Assistant");
+        }
+
+        DrawNavigationButton(HermesTab.ItemSearch, "Items & Market");
+        DrawNavigationButton(HermesTab.Hideout, "Hideout");
+        DrawNavigationButton(HermesTab.Crafts, "Crafts");
+        DrawNavigationButton(HermesTab.Stash, "Stash");
+        DrawNavigationButton(HermesTab.Loadout, "Loadout");
+        DrawNavigationButton(HermesTab.RaidPlanner, "Raid Planner");
+
+        GUILayout.FlexibleSpace();
+        GUILayout.Label("READ ONLY");
+        if (Plugin.Settings.ShowDiagnosticsFooter.Value)
+        {
+            GUILayout.Label(FormatCompactDiagnosticsStatus());
+            if (GUILayout.Button("Copy diagnostics", GUILayout.Height(26f)))
+            {
+                GUIUtility.systemCopyBuffer = BuildDiagnosticsReport();
+                _refreshStatus = "Diagnostics copied.";
+            }
+        }
+        GUILayout.EndArea();
+    }
+
+    private void DrawCompactInventoryNavigation(Rect rect)
+    {
+        EnsureEnabledTabSelected();
+
+        GUILayout.BeginArea(rect, GUI.skin.box);
+        var firstRow = new List<(HermesTab Tab, string Label)>();
+        if (Plugin.Settings.EnableAssistantTab.Value)
+        {
+            firstRow.Add((HermesTab.Assistant, "Assistant"));
+        }
+        firstRow.Add((HermesTab.ItemSearch, "Items"));
+        firstRow.Add((HermesTab.Hideout, "Hideout"));
+        firstRow.Add((HermesTab.Crafts, "Crafts"));
+
+        var secondRow = new List<(HermesTab Tab, string Label)>
+        {
+            (HermesTab.Stash, "Stash"),
+            (HermesTab.Loadout, "Loadout"),
+            (HermesTab.RaidPlanner, "Raid Planner")
+        };
+
+        DrawCompactNavigationRow(firstRow, rect.width);
+        GUILayout.Space(3f);
+        DrawCompactNavigationRow(secondRow, rect.width);
+        GUILayout.EndArea();
+    }
+
+    private void DrawCompactNavigationRow(
+        IReadOnlyList<(HermesTab Tab, string Label)> entries,
+        float availableWidth)
+    {
+        GUILayout.BeginHorizontal();
+        var width = Mathf.Clamp(
+            (availableWidth - 18f - Math.Max(0, entries.Count - 1) * 4f) / Math.Max(1, entries.Count),
+            72f,
+            180f);
+        foreach (var entry in entries)
+        {
+            DrawTabButton(entry.Tab, entry.Label, width);
+        }
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
+    }
+
+    private void DrawNavigationButton(HermesTab tab, string label)
+    {
+        var selected = _activeTab == tab;
+        if (GUILayout.Button(
+                (selected ? "▶  " : "    ") + label,
+                GUILayout.Height(32f),
+                GUILayout.ExpandWidth(true)))
+        {
+            SetActiveTab(tab);
+        }
+        GUILayout.Space(2f);
+    }
+
+    private void EnsureEnabledTabSelected()
     {
         if (_activeTab == HermesTab.Assistant && !Plugin.Settings.EnableAssistantTab.Value)
         {
             SetActiveTab(HermesTab.ItemSearch);
         }
+    }
 
-        GUILayout.BeginVertical();
+    private static string GetTabDisplayName(HermesTab tab)
+    {
+        return tab switch
+        {
+            HermesTab.Assistant => "Assistant",
+            HermesTab.ItemSearch => "Items & Market",
+            HermesTab.Hideout => "Hideout",
+            HermesTab.Crafts => "Crafts",
+            HermesTab.Stash => "Stash",
+            HermesTab.Loadout => "Loadout",
+            HermesTab.RaidPlanner => "Raid Planner",
+            _ => "Workspace"
+        };
+    }
 
-        HermesUi.DrawAppHeader(
-            "READ-ONLY PERSONAL OPERATIONS ASSISTANT",
-            "Right-click owned, equipped, trader, or flea items and choose Ask HERMES. PMC items use the exact profile instance; previews use the base item.");
-        GUILayout.Space(HermesUi.StandardSpace);
-        DrawTabs();
-        GUILayout.Space(HermesUi.StandardSpace);
+    private void DrawInventoryBody(Rect rect)
+    {
+        GUI.BeginGroup(rect);
+        try
+        {
+            GUILayout.BeginArea(new Rect(0f, 0f, rect.width, rect.height));
+            DrawActiveTabContent();
+        }
+        finally
+        {
+            GUILayout.EndArea();
+            GUI.EndGroup();
+        }
+    }
 
+    private void DrawActiveTabContent()
+    {
         switch (_activeTab)
         {
             case HermesTab.Assistant:
@@ -329,37 +554,28 @@ internal sealed class HermesWindow
             case HermesTab.Loadout:
                 _loadoutPanel.Draw();
                 break;
+            case HermesTab.RaidPlanner:
+                _loadoutPanel.OpenView("Raid Planner");
+                _loadoutPanel.Draw();
+                break;
             default:
                 DrawItemSearchTab();
                 break;
         }
-
-        GUILayout.Space(6f);
-        DrawFooter();
-
-        GUILayout.EndVertical();
-        GUI.DragWindow(new Rect(0f, 0f, _windowRect.width, 24f));
     }
 
-    private void DrawTabs()
+    private string FormatCompactDiagnosticsStatus()
     {
-        GUILayout.BeginHorizontal();
-        if (Plugin.Settings.EnableAssistantTab.Value)
-        {
-            DrawTabButton(HermesTab.Assistant, "Assistant");
-        }
-        DrawTabButton(HermesTab.ItemSearch, "Item Search");
-        DrawTabButton(HermesTab.Hideout, "Hideout");
-        DrawTabButton(HermesTab.Crafts, "Crafts");
-        DrawTabButton(HermesTab.Stash, "Stash");
-        DrawTabButton(HermesTab.Loadout, "Loadout");
-        GUILayout.FlexibleSpace();
-        GUILayout.EndHorizontal();
+        var requests = HermesApiClient.GetDiagnosticsSnapshot();
+        var cacheLabel = _cacheStatus is { Found: true }
+            ? $"Cache {_cacheStatus.MarketSummaryEntryCount + _cacheStatus.MarketUnitValueEntryCount:N0}"
+            : "Cache --";
+        return $"{cacheLabel}  •  Req {requests.Active:N0}/{requests.Failed:N0}  •  Notices {_noticeService.ActiveNoticeCount:N0}";
     }
 
-    private void DrawTabButton(HermesTab tab, string label)
+    private void DrawTabButton(HermesTab tab, string label, float width)
     {
-        if (HermesUi.DrawTabButton(label, _activeTab == tab, 128f))
+        if (HermesUi.DrawTabButton(label, _activeTab == tab, width))
         {
             SetActiveTab(tab);
         }
@@ -1320,56 +1536,6 @@ internal sealed class HermesWindow
         GUILayout.EndVertical();
     }
 
-    private void DrawFooter()
-    {
-        GUILayout.BeginHorizontal();
-
-        if (GUILayout.Button("Clear", GUILayout.Width(90f)))
-        {
-            ClearCurrentTab();
-        }
-
-        GUI.enabled = !_refreshingCurrent;
-        if (GUILayout.Button(
-                _refreshingCurrent ? "Refreshing..." : "Refresh current data",
-                GUILayout.Width(155f)))
-        {
-            _ = RefreshCurrentDataAsync();
-        }
-
-        GUI.enabled = true;
-        GUILayout.Space(8f);
-        if (Plugin.Settings.ShowDiagnosticsFooter.Value)
-        {
-            GUILayout.Label(FormatDiagnosticsStatus(), GUILayout.ExpandWidth(true));
-            if (GUILayout.Button("Copy diagnostics", GUILayout.Width(125f)))
-            {
-                GUIUtility.systemCopyBuffer = BuildDiagnosticsReport();
-                _refreshStatus = "HERMES diagnostics copied to the clipboard.";
-            }
-        }
-        else
-        {
-            GUILayout.FlexibleSpace();
-        }
-
-        GUILayout.Label($"{Plugin.Settings.ToggleWindowShortcut.Value} toggles HERMES");
-        GUILayout.Space(12f);
-
-        if (GUILayout.Button("Close", GUILayout.Width(90f)))
-        {
-            Plugin.Settings.RememberWindowPositionValue(_windowRect, Plugin.Settings.GetUiScale());
-            _visible = false;
-        }
-
-        GUILayout.EndHorizontal();
-
-        if (!string.IsNullOrWhiteSpace(_refreshStatus))
-        {
-            GUILayout.Label(_refreshStatus);
-        }
-    }
-
     private string FormatDiagnosticsStatus()
     {
         var requests = HermesApiClient.GetDiagnosticsSnapshot();
@@ -1381,7 +1547,7 @@ internal sealed class HermesWindow
         var marketEntries = _cacheStatus.MarketUnitValueEntryCount + _cacheStatus.MarketSummaryEntryCount;
         return $"Cache M/S/L: {marketEntries:N0}/{_cacheStatus.StashAnalysisEntryCount:N0}/{_cacheStatus.LoadoutAnalysisEntryCount:N0}"
                + $" • Requests: {requests.Active:N0} active, {requests.Completed:N0} ok, {requests.Failed:N0} failed, {requests.DeduplicatedRequests:N0} shared"
-               + $" • Notices: {_noticeService.ActiveNoticeCount:N0}";
+               + $" • Alerts: {_noticeService.ActiveNoticeCount:N0}";
     }
 
     private string BuildDiagnosticsReport()
@@ -1389,14 +1555,14 @@ internal sealed class HermesWindow
         var requests = HermesApiClient.GetDiagnosticsSnapshot();
         var lines = new List<string>
         {
-            "HERMES 0.1.0-alpha12.4.2 diagnostics",
+            "HERMES 0.1.0-alpha12.6.2 diagnostics",
             $"Active tab: {_activeTab}",
             $"Client requests: started={requests.Started}, completed={requests.Completed}, failed={requests.Failed}, active={requests.Active}",
             $"Failures: timeout={requests.TimedOut}, transport={requests.TransportFailures}, invalid-response={requests.InvalidResponses}",
             $"Performance: slow={requests.SlowRequests}, shared-duplicates={requests.DeduplicatedRequests}, last-duration-ms={requests.LastDurationMilliseconds}",
             $"Last route: {requests.LastRoute}",
             $"Last failure: {(string.IsNullOrWhiteSpace(requests.LastFailure) ? "none" : requests.LastFailure)}",
-            $"Assistant notices: {_noticeService.GetDiagnosticsSummary()}"
+            $"Assistant alerts: {_noticeService.GetDiagnosticsSummary()}"
         };
 
         if (_cacheStatus is { Found: true })
@@ -1473,6 +1639,7 @@ internal sealed class HermesWindow
                     await _stashPanel.RefreshFromServerAsync(false, true);
                     break;
                 case HermesTab.Loadout:
+                case HermesTab.RaidPlanner:
                     await _loadoutPanel.RefreshFromServerAsync(true);
                     break;
                 default:
@@ -1532,6 +1699,7 @@ internal sealed class HermesWindow
                 _stashPanel.Clear();
                 break;
             case HermesTab.Loadout:
+            case HermesTab.RaidPlanner:
                 _loadoutPanel.Clear();
                 break;
             default:
@@ -1851,7 +2019,7 @@ internal sealed class HermesWindow
 
     private void OpenNoticeTarget(string tabName)
     {
-        _visible = true;
+        EnsurePresentationVisible();
         NavigateToTab(tabName);
     }
 
@@ -1864,6 +2032,14 @@ internal sealed class HermesWindow
         if (tab == HermesTab.Loadout && parts.Length > 1)
         {
             _loadoutPanel.OpenView(parts[1]);
+            if (string.Equals(parts[1], "Raid Planner", StringComparison.OrdinalIgnoreCase))
+            {
+                tab = HermesTab.RaidPlanner;
+            }
+        }
+        else if (tab == HermesTab.RaidPlanner)
+        {
+            _loadoutPanel.OpenView("Raid Planner");
         }
 
         SetActiveTab(tab);
@@ -1881,7 +2057,16 @@ internal sealed class HermesWindow
             return;
         }
 
+        var previousTab = _activeTab;
         _activeTab = tab;
+        if (tab == HermesTab.RaidPlanner)
+        {
+            _loadoutPanel.OpenView("Raid Planner");
+        }
+        else if (tab == HermesTab.Loadout && previousTab == HermesTab.RaidPlanner)
+        {
+            _loadoutPanel.OpenView("Overview");
+        }
         Plugin.Settings.RememberTab(GetTabName(tab));
         if (Plugin.Settings.DetailedLogging.Value)
         {
@@ -1898,6 +2083,7 @@ internal sealed class HermesWindow
             "crafts" or "craft" => HermesTab.Crafts,
             "stash" => HermesTab.Stash,
             "loadout" => HermesTab.Loadout,
+            "raid" or "raid planner" => HermesTab.RaidPlanner,
             _ => HermesTab.ItemSearch
         };
 
@@ -1915,6 +2101,7 @@ internal sealed class HermesWindow
             HermesTab.Crafts => "Crafts",
             HermesTab.Stash => "Stash",
             HermesTab.Loadout => "Loadout",
+            HermesTab.RaidPlanner => "Raid Planner",
             _ => "Item Search"
         };
     }

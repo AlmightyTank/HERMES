@@ -1,5 +1,5 @@
+using System;
 using BepInEx;
-using BepInEx.Configuration;
 using BepInEx.Logging;
 using UnityEngine;
 
@@ -18,6 +18,9 @@ public sealed class Plugin : BaseUnityPlugin
 
     private HermesWindow? _window;
 
+    internal HermesWindow Window => _window
+                                   ?? throw new InvalidOperationException("HERMES window controller is not initialized.");
+
     private void Awake()
     {
         Log = Logger;
@@ -26,27 +29,61 @@ public sealed class Plugin : BaseUnityPlugin
         Settings.Bind(Config);
         _window = new HermesWindow();
 
+        TryEnable("Ask HERMES context actions", () => new AskHermesContextMenuPatch().Enable());
+        TryEnable("Character and in-raid inventory tab injection", () => new HermesNativeInventoryScreenPatch().Enable());
+        TryEnable("InventoryScreen close lifecycle cleanup", () => new HermesNativeInventoryScreenClosePatch().Enable());
+        TryEnable("native inventory-tab icon correction", () => new HermesNativeTabIconFixPatch().Enable());
+
         try
         {
-            new AskHermesContextMenuPatch().Enable();
-            Logger.LogInfo("Ask HERMES inventory, trader, and flea context actions enabled.");
+            new HermesWindowRaidPlannerDrawPatch().Enable();
+            new HermesWindowRaidPlannerRefreshPatch().Enable();
+            new HermesWindowRaidPlannerClearPatch().Enable();
+            new HermesLoadoutTabsWithoutRaidPlannerPatch().Enable();
+            new HermesLoadoutOpenViewSeparationPatch().Enable();
+            new HermesLoadoutDefaultViewSeparationPatch().Enable();
+            new HermesLoadoutSummaryViewGuardPatch().Enable();
+            Logger.LogInfo("HERMES Loadout and Raid Planner workspace separation enabled.");
         }
         catch (Exception ex)
         {
-            Logger.LogError($"Ask HERMES context action could not be enabled: {ex}");
+            Logger.LogError($"HERMES Loadout/Raid Planner separation could not be enabled: {ex}");
         }
 
         try
         {
-            new HermesNativeNotificationClickPatch().Enable();
-            Logger.LogInfo("HERMES native EFT notification click routing enabled.");
+            HermesEftThemeBootstrap.Enable();
+            Logger.LogInfo("HERMES EFT body-panel theme enabled for the staged native conversion.");
         }
         catch (Exception ex)
         {
-            Logger.LogError($"HERMES native EFT notification click routing could not be enabled: {ex}");
+            Logger.LogError($"HERMES EFT body-panel theme could not be enabled: {ex}");
         }
 
-        Logger.LogInfo($"HERMES 0.1.0-alpha12.4.2 loaded. Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");
+        TryEnable("native Ragfair asset capture", () => new HermesRagfairNativeAssetPatch().Enable());
+        TryEnable("native Items & Market search toolbar", () => new HermesNativeItemSearchBarSuppressionPatch().Enable());
+        TryEnable("native EFT notification click routing", () => new HermesNativeNotificationClickPatch().Enable());
+
+        HermesRagfairNativeAssets.TryResolve();
+
+        Logger.LogInfo(
+            $"HERMES 0.1.0-alpha12.7.3 Flea-style Items & Market browser loaded. "
+            + $"Native Ragfair templates ready: {HermesRagfairNativeAssets.Ready}. "
+            + $"Inventory-only workspace: {Settings.UseNativeInventoryTabs.Value}. "
+            + $"Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");
+    }
+
+    private void TryEnable(string label, Action enable)
+    {
+        try
+        {
+            enable();
+            Logger.LogInfo($"HERMES {label} enabled.");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError($"HERMES {label} could not be enabled: {ex}");
+        }
     }
 
     internal void OpenForInventoryItem(string profileItemId)
@@ -86,16 +123,12 @@ public sealed class Plugin : BaseUnityPlugin
 
     private void Update()
     {
+        HermesNativeScreenRegistry.TickDiscovery();
         _window?.Tick();
 
         if (Settings.ToggleWindowShortcut.Value.IsDown())
         {
             _window?.Toggle();
         }
-    }
-
-    private void OnGUI()
-    {
-        _window?.Draw();
     }
 }

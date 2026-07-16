@@ -1,40 +1,41 @@
-# HERMES 0.1.0-alpha12.4.2 Release Checklist
+# HERMES 0.1.0-alpha12.6.2 local test checklist
 
 ## Build
 
-- [ ] Open `HERMES.sln` in Visual Studio.
-- [ ] Confirm the configured SPT root points to `C:\RealSPT`.
-- [ ] Run **Build → Rebuild Solution**.
-- [ ] Confirm client and server modules auto-deploy without errors.
-- [ ] Start SPT.Server and confirm HERMES reports `0.1.0-alpha12.4.2`.
-- [ ] Confirm the BepInEx log reports `HERMES native EFT notification click routing enabled.`
+- Open `HERMES.sln` and run **Build → Rebuild Solution**.
+- Confirm the client log reports `HERMES 0.1.0-alpha12.6.2 loaded`.
+- Confirm no client or server HERMES exceptions occur during startup.
 
-## Native EFT notification behavior
+## Simplified alerts
 
-- [ ] Enable proactive notices and use **Check now** in the Assistant tab.
-- [ ] Confirm the notice is displayed by EFT's normal notification stack, not a separate HERMES IMGUI card.
-- [ ] Confirm the notice uses an EFT Alert, Quest, Hideout, or Note icon.
-- [ ] Confirm the notice remains visible for more than 20 seconds.
-- [ ] Left-click the native notification and confirm HERMES opens to the intended tab/sub-view.
-- [ ] Confirm EFT closes the notification normally after the click.
-- [ ] Confirm ordinary EFT notifications still behave normally and do not open HERMES.
-- [ ] Generate a notice while the notification manager is not ready during startup and confirm it appears after the main menu becomes available.
-- [ ] Open the Assistant inbox and dismiss a visible notice; confirm the matching native notification closes.
-- [ ] Use **Dismiss all** and confirm all HERMES-owned native notices close.
-- [ ] Switch profiles and confirm old HERMES native notifications close and notice state resets.
+- Trigger two or more actionable conditions and confirm EFT displays only one HERMES notification at a time.
+- Confirm each native notification is one line and begins with `HERMES •`.
+- Confirm no long description appears under the title.
+- Click a notification and confirm it opens the exact HERMES workspace.
+- Dismiss a notification and confirm the same unchanged condition does not immediately return.
+- Correct the underlying condition, refresh HERMES, and confirm the stale alert disappears.
+- Confirm the next queued alert appears after the first is opened, dismissed, or cleared.
+- Open Assistant and confirm the compact Alerts box does not use expandable cards or history.
+- Test Check, Clear, Open, and ×.
+- Confirm F12 contains the reduced **Assistant Alerts** options and no obsolete cooldown, auto-dismiss, maximum-visible, or change-only controls.
 
-## Notice categories
+## Main Character screen
 
-- [ ] Confirm critical Loadout warnings create at most one Loadout notice.
-- [ ] Confirm a high-value uninsured item creates a Value & Insurance notice.
-- [ ] Complete a hideout production and confirm the completion notice.
-- [ ] Confirm a ready hideout upgrade is reported when enabled.
-- [ ] Confirm a ready profitable craft respects the minimum-profit threshold.
-- [ ] Enable Stash notices and confirm the minimum-value threshold is respected.
-- [ ] Confirm **Only notify on changes** prevents unchanged conditions from repeating.
-- [ ] Disable change-only mode and confirm the repeat cooldown is respected.
-- [ ] Confirm automatic checks pause during a raid when raid notices are disabled.
+- Open Character and confirm the native HERMES tab remains after Prestige.
+- Confirm Overall, Gear, Health, Skills, Map, Tasks, Achievements, and Prestige remain visible and usable.
+- Confirm the EFT top tab strip and bottom task bar remain visible and clickable.
+- Test every HERMES workspace and Back to Inventory.
 
-## Safety
+## In-raid inventory
 
-- [ ] Confirm no notice action buys, sells, lists, equips, moves, insures, crafts, collects, accepts, or completes anything.
+- Enter a raid and open inventory.
+- Confirm HERMES appears after Prestige.
+- Confirm F8 opens and returns from HERMES without closing inventory.
+- Confirm alerts remain disabled during raids by default.
+- Enable raid alerts in F12 and confirm only one compact notification can appear.
+
+## Regression
+
+- Verify Assistant, Items & Market, Hideout, Crafts, Stash, Loadout, and Raid Planner.
+- Verify Ask HERMES from inventory, equipped items, traders, flea offers, crafts, and hideout requirements.
+- Reopen Character at least five times and confirm one HERMES tab exists with no flicker or duplicate alert state.

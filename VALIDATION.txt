@@ -1,15 +1,21 @@
-HERMES 0.1.0-alpha12.4.2 validation
+HERMES 0.1.0-alpha12.6.2 validation
 
-- 38 C# files passed tree-sitter C# syntax parsing.
-- 3 project XML files parsed successfully.
-- Custom proactive IMGUI overlay calls were removed.
-- Native EFT NotificationManagerClass.DisplayMessageNotification wiring confirmed.
-- ENotificationDurationType.Infinite confirmed in the uploaded SPT 4.0.13 Assembly-CSharp.dll.
-- Native Alert, Note, Quest, and Hideout icon enum values confirmed.
-- BaseNotificationView.OnPointerClick and HideNotification confirmed.
-- HERMES-only native click registration and navigation wiring checked.
-- Native notification dismissal from the Assistant inbox checked.
-- Read-only behavior audit passed.
-- Version consistency and clean source-tree checks passed.
+Completed in this environment:
+- Updated all client/server/build version strings to 0.1.0-alpha12.6.2.
+- Reduced native HERMES notifications to one active card.
+- Changed native notification text to one line: HERMES • title.
+- Removed custom notification text colors and long native descriptions.
+- Added automatic dismissal when an actionable condition clears.
+- Replaced expandable notice cards/history with a compact active-alert list.
+- Removed four obsolete F12 controls: repeat cooldown, overlay auto-dismiss, maximum visible notices, and change-only mode.
+- Kept direct native-notification routing into the requested HERMES workspace.
+- Kept the inventory-only HERMES tab after Prestige.
+- Confirmed no floating-window rendering path is restored.
+- Confirmed project files parse as XML.
+- Confirmed every ConfigEntry property is assigned by a config.Bind call.
+- Confirmed C# source files pass structural delimiter checks.
+- Confirmed ZIP integrity after packaging.
 
-A local Visual Studio rebuild and in-game SPT 4.0.13 runtime test are still required.
+Not completed here:
+- Compilation with the SPT 4.0.13 assemblies because .NET SDK/MSBuild is unavailable.
+- Runtime testing in Escape from Tarkov/SPT.

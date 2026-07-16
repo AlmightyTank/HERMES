@@ -94,7 +94,7 @@ internal static class HermesUi
         GUILayout.Label(message);
         if (Plugin.Settings.ShowHelpText.Value)
         {
-            GUILayout.Label("Confirm SPT.Server is still running, then use the panel Refresh button. Copy diagnostics from the footer when reporting a repeatable failure.");
+            GUILayout.Label("Confirm SPT.Server is still running, then use the panel Refresh button. Use Copy diagnostics in the HERMES navigation rail when reporting a repeatable failure.");
         }
         GUILayout.EndVertical();
     }

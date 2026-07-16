@@ -1,0 +1,22 @@
+<Project>
+  <!-- Place beside Hermes.Client.csproj. This keeps TMP references portable across SptRoot layouts. -->
+  <PropertyGroup>
+    <HermesTextMeshProManagedPath Condition="'$(EftManaged)' != ''">$(EftManaged)</HermesTextMeshProManagedPath>
+    <HermesTextMeshProManagedPath Condition="'$(HermesTextMeshProManagedPath)' == '' and '$(SptRoot)' != ''">$(SptRoot)\EscapeFromTarkov_Data\Managed</HermesTextMeshProManagedPath>
+    <HermesTextMeshProManagedPath Condition="'$(HermesTextMeshProManagedPath)' == ''">C:\RealSPT\EscapeFromTarkov_Data\Managed</HermesTextMeshProManagedPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(HermesTextMeshProManagedPath)\Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="ValidateHermesTextMeshProReference"
+          BeforeTargets="ResolveReferences"
+          Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="!Exists('$(HermesTextMeshProManagedPath)\Unity.TextMeshPro.dll')"
+           Text="Unity.TextMeshPro.dll was not found at '$(HermesTextMeshProManagedPath)\Unity.TextMeshPro.dll'. Check SptRoot/EftManaged in Hermes.Client.csproj." />
+  </Target>
+</Project>

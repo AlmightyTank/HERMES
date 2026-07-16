@@ -6,9 +6,9 @@ using UnityEngine;
 namespace Hermes.Client;
 
 /// <summary>
-/// Publishes HERMES notices through EFT's real NotificationManagerClass queue.
-/// Native notification views remain owned by EFT; HERMES only tracks its own
-/// descriptions so a click can navigate to the corresponding read-only panel.
+/// Publishes one-line HERMES alerts through EFT's native notification queue.
+/// HERMES tracks only its own descriptions so clicking a card can open the
+/// corresponding read-only inventory workspace.
 /// </summary>
 internal static class HermesNativeNotificationBridge
 {
@@ -46,7 +46,8 @@ internal static class HermesNativeNotificationBridge
         string targetTab,
         out string description)
     {
-        description = BuildDescription(title, message);
+        _ = message;
+        description = BuildDescription(title);
         if (string.IsNullOrWhiteSpace(noticeId)
             || string.IsNullOrWhiteSpace(description)
             || !IsNotificationManagerReady())
@@ -62,9 +63,7 @@ internal static class HermesNativeNotificationBridge
                 return true;
             }
 
-            // HERMES deduplicates active conditions before this point. Keeping the
-            // description unique inside our own active set avoids ambiguous clicks.
-            if (ByDescription.ContainsKey(description))
+            if (ById.Count > 0 || ByDescription.ContainsKey(description))
             {
                 return false;
             }
@@ -79,7 +78,7 @@ internal static class HermesNativeNotificationBridge
                 description,
                 ENotificationDurationType.Infinite,
                 ResolveIcon(severity, category),
-                ResolveTextColor(severity));
+                null);
             return true;
         }
         catch (Exception ex)
@@ -155,13 +154,12 @@ internal static class HermesNativeNotificationBridge
         }
     }
 
-    private static string BuildDescription(string title, string message)
+    private static string BuildDescription(string title)
     {
         var cleanTitle = NormalizeLine(title);
-        var cleanMessage = NormalizeLine(message);
-        return string.IsNullOrWhiteSpace(cleanMessage)
-            ? $"HERMES — {cleanTitle}"
-            : $"HERMES — {cleanTitle}\n{cleanMessage}";
+        return string.IsNullOrWhiteSpace(cleanTitle)
+            ? "HERMES"
+            : $"HERMES • {cleanTitle}";
     }
 
     private static string NormalizeLine(string value)
@@ -187,23 +185,7 @@ internal static class HermesNativeNotificationBridge
             return ENotificationIconType.Hideout;
         }
 
-        if (category.Contains("quest", StringComparison.OrdinalIgnoreCase)
-            || category.Contains("raid", StringComparison.OrdinalIgnoreCase))
-        {
-            return ENotificationIconType.Quest;
-        }
-
         return ENotificationIconType.Note;
-    }
-
-    private static Color? ResolveTextColor(string severity)
-    {
-        return severity.Trim().ToLowerInvariant() switch
-        {
-            "critical" or "error" => new Color(0.95f, 0.38f, 0.30f, 1f),
-            "warning" => new Color(0.95f, 0.73f, 0.31f, 1f),
-            _ => null
-        };
     }
 
     private static bool IsNotificationManagerReady()

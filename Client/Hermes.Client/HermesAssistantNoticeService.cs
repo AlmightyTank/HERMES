@@ -6,17 +6,15 @@ namespace Hermes.Client;
 
 internal sealed class HermesAssistantNoticeService
 {
-    private const int MaximumRetainedNotices = 30;
+    private const int MaximumRetainedNotices = 8;
 
     private readonly List<HermesAssistantNotice> _notices = [];
-    private readonly Dictionary<string, float> _lastShownByFingerprint = new(StringComparer.Ordinal);
     private HashSet<string> _activeFingerprints = new(StringComparer.Ordinal);
     private bool _checking;
     private float _nextCheckAt = 8f;
-    private string _status = "Proactive notices are waiting for the first profile check.";
+    private string _status = "Alerts are waiting for the first profile check.";
     private string? _profileToken;
     private int _requestVersion;
-    private bool _inboxExpanded = true;
     private bool _hermesVisible;
     private bool _assistantVisible;
 
@@ -71,100 +69,72 @@ internal sealed class HermesAssistantNoticeService
         HermesNativeNotificationBridge.DismissAll();
         _notices.Clear();
         _activeFingerprints.Clear();
-        _lastShownByFingerprint.Clear();
-        _status = "Notice history cleared.";
+        _status = "Alerts cleared.";
     }
 
     public void DrawInbox(Action<string> navigate)
     {
+        GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.BeginHorizontal();
-        if (HermesUi.DrawSectionButton(
-                "PROACTIVE NOTICES",
-                _inboxExpanded,
-                ActiveNoticeCount == 0 ? "CLEAR" : $"{ActiveNoticeCount:N0} ACTIVE"))
-        {
-            _inboxExpanded = !_inboxExpanded;
-        }
-        GUILayout.EndHorizontal();
-
-        if (!_inboxExpanded)
-        {
-            return;
-        }
-
-        GUILayout.BeginHorizontal();
+        GUILayout.Label(
+            ActiveNoticeCount == 0 ? "ALERTS" : $"ALERTS  {ActiveNoticeCount:N0}",
+            GUILayout.Width(120f));
+        GUILayout.FlexibleSpace();
         GUI.enabled = !_checking && Plugin.Settings.EnableProactiveAssistantNotices.Value;
-        if (GUILayout.Button(_checking ? "Checking..." : "Check now", GUILayout.Width(105f)))
+        if (GUILayout.Button(_checking ? "Checking" : "Check", GUILayout.Width(72f)))
         {
             _ = RefreshNowAsync();
         }
-        GUI.enabled = true;
-        if (GUILayout.Button("Dismiss all", GUILayout.Width(105f)))
-        {
-            foreach (var notice in _notices)
-            {
-                DismissNotice(notice);
-            }
-        }
-        if (GUILayout.Button("Clear history", GUILayout.Width(105f)))
+        GUI.enabled = ActiveNoticeCount > 0;
+        if (GUILayout.Button("Clear", GUILayout.Width(62f)))
         {
             Clear();
         }
-        GUILayout.FlexibleSpace();
+        GUI.enabled = true;
         GUILayout.EndHorizontal();
-
-        HermesUi.DrawStatusLine(_status, _checking);
 
         if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
         {
-            HermesUi.DrawEmptyState(
-                "Proactive notices are disabled.",
-                "Enable Assistant Notices → Enable proactive notices in BepInEx/F12 configuration.");
+            GUILayout.Label("Disabled in F12 → Assistant Alerts.");
+            GUILayout.EndVertical();
             return;
         }
 
         var rows = _notices
-            .OrderBy(notice => notice.Dismissed)
-            .ThenByDescending(notice => notice.SeverityRank)
+            .OrderByDescending(notice => notice.SeverityRank)
             .ThenByDescending(notice => notice.CreatedAt)
+            .Take(MaximumRetainedNotices)
             .ToList();
         if (rows.Count == 0)
         {
-            HermesUi.DrawEmptyState(
-                "No notices have been generated.",
-                "HERMES only surfaces configured conditions that are currently actionable.");
+            GUILayout.Label(_checking ? "Checking current profile..." : "No active alerts.");
+            GUILayout.EndVertical();
             return;
         }
 
-        var limited = HermesUi.LimitRows(rows, out var hiddenRows);
-        foreach (var notice in limited)
+        foreach (var notice in rows)
         {
-            GUILayout.BeginVertical(GUI.skin.box);
             GUILayout.BeginHorizontal();
-            GUILayout.Label($"{notice.Severity.ToUpperInvariant()} • {notice.Category}", GUILayout.Width(200f));
-            GUILayout.Label(notice.Title, GUILayout.ExpandWidth(true));
-            GUILayout.EndHorizontal();
-            GUILayout.Label(notice.Message);
-            GUILayout.BeginHorizontal();
-            GUI.enabled = !notice.Dismissed;
-            if (GUILayout.Button("Open", GUILayout.Width(85f)))
+            GUILayout.Label(GetSeverityMarker(notice.Severity), GUILayout.Width(18f));
+            if (GUILayout.Button(
+                    notice.Title,
+                    GUI.skin.label,
+                    GUILayout.ExpandWidth(true)))
             {
                 OpenNotice(notice, navigate);
             }
-            if (GUILayout.Button("Dismiss", GUILayout.Width(85f)))
+            if (GUILayout.Button("Open", GUILayout.Width(58f)))
+            {
+                OpenNotice(notice, navigate);
+            }
+            if (GUILayout.Button("×", GUILayout.Width(28f)))
             {
                 DismissNotice(notice);
             }
-            GUI.enabled = true;
-            if (notice.Dismissed)
-            {
-                GUILayout.Label("Dismissed");
-            }
-            GUILayout.FlexibleSpace();
             GUILayout.EndHorizontal();
-            GUILayout.EndVertical();
         }
-        HermesUi.DrawHiddenRowsNotice(hiddenRows);
+
+        GUILayout.EndVertical();
     }
 
     private async Task RefreshAsync(bool manual)
@@ -176,7 +146,7 @@ internal sealed class HermesAssistantNoticeService
 
         if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
         {
-            _status = "Proactive notices are disabled in F12 configuration.";
+            _status = "Alerts are disabled in F12 configuration.";
             return;
         }
 
@@ -202,7 +172,7 @@ internal sealed class HermesAssistantNoticeService
             if (profile is null || !profile.Found || string.IsNullOrWhiteSpace(profile.ContextToken))
             {
                 retrySoon = true;
-                _status = profile?.Message ?? "No active PMC profile is available for proactive notices.";
+                _status = profile?.Message ?? "No active PMC profile is available for alerts.";
                 return;
             }
 
@@ -212,7 +182,6 @@ internal sealed class HermesAssistantNoticeService
                 HermesNativeNotificationBridge.DismissAll();
                 _notices.Clear();
                 _activeFingerprints.Clear();
-                _lastShownByFingerprint.Clear();
             }
             _profileToken = profile.ContextToken;
 
@@ -288,7 +257,7 @@ internal sealed class HermesAssistantNoticeService
                     "loadout-critical|" + string.Join("|", warnings),
                     "Critical",
                     "Loadout",
-                    "Loadout readiness needs attention",
+                    $"Loadout: {loadout.CriticalCount:N0} critical issue(s)",
                     $"Readiness {loadout.ReadinessScore}% • {string.Join(" • ", warnings)}",
                     "Loadout/Overview"));
             }
@@ -310,7 +279,7 @@ internal sealed class HermesAssistantNoticeService
                 $"uninsured|{top?.ProfileItemId}|{loadout.ValueSummary.UninsuredItemCount}",
                 "Warning",
                 "Insurance",
-                "High-value uninsured equipment detected",
+                $"Insurance: ₽{loadout.ValueSummary.UninsuredReplacementValue:N0} uninsured",
                 $"At-risk uninsured value: ₽{loadout.ValueSummary.UninsuredReplacementValue:N0}. {detail}.",
                 "Loadout/Value & Insurance"));
         }
@@ -340,7 +309,7 @@ internal sealed class HermesAssistantNoticeService
                         $"{production.StationName}:{production.OutputTemplateId}:{production.OutputQuantity}")),
                     "Information",
                     "Hideout",
-                    "Hideout production is ready",
+                    $"Hideout: {completed.Count:N0} production(s) ready",
                     $"{completed.Count:N0} completed production(s) can be collected: {names}.",
                     "Hideout"));
             }
@@ -360,7 +329,7 @@ internal sealed class HermesAssistantNoticeService
                 "hideout-ready|" + string.Join("|", readyAreas),
                 "Information",
                 "Hideout",
-                "Hideout upgrades are ready",
+                $"Hideout: {hideout.ReadyAreaCount:N0} upgrade(s) ready",
                 readyAreas.Count > 0
                     ? $"{hideout.ReadyAreaCount:N0} area(s) are ready: {string.Join(", ", readyAreas)}."
                     : $"{hideout.ReadyAreaCount:N0} hideout area(s) are ready to upgrade.",
@@ -395,7 +364,7 @@ internal sealed class HermesAssistantNoticeService
             $"craft-ready|{best.CraftKey}",
             "Information",
             "Crafts",
-            $"Profitable craft ready: {best.OutputName}",
+            $"Craft ready: {best.OutputName}",
             $"{best.StationName} • estimated economic profit ₽{best.EstimatedEconomicProfit:N0} (₽{best.EstimatedEconomicProfitPerHour:N0}/h).",
             "Crafts"));
     }
@@ -416,7 +385,7 @@ internal sealed class HermesAssistantNoticeService
                 $"stash-cleanup|{stash.CleanupCandidateInstanceCount}|{stash.RecoverableCells}",
                 "Information",
                 "Stash",
-                "Stash cleanup opportunity",
+                $"Stash: {stash.CleanupCandidateInstanceCount:N0} cleanup item(s)",
                 $"{stash.CleanupCandidateInstanceCount:N0} cleanup candidate(s) could recover {stash.RecoverableCells:N0} cells and about ₽{stash.CleanupBestSaleValue:N0}.",
                 "Stash"));
             return;
@@ -428,7 +397,7 @@ internal sealed class HermesAssistantNoticeService
                 $"stash-surplus|{stash.SafeToSellInstanceCount}|{Math.Round(stash.PotentiallySellQuantity, 2)}",
                 "Information",
                 "Stash",
-                "Safe-to-sell surplus available",
+                $"Stash: {stash.SafeToSellInstanceCount:N0} surplus item(s)",
                 $"{stash.SafeToSellInstanceCount:N0} item instance(s) are potentially sellable for about ₽{stash.PotentialBestSaleValue:N0} after reservations.",
                 "Stash"));
         }
@@ -437,17 +406,24 @@ internal sealed class HermesAssistantNoticeService
     private void ApplyCandidates(IReadOnlyCollection<HermesAssistantNoticeCandidate> candidates)
     {
         var now = Time.realtimeSinceStartup;
+        var previousFingerprints = _activeFingerprints;
         var currentFingerprints = candidates
             .Select(candidate => candidate.Fingerprint)
             .ToHashSet(StringComparer.Ordinal);
-        var cooldownSeconds = Plugin.Settings.GetAssistantNoticeCooldownMinutes() * 60f;
 
-        foreach (var candidate in candidates)
+        foreach (var stale in _notices
+                     .Where(notice => !currentFingerprints.Contains(notice.Fingerprint))
+                     .ToList())
         {
-            var isChange = !_activeFingerprints.Contains(candidate.Fingerprint);
-            var cooldownElapsed = !_lastShownByFingerprint.TryGetValue(candidate.Fingerprint, out var lastShown)
-                                  || now - lastShown >= cooldownSeconds;
-            if (Plugin.Settings.OnlyNotifyAssistantNoticeChanges.Value ? !isChange : !cooldownElapsed)
+            DismissNotice(stale);
+        }
+        _notices.RemoveAll(notice => notice.Dismissed);
+
+        foreach (var candidate in candidates
+                     .OrderByDescending(candidate => SeverityRank(candidate.Severity)))
+        {
+            if (previousFingerprints.Contains(candidate.Fingerprint)
+                || _notices.Any(notice => notice.Fingerprint.Equals(candidate.Fingerprint, StringComparison.Ordinal)))
             {
                 continue;
             }
@@ -461,13 +437,20 @@ internal sealed class HermesAssistantNoticeService
                 candidate.Message,
                 candidate.TargetTab,
                 now));
-            _lastShownByFingerprint[candidate.Fingerprint] = now;
         }
 
         _activeFingerprints = currentFingerprints;
         if (_notices.Count > MaximumRetainedNotices)
         {
-            _notices.RemoveRange(0, _notices.Count - MaximumRetainedNotices);
+            foreach (var overflow in _notices
+                         .OrderByDescending(notice => notice.SeverityRank)
+                         .ThenByDescending(notice => notice.CreatedAt)
+                         .Skip(MaximumRetainedNotices)
+                         .ToList())
+            {
+                DismissNotice(overflow);
+            }
+            _notices.RemoveAll(notice => notice.Dismissed);
         }
     }
 
@@ -481,38 +464,35 @@ internal sealed class HermesAssistantNoticeService
             return;
         }
 
-        var availableSlots = Math.Max(
-            0,
-            Plugin.Settings.GetMaximumVisibleAssistantNotices()
-            - HermesNativeNotificationBridge.ActiveCount);
-        if (availableSlots == 0)
+        if (HermesNativeNotificationBridge.ActiveCount > 0)
         {
             return;
         }
 
-        foreach (var notice in _notices
-                     .Where(notice => !notice.Dismissed && !notice.NativePublished)
-                     .OrderByDescending(notice => notice.SeverityRank)
-                     .ThenBy(notice => notice.CreatedAt)
-                     .Take(availableSlots))
+        var notice = _notices
+            .Where(candidate => !candidate.Dismissed && !candidate.NativePublished)
+            .OrderByDescending(candidate => candidate.SeverityRank)
+            .ThenByDescending(candidate => candidate.CreatedAt)
+            .FirstOrDefault();
+        if (notice is null)
         {
-            if (!HermesNativeNotificationBridge.TryShow(
-                    notice.Id,
-                    notice.Severity,
-                    notice.Category,
-                    notice.Title,
-                    notice.Message,
-                    notice.TargetTab,
-                    out var description))
-            {
-                // The native manager may not be active during early startup. Leave the
-                // notice pending so a later Update can publish it once EFT is ready.
-                break;
-            }
-
-            notice.NativePublished = true;
-            notice.NativeDescription = description;
+            return;
         }
+
+        if (!HermesNativeNotificationBridge.TryShow(
+                notice.Id,
+                notice.Severity,
+                notice.Category,
+                notice.Title,
+                notice.Message,
+                notice.TargetTab,
+                out var description))
+        {
+            return;
+        }
+
+        notice.NativePublished = true;
+        notice.NativeDescription = description;
     }
 
     private void HandleNativeNotificationClick(string noticeId, string targetTab)
@@ -523,18 +503,19 @@ internal sealed class HermesAssistantNoticeService
             notice.Dismissed = true;
             notice.NativePublished = false;
             notice.NativeDescription = null;
+            _notices.Remove(notice);
         }
 
         Plugin.Instance?.OpenNoticeTarget(targetTab);
     }
 
-    private static void OpenNotice(HermesAssistantNotice notice, Action<string> navigate)
+    private void OpenNotice(HermesAssistantNotice notice, Action<string> navigate)
     {
         DismissNotice(notice);
         navigate(notice.TargetTab);
     }
 
-    private static void DismissNotice(HermesAssistantNotice notice)
+    private void DismissNotice(HermesAssistantNotice notice)
     {
         notice.Dismissed = true;
         if (notice.NativePublished)
@@ -543,6 +524,17 @@ internal sealed class HermesAssistantNoticeService
             notice.NativePublished = false;
             notice.NativeDescription = null;
         }
+        _notices.Remove(notice);
+    }
+
+    private static string GetSeverityMarker(string severity)
+    {
+        return SeverityRank(severity) switch
+        {
+            3 => "!",
+            2 => "•",
+            _ => "·"
+        };
     }
 
     private static bool NeedsLoadout()

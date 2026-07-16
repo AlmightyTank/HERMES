@@ -50,7 +50,7 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
 
         return new HermesStatusResponse(
             "HERMES",
-            "0.1.0-alpha12.4.2",
+            "0.1.0-alpha12.6.2",
             "4.0.13",
             true,
             [
@@ -232,6 +232,10 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
                 "assistant-notice-cooldowns",
                 "assistant-persistent-eft-style-notice-cards",
                 "assistant-clickable-notice-navigation",
+                "native-character-screen-hermes-tab",
+                "native-in-raid-inventory-hermes-tab",
+                "shared-native-screen-assistant-state",
+                "native-screen-item-and-notice-navigation",
                 "assistant-raid-suppression"
             ]);
     }

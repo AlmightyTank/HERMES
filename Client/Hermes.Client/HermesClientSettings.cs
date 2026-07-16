@@ -6,8 +6,6 @@ namespace Hermes.Client;
 internal sealed class HermesClientSettings
 {
     private const string LastTabPlayerPref = "HERMES.LastTab";
-    private const string WindowXPlayerPref = "HERMES.WindowX";
-    private const string WindowYPlayerPref = "HERMES.WindowY";
 
     public ConfigEntry<KeyboardShortcut> ToggleWindowShortcut { get; private set; } = null!;
     public ConfigEntry<string> DefaultOpeningTab { get; private set; } = null!;
@@ -38,12 +36,8 @@ internal sealed class HermesClientSettings
 
     public ConfigEntry<bool> EnableProactiveAssistantNotices { get; private set; } = null!;
     public ConfigEntry<int> AssistantNoticeCheckIntervalMinutes { get; private set; } = null!;
-    public ConfigEntry<int> AssistantNoticeCooldownMinutes { get; private set; } = null!;
-    public ConfigEntry<int> AssistantNoticeAutoDismissSeconds { get; private set; } = null!;
-    public ConfigEntry<int> MaximumVisibleAssistantNotices { get; private set; } = null!;
     public ConfigEntry<bool> ShowAssistantNoticesWhenClosed { get; private set; } = null!;
     public ConfigEntry<bool> ShowAssistantNoticesDuringRaid { get; private set; } = null!;
-    public ConfigEntry<bool> OnlyNotifyAssistantNoticeChanges { get; private set; } = null!;
     public ConfigEntry<bool> NotifyLoadoutReadiness { get; private set; } = null!;
     public ConfigEntry<bool> NotifyHighValueUninsuredItems { get; private set; } = null!;
     public ConfigEntry<bool> NotifyCompletedHideoutProduction { get; private set; } = null!;
@@ -53,16 +47,13 @@ internal sealed class HermesClientSettings
     public ConfigEntry<bool> NotifyStashOpportunities { get; private set; } = null!;
     public ConfigEntry<int> MinimumAssistantNoticeStashValue { get; private set; } = null!;
 
-    public ConfigEntry<int> WindowWidth { get; private set; } = null!;
-    public ConfigEntry<int> WindowHeight { get; private set; } = null!;
-    public ConfigEntry<float> WindowOpacity { get; private set; } = null!;
-    public ConfigEntry<float> UiScale { get; private set; } = null!;
+    public ConfigEntry<bool> UseNativeInventoryTabs { get; private set; } = null!;
+
     public ConfigEntry<bool> CompactMode { get; private set; } = null!;
     public ConfigEntry<bool> ShowHelpText { get; private set; } = null!;
     public ConfigEntry<bool> ShowSectionDescriptions { get; private set; } = null!;
     public ConfigEntry<bool> CollapseSectionsByDefault { get; private set; } = null!;
     public ConfigEntry<int> MaximumRowsPerSection { get; private set; } = null!;
-    public ConfigEntry<bool> RememberWindowPosition { get; private set; } = null!;
 
     public ConfigEntry<int> MaximumSearchResults { get; private set; } = null!;
     public ConfigEntry<bool> SearchWhileTyping { get; private set; } = null!;
@@ -156,14 +147,14 @@ internal sealed class HermesClientSettings
     {
         ToggleWindowShortcut = config.Bind(
             "General",
-            "Toggle HERMES",
+            "Toggle HERMES inventory tab",
             new KeyboardShortcut(KeyCode.F8),
-            "Keyboard shortcut used to open and close HERMES.");
+            "Keyboard shortcut used to open HERMES inside the current Character or in-raid inventory screen, or return to the previous EFT inventory tab.");
         DefaultOpeningTab = config.Bind(
             "General",
             "Default opening tab",
             "Assistant",
-            "Tab shown when HERMES opens and remembered-tab behavior is disabled. Options: Assistant, Item Search, Hideout, Crafts, Stash, Loadout.");
+            "Workspace shown when HERMES opens and remembered-tab behavior is disabled. Options: Assistant, Item Search, Hideout, Crafts, Stash, Loadout, Raid Planner.");
         RememberLastSelectedTab = config.Bind(
             "General",
             "Remember last selected tab",
@@ -199,12 +190,12 @@ internal sealed class HermesClientSettings
             "Reliability",
             "Cache status refresh seconds",
             10,
-            "How often the visible HERMES footer refreshes server cache diagnostics. Range: 5-60 seconds.");
+            "How often the visible HERMES navigation rail refreshes server cache diagnostics. Range: 5-60 seconds.");
         ShowDiagnosticsFooter = config.Bind(
             "Reliability",
-            "Show diagnostics footer",
+            "Show diagnostics panel",
             true,
-            "Shows client request health and market/stash/loadout cache counts in the HERMES footer.");
+            "Shows compact request and cache health in the HERMES navigation rail.");
 
         EnableAssistantTab = config.Bind(
             "Assistant",
@@ -283,106 +274,71 @@ internal sealed class HermesClientSettings
             "Maximum user and HERMES messages retained in the current local conversation. Range: 10-200.");
 
         EnableProactiveAssistantNotices = config.Bind(
-            "Assistant Notices",
-            "Enable proactive notices",
+            "Assistant Alerts",
+            "Enable alerts",
             true,
-            "Periodically checks current read-only HERMES data and surfaces meaningful loadout, hideout, craft, insurance, and optional stash notices.");
+            "Checks current read-only HERMES data and shows one compact alert at a time for meaningful loadout, hideout, craft, insurance, and optional stash conditions.");
         AssistantNoticeCheckIntervalMinutes = config.Bind(
-            "Assistant Notices",
+            "Assistant Alerts",
             "Check interval minutes",
             5,
-            "Minutes between automatic proactive checks. Manual Check now remains available in the Assistant tab. Range: 1-60.");
-        AssistantNoticeCooldownMinutes = config.Bind(
-            "Assistant Notices",
-            "Repeat cooldown minutes",
-            30,
-            "Minimum time before the same unchanged condition can be shown again when change-only mode is disabled. Range: 5-240.");
-        AssistantNoticeAutoDismissSeconds = config.Bind(
-            "Assistant Notices",
-            "Overlay auto-dismiss seconds",
-            0,
-            "Compatibility setting retained from Alpha12.4. EFT-style notice cards now remain visible until opened or dismissed, so this value is ignored.");
-        MaximumVisibleAssistantNotices = config.Bind(
-            "Assistant Notices",
-            "Maximum visible notices",
-            3,
-            "Maximum proactive notice cards shown on screen at one time. Range: 1-5.");
+            "Minutes between automatic alert checks. A compact Check button remains available in the Assistant workspace. Range: 1-60.");
         ShowAssistantNoticesWhenClosed = config.Bind(
-            "Assistant Notices",
-            "Show notices while HERMES is closed",
+            "Assistant Alerts",
+            "Show alerts while HERMES tab is inactive",
             true,
-            "Shows compact notice cards even when the main HERMES window is closed.");
+            "Shows one compact native EFT alert while the HERMES inventory tab is not selected.");
         ShowAssistantNoticesDuringRaid = config.Bind(
-            "Assistant Notices",
-            "Show notices during raid",
+            "Assistant Alerts",
+            "Show alerts during raid",
             false,
-            "Allows automatic checks and notice overlays while an EFT raid is active. Disabled by default to avoid combat distractions.");
-        OnlyNotifyAssistantNoticeChanges = config.Bind(
-            "Assistant Notices",
-            "Only notify on changes",
-            true,
-            "Shows a condition once and waits for it to clear before notifying again. Disable to permit repeat notices after the configured cooldown.");
+            "Allows automatic checks and one-line alerts while a raid is active. Disabled by default to avoid combat distractions.");
         NotifyLoadoutReadiness = config.Bind(
-            "Assistant Notices",
-            "Loadout readiness notices",
+            "Assistant Alerts",
+            "Loadout readiness alerts",
             true,
             "Notifies when the current loadout has critical readiness warnings.");
         NotifyHighValueUninsuredItems = config.Bind(
-            "Assistant Notices",
-            "High-value uninsured notices",
+            "Assistant Alerts",
+            "High-value uninsured alerts",
             true,
             "Notifies when current uninsured at-risk value meets the configured Loadout high-value threshold.");
         NotifyCompletedHideoutProduction = config.Bind(
-            "Assistant Notices",
-            "Completed production notices",
+            "Assistant Alerts",
+            "Completed production alerts",
             true,
             "Notifies when hideout production is complete and ready to collect.");
         NotifyReadyHideoutUpgrades = config.Bind(
-            "Assistant Notices",
-            "Ready hideout upgrade notices",
+            "Assistant Alerts",
+            "Ready hideout upgrade alerts",
             true,
             "Notifies when one or more hideout areas are ready to upgrade.");
         NotifyReadyProfitableCrafts = config.Bind(
-            "Assistant Notices",
-            "Ready profitable craft notices",
+            "Assistant Alerts",
+            "Ready profitable craft alerts",
             true,
             "Notifies when a currently startable craft meets the minimum economic-profit threshold.");
         MinimumAssistantNoticeCraftProfit = config.Bind(
-            "Assistant Notices",
+            "Assistant Alerts",
             "Minimum craft notice profit",
             25000,
             "Minimum estimated economic profit required for a ready-craft notice. Range: 0-10,000,000 roubles.");
         NotifyStashOpportunities = config.Bind(
-            "Assistant Notices",
-            "Stash opportunity notices",
+            "Assistant Alerts",
+            "Stash opportunity alerts",
             false,
             "Enables periodic Stash analysis notices for cleanup and safe-to-sell surplus. Disabled by default because Stash analysis is the heaviest notice check.");
         MinimumAssistantNoticeStashValue = config.Bind(
-            "Assistant Notices",
+            "Assistant Alerts",
             "Minimum stash notice value",
             100000,
             "Minimum cleanup or safe-to-sell value required for a Stash notice. Range: 0-100,000,000 roubles.");
 
-        WindowWidth = config.Bind(
+        UseNativeInventoryTabs = config.Bind(
             "Interface",
-            "Window width",
-            1120,
-            "Physical HERMES window width in pixels. Range: 900-1800.");
-        WindowHeight = config.Bind(
-            "Interface",
-            "Window height",
-            760,
-            "Physical HERMES window height in pixels. Range: 600-1100.");
-        WindowOpacity = config.Bind(
-            "Interface",
-            "Window opacity",
-            1.0f,
-            "Opacity applied to the complete HERMES window. Range: 0.55-1.0.");
-        UiScale = config.Bind(
-            "Interface",
-            "UI scale",
-            1.0f,
-            "Scales HERMES controls and text. Range: 0.75-1.50.");
+            "Enable HERMES inventory tab",
+            true,
+            "Adds the inventory-only HERMES workspace to both the main Character screen and the inventory opened during a raid. Alpha12.6.2 no longer includes a floating window fallback and keeps the native EFT top and bottom navigation visible.");
         CompactMode = config.Bind(
             "Interface",
             "Compact mode",
@@ -408,12 +364,6 @@ internal sealed class HermesClientSettings
             "Maximum rows per section",
             150,
             "Maximum number of rows rendered in long shared lists before a hidden-row notice is shown. Range: 25-500.");
-        RememberWindowPosition = config.Bind(
-            "Interface",
-            "Remember window position",
-            true,
-            "Restores the last HERMES window position for the current client installation.");
-
         MaximumSearchResults = config.Bind(
             "Item Search",
             "Maximum search results",
@@ -876,16 +826,9 @@ internal sealed class HermesClientSettings
     public int GetMaximumAssistantRecommendations() => Math.Clamp(MaximumAssistantRecommendations.Value, 3, 10);
     public int GetMaximumAssistantContextSubjects() => Math.Clamp(MaximumAssistantContextSubjects.Value, 1, 12);
     public int GetAssistantNoticeCheckIntervalMinutes() => Math.Clamp(AssistantNoticeCheckIntervalMinutes.Value, 1, 60);
-    public int GetAssistantNoticeCooldownMinutes() => Math.Clamp(AssistantNoticeCooldownMinutes.Value, 5, 240);
-    public int GetAssistantNoticeAutoDismissSeconds() => Math.Clamp(AssistantNoticeAutoDismissSeconds.Value, 0, 120);
-    public int GetMaximumVisibleAssistantNotices() => Math.Clamp(MaximumVisibleAssistantNotices.Value, 1, 5);
     public int GetMinimumAssistantNoticeCraftProfit() => Math.Clamp(MinimumAssistantNoticeCraftProfit.Value, 0, 10_000_000);
     public int GetMinimumAssistantNoticeStashValue() => Math.Clamp(MinimumAssistantNoticeStashValue.Value, 0, 100_000_000);
     public int GetHighValueUninsuredThreshold() => Math.Clamp(HighValueUninsuredThreshold.Value, 0, 10_000_000);
-    public int GetWindowWidth() => Math.Clamp(WindowWidth.Value, 900, 1800);
-    public int GetWindowHeight() => Math.Clamp(WindowHeight.Value, 600, 1100);
-    public float GetWindowOpacity() => Math.Clamp(WindowOpacity.Value, 0.55f, 1f);
-    public float GetUiScale() => Math.Clamp(UiScale.Value, 0.75f, 1.5f);
     public int GetMaximumRowsPerSection() => Math.Clamp(MaximumRowsPerSection.Value, 25, 500);
     public int GetMaximumSearchResults() => Math.Clamp(MaximumSearchResults.Value, 5, 50);
     public int GetMinimumSearchCharacters() => Math.Clamp(MinimumSearchCharacters.Value, 1, 10);
@@ -920,30 +863,6 @@ internal sealed class HermesClientSettings
         }
 
         PlayerPrefs.SetString(LastTabPlayerPref, NormalizeTabName(tabName));
-        PlayerPrefs.Save();
-    }
-
-    public Vector2 GetInitialWindowPosition(float scale)
-    {
-        if (!RememberWindowPosition.Value)
-        {
-            return new Vector2(70f, 70f);
-        }
-
-        var physicalX = PlayerPrefs.GetFloat(WindowXPlayerPref, 70f * scale);
-        var physicalY = PlayerPrefs.GetFloat(WindowYPlayerPref, 70f * scale);
-        return new Vector2(physicalX / scale, physicalY / scale);
-    }
-
-    public void RememberWindowPositionValue(Rect logicalRect, float scale)
-    {
-        if (!RememberWindowPosition.Value)
-        {
-            return;
-        }
-
-        PlayerPrefs.SetFloat(WindowXPlayerPref, logicalRect.x * scale);
-        PlayerPrefs.SetFloat(WindowYPlayerPref, logicalRect.y * scale);
         PlayerPrefs.Save();
     }
 
@@ -985,6 +904,7 @@ internal sealed class HermesClientSettings
             "craft" or "crafts" => "Crafts",
             "stash" => "Stash",
             "loadout" => "Loadout",
+            "raid" or "raid planner" => "Raid Planner",
             _ => "Item Search"
         };
     }
