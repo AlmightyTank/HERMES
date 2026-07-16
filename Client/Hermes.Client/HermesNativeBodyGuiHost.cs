@@ -19,12 +19,10 @@ internal sealed class HermesNativeBodyGuiHost : MonoBehaviour
     private HermesWindow? _window;
     private RectTransform? _rectTransform;
     private Canvas? _canvas;
-    private HermesNativeItemMarketView? _itemMarketView;
 
-    internal void Initialize(HermesWindow window, HermesNativeItemMarketView itemMarketView)
+    internal void Initialize(HermesWindow window)
     {
         _window = window;
-        _itemMarketView = itemMarketView;
         _rectTransform = transform as RectTransform;
         _canvas = GetComponentInParent<Canvas>();
     }
@@ -32,7 +30,6 @@ internal sealed class HermesNativeBodyGuiHost : MonoBehaviour
     private void OnGUI()
     {
         if (_window == null
-            || (_itemMarketView != null && _itemMarketView.IsVisibleForCurrentWorkspace)
             || _rectTransform == null
             || !isActiveAndEnabled
             || !HermesNativeWorkspaceRuntime.Active)

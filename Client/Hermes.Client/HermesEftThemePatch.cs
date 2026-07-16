@@ -28,9 +28,11 @@ internal static class HermesEftTheme
     private static GUIStyle? _navigationItemSelected;
     private static GUIStyle? _diagnosticText;
     private static GUIStyle? _panelHeader;
+    private static GUIStyle? _panelHeadingBand;
     private static GUIStyle? _panelTitle;
     private static GUIStyle? _subtitle;
     private static GUIStyle? _status;
+    private static GUIStyle? _statusDivider;
     private static GUIStyle? _toolbar;
     private static GUIStyle? _searchField;
     private static GUIStyle? _filter;
@@ -67,15 +69,15 @@ internal static class HermesEftTheme
     internal static readonly Color Warning = Rgb(190, 91, 45);
     internal static readonly Color WarningBright = Rgb(224, 120, 60);
 
-    private static readonly Color Backdrop = Rgba(6, 10, 12, 248);
-    private static readonly Color Header = Rgba(13, 22, 26, 250);
-    private static readonly Color Panel = Rgba(13, 18, 19, 248);
-    private static readonly Color PanelRaised = Rgba(20, 26, 27, 250);
-    private static readonly Color Row = Rgba(13, 18, 19, 252);
-    private static readonly Color RowAlternate = Rgba(18, 23, 24, 252);
-    private static readonly Color Hover = Rgba(35, 42, 42, 255);
-    private static readonly Color Pressed = Rgba(54, 57, 50, 255);
-    private static readonly Color Field = Rgba(5, 9, 10, 255);
+    private static readonly Color Backdrop = Rgba(0, 0, 0, 15);
+    private static readonly Color Header = Rgba(0, 0, 0, 65);
+    private static readonly Color Panel = Rgba(0, 0, 0, 65);
+    private static readonly Color PanelRaised = Rgba(15, 20, 21, 96);
+    private static readonly Color Row = Rgba(8, 12, 13, 150);
+    private static readonly Color RowAlternate = Rgba(12, 16, 17, 170);
+    private static readonly Color Hover = Rgba(35, 42, 42, 220);
+    private static readonly Color Pressed = Rgba(54, 57, 50, 235);
+    private static readonly Color Field = Rgba(0, 0, 0, 115);
     private static readonly Color Line = Rgb(52, 62, 64);
     private static readonly Color LineSoft = Rgb(35, 44, 46);
 
@@ -97,9 +99,11 @@ internal static class HermesEftTheme
     internal static GUIStyle NavigationHeading => Get(ref _navigationHeading);
     internal static GUIStyle DiagnosticText => Get(ref _diagnosticText);
     internal static GUIStyle PanelHeader => Get(ref _panelHeader);
+    internal static GUIStyle PanelHeadingBand => Get(ref _panelHeadingBand);
     internal static GUIStyle PanelTitle => Get(ref _panelTitle);
     internal static GUIStyle Subtitle => Get(ref _subtitle);
     internal static GUIStyle Status => Get(ref _status);
+    internal static GUIStyle StatusDivider => Get(ref _statusDivider);
     internal static GUIStyle Toolbar => Get(ref _toolbar);
     internal static GUIStyle SearchField => Get(ref _searchField);
     internal static GUIStyle SummaryBar => Get(ref _summaryBar);
@@ -189,9 +193,9 @@ internal static class HermesEftTheme
         var selectedNavTexture = CreateLeftAccentTexture(PanelRaised, Accent);
         var fieldTexture = CreateBorderedTexture(Field, Line);
         var fieldFocusedTexture = CreateBorderedTexture(Field, Accent);
-        var warningTexture = CreateFlatTexture(new Color(0.32f, 0.105f, 0.055f, 0.95f));
-        var readyTexture = CreateFlatTexture(new Color(0.15f, 0.19f, 0.18f, 1f));
-        var neutralTexture = CreateFlatTexture(new Color(0.12f, 0.16f, 0.17f, 1f));
+        var warningTexture = CreateFlatTexture(new Color(0.32f, 0.105f, 0.055f, 0.88f));
+        var readyTexture = CreateFlatTexture(new Color(0.15f, 0.19f, 0.18f, 0.72f));
+        var neutralTexture = CreateFlatTexture(new Color(0.12f, 0.16f, 0.17f, 0.72f));
 
         ConfigureSkinBox(_skin.box, panelTexture);
         ConfigureSkinButton(_skin.button, panelTexture, hoverTexture, pressedTexture, selectedTexture);
@@ -214,49 +218,58 @@ internal static class HermesEftTheme
 
         _headerTitle = Label(17, PrimaryText, FontStyle.Normal, TextAnchor.MiddleLeft, false);
         _headerTitle.padding = new RectOffset(0, 0, 0, 0);
-        _headerSubtitle = Label(11, MutedText, FontStyle.Normal, TextAnchor.MiddleLeft, false);
+        _headerSubtitle = Label(12, MutedText, FontStyle.Normal, TextAnchor.MiddleLeft, false);
         _headerSubtitle.padding = new RectOffset(0, 0, 0, 0);
 
-        _headerAction = Button(panelTexture, hoverTexture, pressedTexture, 11, Text, AccentHover);
+        _headerAction = Button(panelTexture, hoverTexture, pressedTexture, 12, Text, AccentHover);
         _headerAction.padding = new RectOffset(14, 14, 5, 5);
         _headerAction.margin = new RectOffset(3, 0, 2, 2);
 
         _navigationRail = FlatBox(Panel, new RectOffset(8, 8, 8, 8));
         _navigationRail.normal.background = panelTexture;
-        _navigationHeading = Label(11, MutedText, FontStyle.Bold, TextAnchor.MiddleLeft, false);
+        _navigationHeading = Label(12, MutedText, FontStyle.Bold, TextAnchor.MiddleLeft, false);
         _navigationHeading.padding = new RectOffset(8, 4, 3, 8);
 
-        _navigationItem = Button(panelTexture, hoverTexture, pressedTexture, 12, Text, AccentHover);
-        _navigationItem.alignment = TextAnchor.MiddleLeft;
-        _navigationItem.padding = new RectOffset(14, 8, 7, 7);
+        _navigationItem = Button(panelTexture, hoverTexture, pressedTexture, 13, Text, AccentHover);
+        _navigationItem.alignment = TextAnchor.MiddleCenter;
+        _navigationItem.padding = new RectOffset(8, 8, 7, 7);
         _navigationItem.margin = new RectOffset(0, 0, 0, 1);
         _navigationItemSelected = new GUIStyle(_navigationItem);
         SetAllBackgrounds(_navigationItemSelected, selectedNavTexture);
         SetAllTextColors(_navigationItemSelected, AccentHover);
         _navigationItemSelected.fontStyle = FontStyle.Bold;
 
-        _diagnosticText = Label(10, MutedText, FontStyle.Normal, TextAnchor.LowerLeft, true);
+        _diagnosticText = Label(11, MutedText, FontStyle.Normal, TextAnchor.LowerLeft, true);
         _diagnosticText.padding = new RectOffset(8, 6, 2, 4);
 
-        _panelHeader = FlatBox(raisedTexture, new RectOffset(12, 12, 8, 8));
-        _panelHeader.margin = new RectOffset(0, 0, 0, 5);
-        _panelTitle = Label(15, Accent, FontStyle.Bold, TextAnchor.MiddleLeft, false);
-        _subtitle = Label(11, MutedText, FontStyle.Normal, TextAnchor.MiddleLeft, true);
-        _status = Label(11, Text, FontStyle.Normal, TextAnchor.MiddleLeft, true);
-        _status.normal.background = panelTexture;
-        _status.padding = new RectOffset(8, 8, 4, 4);
-        _status.margin = new RectOffset(0, 0, 4, 0);
+        // The panel wrapper is intentionally transparent. The heading has its own
+        // subtle Flea-style band, while status text is drawn below it without a box.
+        _panelHeader = FlatBox(CreateFlatTexture(Color.clear), new RectOffset(0, 0, 0, 0));
+        _panelHeader.margin = new RectOffset(0, 0, 0, 4);
+        _panelHeadingBand = FlatBox(raisedTexture, new RectOffset(12, 12, 6, 5));
+        _panelHeadingBand.margin = new RectOffset(0, 0, 0, 0);
+        _panelTitle = Label(16, Accent, FontStyle.Bold, TextAnchor.MiddleLeft, false);
+        _subtitle = Label(12, MutedText, FontStyle.Normal, TextAnchor.MiddleLeft, true);
+        _status = Label(12, Text, FontStyle.Normal, TextAnchor.MiddleLeft, true);
+        _status.normal.background = null;
+        _status.padding = new RectOffset(8, 8, 2, 0);
+        _status.margin = new RectOffset(0, 0, 2, 0);
+
+        _statusDivider = FlatBox(CreateFlatTexture(Rgba(64, 74, 76, 135)), new RectOffset(0, 0, 0, 0));
+        _statusDivider.fixedHeight = 1f;
+        _statusDivider.stretchHeight = false;
+        _statusDivider.margin = new RectOffset(0, 0, 2, 1);
 
         _toolbar = FlatBox(raisedTexture, new RectOffset(8, 8, 6, 6));
         _toolbar.margin = new RectOffset(0, 0, 0, 5);
         _searchField = new GUIStyle(_skin.textField)
         {
-            fontSize = 12,
+            fontSize = 13,
             padding = new RectOffset(9, 9, 5, 5),
             margin = new RectOffset(0, 4, 0, 0)
         };
 
-        _filter = Button(panelTexture, hoverTexture, pressedTexture, 11, Text, AccentHover);
+        _filter = Button(panelTexture, hoverTexture, pressedTexture, 12, Text, AccentHover);
         _filter.padding = new RectOffset(10, 10, 5, 5);
         _filter.margin = new RectOffset(1, 1, 0, 0);
         _selectedFilter = new GUIStyle(_filter);
@@ -268,18 +281,18 @@ internal static class HermesEftTheme
         _summaryBar.margin = new RectOffset(0, 0, 0, 6);
         _summaryCell = FlatBox(raisedTexture, new RectOffset(10, 10, 7, 7));
         _summaryCell.margin = new RectOffset(0, 1, 0, 0);
-        _summaryTitle = Label(10, MutedText, FontStyle.Bold, TextAnchor.UpperLeft, false);
+        _summaryTitle = Label(11, MutedText, FontStyle.Bold, TextAnchor.UpperLeft, false);
         _summaryValue = Label(18, PrimaryText, FontStyle.Normal, TextAnchor.MiddleLeft, false);
-        _summaryDetail = Label(10, MutedText, FontStyle.Normal, TextAnchor.UpperLeft, true);
+        _summaryDetail = Label(11, MutedText, FontStyle.Normal, TextAnchor.UpperLeft, true);
 
         _contentPanel = FlatBox(panelTexture, new RectOffset(8, 8, 5, 8));
         _contentPanel.margin = new RectOffset(0, 0, 0, 6);
-        _sectionHeader = Label(11, Accent, FontStyle.Bold, TextAnchor.MiddleLeft, false);
+        _sectionHeader = Label(12, Accent, FontStyle.Bold, TextAnchor.MiddleLeft, false);
         _sectionHeader.normal.background = raisedTexture;
         _sectionHeader.padding = new RectOffset(10, 10, 5, 5);
         _sectionHeader.margin = new RectOffset(0, 0, 5, 0);
 
-        _mapHeader = Button(raisedTexture, hoverTexture, pressedTexture, 12, PrimaryText, AccentHover);
+        _mapHeader = Button(raisedTexture, hoverTexture, pressedTexture, 13, PrimaryText, AccentHover);
         _mapHeader.alignment = TextAnchor.MiddleLeft;
         _mapHeader.fontStyle = FontStyle.Bold;
         _mapHeader.padding = new RectOffset(10, 10, 7, 7);
@@ -289,9 +302,9 @@ internal static class HermesEftTheme
         _dataRow.margin = new RectOffset(0, 0, 0, 0);
         _dataRowAlternate = new GUIStyle(_dataRow);
         _dataRowAlternate.normal.background = alternateRowTexture;
-        _rowTitle = Label(12, PrimaryText, FontStyle.Normal, TextAnchor.UpperLeft, true);
-        _rowMeta = Label(10, MutedText, FontStyle.Normal, TextAnchor.UpperLeft, true);
-        _rowDescription = Label(11, Text, FontStyle.Normal, TextAnchor.UpperLeft, true);
+        _rowTitle = Label(13, PrimaryText, FontStyle.Normal, TextAnchor.UpperLeft, true);
+        _rowMeta = Label(11, MutedText, FontStyle.Normal, TextAnchor.UpperLeft, true);
+        _rowDescription = Label(12, Text, FontStyle.Normal, TextAnchor.UpperLeft, true);
         _rowDescription.padding = new RectOffset(0, 0, 2, 0);
 
         _statusReady = Badge(readyTexture, Accent);
@@ -304,19 +317,19 @@ internal static class HermesEftTheme
 
         _smallButton = new GUIStyle(_headerAction)
         {
-            fontSize = 10,
+            fontSize = 11,
             padding = new RectOffset(10, 10, 4, 4),
             margin = new RectOffset(2, 0, 0, 0)
         };
 
         _tab = new GUIStyle(_filter)
         {
-            fontSize = 11,
+            fontSize = 12,
             padding = new RectOffset(11, 11, 5, 5)
         };
         _selectedTab = new GUIStyle(_selectedFilter)
         {
-            fontSize = 11,
+            fontSize = 12,
             padding = new RectOffset(11, 11, 5, 5)
         };
     }
@@ -391,7 +404,7 @@ internal static class HermesEftTheme
 
     private static GUIStyle Badge(Texture2D background, Color color)
     {
-        var style = Label(10, color, FontStyle.Bold, TextAnchor.MiddleCenter, false);
+        var style = Label(11, color, FontStyle.Bold, TextAnchor.MiddleCenter, false);
         style.normal.background = background;
         style.padding = new RectOffset(10, 10, 4, 4);
         style.margin = new RectOffset(6, 0, 0, 0);
@@ -456,7 +469,7 @@ internal static class HermesEftTheme
         style.border = new RectOffset(0, 0, 0, 0);
         style.padding = new RectOffset(10, 10, 6, 6);
         style.margin = new RectOffset(0, 0, 0, 2);
-        style.fontSize = 11;
+        style.fontSize = 12;
         style.richText = true;
     }
 
@@ -473,13 +486,13 @@ internal static class HermesEftTheme
         style.border = new RectOffset(1, 1, 1, 1);
         style.padding = new RectOffset(9, 9, 5, 5);
         style.margin = new RectOffset(0, 0, 0, 0);
-        style.fontSize = 12;
+        style.fontSize = 13;
     }
 
     private static void ConfigureLabel(GUIStyle style)
     {
         style.normal.textColor = Text;
-        style.fontSize = 11;
+        style.fontSize = 12;
         style.richText = true;
         style.wordWrap = true;
         style.padding = new RectOffset(1, 1, 1, 1);
@@ -610,6 +623,7 @@ internal static class HermesEftThemeBootstrap
         TryEnable("compact workspace navigation", () => new HermesEftCompactNavigationPatch().Enable());
         TryEnable("panel header", () => new HermesEftPanelHeaderPatch().Enable());
         TryEnable("panel title", () => new HermesEftPanelTitlePatch().Enable());
+        TryEnable("status lines", () => new HermesEftStatusLinePatch().Enable());
         TryEnable("workspace tabs", () => new HermesEftTabButtonPatch().Enable());
         TryEnable("empty states", () => new HermesEftEmptyStatePatch().Enable());
         TryEnable("compact empty states", () => new HermesEftEmptyStateSinglePatch().Enable());
@@ -866,6 +880,7 @@ internal sealed class HermesEftPanelHeaderPatch : ModulePatch
     private static bool Prefix(string __0, string __1, string __2, bool __3, Action __4)
     {
         GUILayout.BeginVertical(HermesEftTheme.PanelHeader);
+        GUILayout.BeginVertical(HermesEftTheme.PanelHeadingBand);
         GUILayout.BeginHorizontal();
         GUILayout.BeginVertical(GUILayout.ExpandWidth(true));
         GUILayout.Label(__0, HermesEftTheme.PanelTitle);
@@ -879,10 +894,12 @@ internal sealed class HermesEftPanelHeaderPatch : ModulePatch
             GUILayout.Label("WORKING", HermesEftTheme.StatusBadge("working"), GUILayout.Width(82f), GUILayout.Height(24f));
         }
         GUILayout.EndHorizontal();
+        GUILayout.EndVertical();
 
         if (!string.IsNullOrWhiteSpace(__2))
         {
             GUILayout.Label(__2, HermesEftTheme.Status);
+            GUILayout.Box(GUIContent.none, HermesEftTheme.StatusDivider, GUILayout.Height(1f), GUILayout.ExpandWidth(true));
         }
         GUILayout.EndVertical();
         return false;
@@ -904,16 +921,50 @@ internal sealed class HermesEftPanelTitlePatch : ModulePatch
     private static bool Prefix(string __0, string __1, string __2, bool __3)
     {
         GUILayout.BeginVertical(HermesEftTheme.PanelHeader);
+        GUILayout.BeginVertical(HermesEftTheme.PanelHeadingBand);
         GUILayout.Label(__0, HermesEftTheme.PanelTitle);
         if (!string.IsNullOrWhiteSpace(__1))
         {
             GUILayout.Label(__1, HermesEftTheme.Subtitle);
         }
+        GUILayout.EndVertical();
         if (!string.IsNullOrWhiteSpace(__2))
         {
             GUILayout.Label(__3 ? $"WORKING  •  {__2}" : __2, HermesEftTheme.Status);
+            GUILayout.Box(GUIContent.none, HermesEftTheme.StatusDivider, GUILayout.Height(1f), GUILayout.ExpandWidth(true));
         }
         GUILayout.EndVertical();
+        return false;
+    }
+}
+
+
+internal sealed class HermesEftStatusLinePatch : ModulePatch
+{
+    protected override MethodBase GetTargetMethod()
+        => typeof(HermesUi).GetMethod(
+               "DrawStatusLine",
+               BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+               null,
+               [typeof(string), typeof(bool)],
+               null)
+           ?? throw new MissingMethodException(typeof(HermesUi).FullName, "DrawStatusLine");
+
+    [PatchPrefix]
+    private static bool Prefix(string __0, bool __1)
+    {
+        if (string.IsNullOrWhiteSpace(__0))
+        {
+            return false;
+        }
+
+        var text = __1 ? $"WORKING  •  {__0}" : __0;
+        GUILayout.Label(text, HermesEftTheme.Status);
+        GUILayout.Box(
+            GUIContent.none,
+            HermesEftTheme.StatusDivider,
+            GUILayout.Height(1f),
+            GUILayout.ExpandWidth(true));
         return false;
     }
 }

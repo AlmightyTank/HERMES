@@ -12,7 +12,8 @@ public sealed class HermesStaticRouter(
     HermesCatalogService catalogService,
     HermesCacheService cacheService,
     HermesStashAnalysisService stashAnalysisService,
-    HermesLoadoutService loadoutService)
+    HermesLoadoutService loadoutService,
+    HermesChangeTrackingService changeTrackingService)
     : StaticRouter(
         jsonUtil,
         [
@@ -33,9 +34,10 @@ public sealed class HermesStaticRouter(
                     stashAnalysisService.Clear("Manual refresh from HERMES client");
                     loadoutService.Clear("Manual refresh from HERMES client");
                     var cleared = cacheService.Clear("Manual refresh from HERMES client");
+                    changeTrackingService.MarkAllSessionsDirty("Manual refresh from HERMES client");
                     var response = cleared with
                     {
-                        Message = "HERMES market, stash-analysis, and loadout-analysis caches were cleared. New requests will read the current profile, quest, hideout, trader, and flea data.",
+                        Message = "HERMES caches were cleared and every server revision was invalidated. New requests will read the current profile, quest, hideout, trader, and flea data.",
                         Status = cacheService.GetStatus(
                             stashAnalysisService.GetCacheDiagnostics(),
                             loadoutService.GetCacheDiagnostics())

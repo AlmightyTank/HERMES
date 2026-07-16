@@ -17,6 +17,7 @@ public sealed class Plugin : BaseUnityPlugin
     internal static HermesClientSettings Settings { get; private set; } = null!;
 
     private HermesWindow? _window;
+    private HermesWorkspaceSnapshotCoordinator? _snapshotCoordinator;
 
     internal HermesWindow Window => _window
                                    ?? throw new InvalidOperationException("HERMES window controller is not initialized.");
@@ -28,6 +29,7 @@ public sealed class Plugin : BaseUnityPlugin
         Settings = new HermesClientSettings();
         Settings.Bind(Config);
         _window = new HermesWindow();
+        _snapshotCoordinator = HermesWorkspaceSnapshotCoordinator.Configure(_window);
 
         TryEnable("Ask HERMES context actions", () => new AskHermesContextMenuPatch().Enable());
         TryEnable("Character and in-raid inventory tab injection", () => new HermesNativeInventoryScreenPatch().Enable());
@@ -60,6 +62,7 @@ public sealed class Plugin : BaseUnityPlugin
             Logger.LogError($"HERMES EFT body-panel theme could not be enabled: {ex}");
         }
 
+        TryEnable("server revision workspace loading", () => new HermesSnapshotPresentationOpenPatch().Enable());
         TryEnable("native Ragfair asset capture", () => new HermesRagfairNativeAssetPatch().Enable());
         TryEnable("native Items & Market search toolbar", () => new HermesNativeItemSearchBarSuppressionPatch().Enable());
         TryEnable("native EFT notification click routing", () => new HermesNativeNotificationClickPatch().Enable());
@@ -67,7 +70,7 @@ public sealed class Plugin : BaseUnityPlugin
         HermesRagfairNativeAssets.TryResolve();
 
         Logger.LogInfo(
-            $"HERMES 0.1.0-alpha12.7.3 Flea-style Items & Market browser loaded. "
+            $"HERMES 0.1.0-alpha12.7.3.7 quiet server revisions loaded. "
             + $"Native Ragfair templates ready: {HermesRagfairNativeAssets.Ready}. "
             + $"Inventory-only workspace: {Settings.UseNativeInventoryTabs.Value}. "
             + $"Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");
@@ -124,6 +127,7 @@ public sealed class Plugin : BaseUnityPlugin
     private void Update()
     {
         HermesNativeScreenRegistry.TickDiscovery();
+        _snapshotCoordinator?.Tick();
         _window?.Tick();
 
         if (Settings.ToggleWindowShortcut.Value.IsDown())

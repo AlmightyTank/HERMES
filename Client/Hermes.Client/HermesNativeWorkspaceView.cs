@@ -7,8 +7,8 @@ using UnityEngine.UI;
 namespace Hermes.Client;
 
 /// <summary>
-/// Native EFT workspace shell for HERMES. Alpha12.7.3 converts Items & Market to a native Flea-style browser.
-/// The remaining workspace bodies stay behind the staged bridge while native uGUI owns the header, activity state, workspace rail,
+/// Native EFT workspace shell for HERMES. Alpha12.7.3.4 keeps the current data-heavy workspace
+/// bodies behind the bridge, while native uGUI owns the header, activity state, workspace rail,
 /// action controls, and Items & Market search toolbar.
 /// </summary>
 internal sealed class HermesNativeWorkspaceView : MonoBehaviour
@@ -102,7 +102,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         HermesRagfairNativeAssets.TryResolve();
 
         var shellImage = GetComponent<Image>() ?? gameObject.AddComponent<Image>();
-        shellImage.color = new Color(0f, 0f, 0f, 0.94f);
+        shellImage.color = new Color(0f, 0f, 0f, 0.059f);
         shellImage.raycastTarget = true;
 
         _headerRect = CreatePanel("Header", transform, new Color(0f, 0f, 0f, 0.255f));
@@ -115,15 +115,12 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         BuildNavigation();
         BuildSearchToolbar();
 
-        var itemMarketView = _bodyRect.gameObject.AddComponent<HermesNativeItemMarketView>();
-        itemMarketView.Initialize(_window);
-
         var bodyHost = _bodyRect.gameObject.AddComponent<HermesNativeBodyGuiHost>();
-        bodyHost.Initialize(_window, itemMarketView);
+        bodyHost.Initialize(_window);
 
         ApplyResponsiveLayout(true);
         _built = true;
-        Plugin.Log?.LogInfo($"HERMES Alpha12.7.3 native Items & Market workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
+        Plugin.Log?.LogInfo($"HERMES Alpha12.7.3.4 snapshot and readability pass built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
     }
 
     private void BuildHeader()
@@ -395,7 +392,8 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
             tabName = "ItemSearch";
         }
 
-        var refreshing = HermesEftWindowReflection.IsRefreshing(_window);
+        var backgroundRevisionCheck = HermesWorkspaceSnapshotCoordinator.IsBackgroundCheckActive;
+        var refreshing = HermesEftWindowReflection.IsRefreshing(_window) && !backgroundRevisionCheck;
         var searching = HermesNativeSearchBridge.IsSearching(_window);
         var tabChanged = force || !string.Equals(tabName, _lastTabName, StringComparison.Ordinal);
 
@@ -690,7 +688,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         if (spawnable != null)
         {
             spawnable.method_1(_toggleGroup!);
-            spawnable.method_2(label, 18, null, null);
+            spawnable.method_2(label, 19, null, null);
         }
         toggle.group = _toggleGroup;
         toggle.interactable = true;
@@ -704,16 +702,52 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
             }
         });
 
+        // The Flea toggle template sizes its text container for the original 130/140 px tab.
+        // HERMES rows are wider, so stretching only the visible Label leaves its parent offset
+        // and makes the caption look off-center. Disable the template layout and stretch both the
+        // SizeLabel container and its visible Label across the full workspace row.
+        var rootLayout = toggleObject.GetComponent<HorizontalLayoutGroup>();
+        if (rootLayout != null)
+        {
+            rootLayout.enabled = false;
+        }
+
+        var sizeLabelRect = toggleObject.transform.Find("SizeLabel") as RectTransform;
+        if (sizeLabelRect != null)
+        {
+            sizeLabelRect.anchorMin = Vector2.zero;
+            sizeLabelRect.anchorMax = Vector2.one;
+            sizeLabelRect.pivot = new Vector2(0.5f, 0.5f);
+            sizeLabelRect.anchoredPosition = Vector2.zero;
+            sizeLabelRect.sizeDelta = Vector2.zero;
+            sizeLabelRect.offsetMin = Vector2.zero;
+            sizeLabelRect.offsetMax = Vector2.zero;
+        }
+
         foreach (var text in toggleObject.GetComponentsInChildren<TMP_Text>(true))
         {
-            if (text.name != "Label")
+            if (!string.Equals(text.name, "Label", StringComparison.Ordinal)
+                && !string.Equals(text.name, "SizeLabel", StringComparison.Ordinal))
             {
                 continue;
             }
 
             text.text = label;
-            text.fontSize = 18f;
+            text.fontSize = 19f;
+            text.enableAutoSizing = false;
+            text.alignment = TextAlignmentOptions.Center;
+            text.margin = Vector4.zero;
+            text.enableWordWrapping = false;
             text.overflowMode = TextOverflowModes.Ellipsis;
+
+            var labelRect = text.rectTransform;
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.pivot = new Vector2(0.5f, 0.5f);
+            labelRect.anchoredPosition = Vector2.zero;
+            labelRect.sizeDelta = Vector2.zero;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
         }
 
         return toggle;

@@ -18,7 +18,8 @@ public sealed class HermesDynamicRouter(
     HermesLoadoutService loadoutService,
     HermesTraderService traderService,
     HermesMarketService marketService,
-    HermesHideoutService hideoutService)
+    HermesHideoutService hideoutService,
+    HermesChangeTrackingService changeTrackingService)
     : DynamicRouter(
         jsonUtil,
         [
@@ -29,6 +30,31 @@ public sealed class HermesDynamicRouter(
                     var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"HERMES:PROFILE:{sessionId}"));
                     var token = Convert.ToHexString(bytes).ToLowerInvariant();
                     var response = new HermesProfileContextResponse(true, null, token);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
+                "/hermes/snapshot/",
+                (url, _, sessionId, _) =>
+                {
+                    var tail = GetTail(url, "/hermes/snapshot/");
+                    const string separator = "/loadout/";
+                    var separatorIndex = tail.IndexOf(separator, StringComparison.OrdinalIgnoreCase);
+                    var stashTail = separatorIndex >= 0 ? tail[..separatorIndex] : tail;
+                    var loadoutTail = separatorIndex >= 0
+                        ? tail[(separatorIndex + separator.Length)..]
+                        : string.Empty;
+                    var stashSettings = HermesStashAnalysisSettings.Parse('/' + stashTail.Trim('/'));
+                    var loadoutSettings = HermesLoadoutAnalysisSettings.Parse('/' + loadoutTail.Trim('/'));
+                    var response = changeTrackingService.GetSnapshot(sessionId, stashSettings, loadoutSettings);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
+                "/hermes/changes/",
+                (url, _, sessionId, _) =>
+                {
+                    var tail = GetTail(url, "/hermes/changes/");
+                    _ = long.TryParse(tail.Trim('/'), out var knownRevision);
+                    var response = changeTrackingService.GetChanges(sessionId, Math.Max(0L, knownRevision));
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(

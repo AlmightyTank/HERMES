@@ -7,17 +7,17 @@ namespace Hermes.Client;
 
 /// <summary>
 /// Shared native-uGUI building blocks used while the HERMES workspaces are migrated away
-/// from IMGUI. Alpha12.7.2 uses these primitives for shell chrome and exposes the same
+/// from IMGUI. Alpha12.7.3.4 uses these primitives for shell chrome and exposes the same
 /// factories for the upcoming Assistant, Hideout, Crafts, Stash, Loadout, and Raid Planner
 /// body conversions.
 /// </summary>
 internal static class HermesNativeUiFramework
 {
-    internal static readonly Color PanelColor = new(0.035f, 0.049f, 0.051f, 0.98f);
-    internal static readonly Color RowColor = new(0.055f, 0.071f, 0.073f, 0.98f);
-    internal static readonly Color RowAlternateColor = new(0.043f, 0.058f, 0.060f, 0.98f);
-    internal static readonly Color SeparatorColor = new(0.13f, 0.16f, 0.16f, 0.88f);
-    internal static readonly Color HeaderColor = new(0.075f, 0.095f, 0.096f, 0.98f);
+    internal static readonly Color PanelColor = new(0f, 0f, 0f, 0.255f);
+    internal static readonly Color RowColor = new(0.032f, 0.043f, 0.045f, 0.62f);
+    internal static readonly Color RowAlternateColor = new(0.025f, 0.035f, 0.037f, 0.55f);
+    internal static readonly Color SeparatorColor = new(0.13f, 0.16f, 0.16f, 0.72f);
+    internal static readonly Color HeaderColor = new(0f, 0f, 0f, 0.38f);
     internal static readonly Color AccentTextColor = new Color32(197, 195, 178, 255);
     internal static readonly Color NormalTextColor = new Color32(224, 226, 216, 255);
     internal static readonly Color MutedTextColor = new Color32(137, 145, 142, 255);
