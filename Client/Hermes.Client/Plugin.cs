@@ -28,6 +28,7 @@ public sealed class Plugin : BaseUnityPlugin
         Instance = this;
         Settings = new HermesClientSettings();
         Settings.Bind(Config);
+        HermesPreRaidReadinessSettings.Bind(Config);
         _window = new HermesWindow();
         _snapshotCoordinator = HermesWorkspaceSnapshotCoordinator.Configure(_window);
 
@@ -44,11 +45,17 @@ public sealed class Plugin : BaseUnityPlugin
         TryEnable("native Ragfair asset capture", () => new HermesRagfairNativeAssetPatch().Enable());
         TryEnable("native Items & Market search toolbar", () => new HermesNativeItemSearchBarSuppressionPatch().Enable());
         TryEnable("native EFT notification click routing", () => new HermesNativeNotificationClickPatch().Enable());
+        TryEnable(
+            "PMC pre-raid readiness native Insurance interception",
+            () => new HermesPreRaidInsuranceNextPatch().Enable());
+        TryEnable(
+            "pre-raid confirmation Back return to readiness",
+            () => new HermesPreRaidConfirmationBackPatch().Enable());
 
         HermesRagfairNativeAssets.TryResolve();
 
         Logger.LogInfo(
-            $"HERMES 0.1.0-alpha12.7.4.6 true-change refresh and hideout requirements loaded. "
+            $"HERMES 0.1.0-alpha13.0.7 native flea checkbox controls loaded. "
             + $"Native Ragfair templates ready: {HermesRagfairNativeAssets.Ready}. "
             + $"Inventory-only workspace: {Settings.UseNativeInventoryTabs.Value}. "
             + $"Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");

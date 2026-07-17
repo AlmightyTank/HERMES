@@ -1,6 +1,7 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using Comfort.Common;
 using EFT.UI;
 using TMPro;
 using UnityEngine;
@@ -9,19 +10,22 @@ using UnityEngine.UI;
 namespace Hermes.Client;
 
 /// <summary>
-/// Carries Ask HERMES and notification navigation across EFT menu screens.
-/// When no InventoryScreen is currently open, it activates the native Character
-/// taskbar button and waits for the shared InventoryScreen host to become ready.
+/// Carries Ask HERMES, F8, embedded Ask buttons, and notification navigation
+/// across EFT menu screens. The primary route invokes the same MenuTaskBar
+/// navigation event used by EFT's Character toggle and ToggleInventory command.
 /// </summary>
 internal static class HermesGlobalNavigation
 {
     private const float PendingLifetimeSeconds = 20f;
     private const float NavigationRetrySeconds = 0.75f;
 
+    private static readonly FieldInfo? MenuNavigationEventField = ResolveMenuNavigationEventField();
+
     private static bool _pending;
     private static float _pendingUntil;
     private static float _nextNavigationAttempt;
     private static bool _loggedNavigationAttempt;
+    private static bool _loggedNativeRouteFailure;
 
     internal static void RequestOpen()
     {
@@ -30,6 +34,8 @@ internal static class HermesGlobalNavigation
             return;
         }
 
+        // Character or in-raid InventoryScreen is already active. Selecting HERMES
+        // here preserves the current screen instead of navigating away and back.
         if (HermesNativeScreenRegistry.TryShow())
         {
             ClearPending();
@@ -49,9 +55,11 @@ internal static class HermesGlobalNavigation
             return;
         }
 
+        // InventoryScreen.Show/host initialization can finish several frames after
+        // EFT accepts the native Character navigation event.
         if (HermesNativeScreenRegistry.TryShow())
         {
-            Plugin.Log?.LogDebug("HERMES completed queued cross-screen navigation.");
+            Plugin.Log?.LogDebug("HERMES completed queued native Character navigation.");
             ClearPending();
             return;
         }
@@ -59,7 +67,8 @@ internal static class HermesGlobalNavigation
         if (Time.unscaledTime >= _pendingUntil)
         {
             Plugin.Log?.LogWarning(
-                "HERMES could not open the Character screen for the queued navigation request. The requested item or notice target remains selected and will be visible the next time HERMES opens.");
+                "HERMES could not open the Character screen for the queued navigation request. "
+                + "The requested item or notice target remains selected and will be visible the next time HERMES opens.");
             ClearPending();
             return;
         }
@@ -74,14 +83,97 @@ internal static class HermesGlobalNavigation
         {
             _loggedNavigationAttempt = true;
             Plugin.Log?.LogDebug(
-                "HERMES activated EFT's native Character navigation and is waiting for InventoryScreen initialization.");
+                "HERMES invoked EFT's native EMenuType.Player navigation and is waiting for InventoryScreen initialization.");
         }
     }
 
     private static bool TryActivateCharacterScreen()
     {
-        // DefaultUIButton is used by many EFT taskbar controls. Invoking its public
-        // UnityEvent follows the same screen-controller callback as a normal click.
+        // Preferred path: this is the same Action<EMenuType, bool> that
+        // MenuTaskBar's Character toggle and ECommand.ToggleInventory invoke.
+        if (TryInvokeNativeMenuNavigation())
+        {
+            return true;
+        }
+
+        // Compatibility fallback for a future EFT mapping where the taskbar event
+        // field cannot be resolved. This retains the previous visual-control route
+        // without making it the normal navigation mechanism.
+        return TryInvokeVisibleCharacterControl();
+    }
+
+    private static bool TryInvokeNativeMenuNavigation()
+    {
+        try
+        {
+            if (!MonoBehaviourSingleton<PreloaderUI>.Instantiated)
+            {
+                return false;
+            }
+
+            var preloader = MonoBehaviourSingleton<PreloaderUI>.Instance;
+            var taskBar = preloader?.MenuTaskBar;
+            if (taskBar is null || MenuNavigationEventField is null)
+            {
+                return false;
+            }
+
+            if (MenuNavigationEventField.GetValue(taskBar) is not Action<EMenuType, bool> navigate)
+            {
+                return false;
+            }
+
+            CloseOpenItemMenus();
+            navigate(EMenuType.Player, true);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (!_loggedNativeRouteFailure)
+            {
+                _loggedNativeRouteFailure = true;
+                Plugin.Log?.LogWarning(
+                    $"HERMES native MenuTaskBar navigation was unavailable; using the visual fallback. {ex.Message}");
+            }
+
+            return false;
+        }
+    }
+
+    private static FieldInfo? ResolveMenuNavigationEventField()
+    {
+        const BindingFlags flags = BindingFlags.Instance
+                                   | BindingFlags.Public
+                                   | BindingFlags.NonPublic
+                                   | BindingFlags.DeclaredOnly;
+
+        return typeof(MenuTaskBar)
+            .GetFields(flags)
+            .FirstOrDefault(field => field.FieldType == typeof(Action<EMenuType, bool>));
+    }
+
+    private static void CloseOpenItemMenus()
+    {
+        try
+        {
+            var itemUiContext = ItemUiContext.Instance;
+            if (itemUiContext?.ContextMenu != null
+                && itemUiContext.ContextMenu.gameObject.activeSelf)
+            {
+                itemUiContext.ContextMenu.Close();
+            }
+
+            itemUiContext?.CloseSelectItemMenu();
+        }
+        catch
+        {
+            // Navigation must not fail because a source screen already disposed its
+            // transient item menu while the Ask HERMES callback was running.
+        }
+    }
+
+    private static bool TryInvokeVisibleCharacterControl()
+    {
         var defaultButton = Resources.FindObjectsOfTypeAll<DefaultUIButton>()
             .Where(IsUsable)
             .Where(button => IsCharacterControl(button.transform, button.HeaderText))
@@ -93,7 +185,6 @@ internal static class HermesGlobalNavigation
             return true;
         }
 
-        // Some builds expose the taskbar item as a standard Unity Button.
         var unityButton = Resources.FindObjectsOfTypeAll<Button>()
             .Where(IsUsable)
             .Where(button => IsCharacterControl(button.transform, null))
@@ -105,7 +196,6 @@ internal static class HermesGlobalNavigation
             return true;
         }
 
-        // Defensive fallback for toggle-based taskbars.
         var toggle = Resources.FindObjectsOfTypeAll<Toggle>()
             .Where(IsUsable)
             .Where(control => IsCharacterControl(control.transform, null))
@@ -207,7 +297,6 @@ internal static class HermesGlobalNavigation
         if (transform is RectTransform rect)
         {
             score += Mathf.Abs(rect.rect.width);
-            // The main-menu taskbar is near the bottom of the screen.
             score += Mathf.Max(0f, -rect.position.y) * 0.001f;
         }
 

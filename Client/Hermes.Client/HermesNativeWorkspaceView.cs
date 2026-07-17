@@ -122,7 +122,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
 
         ApplyResponsiveLayout(true);
         _built = true;
-        Plugin.Log?.LogInfo($"HERMES Alpha12.7.4.6 native workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
+        Plugin.Log?.LogInfo($"HERMES Alpha13.0 native workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
     }
 
     private void BuildHeader()

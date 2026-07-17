@@ -39,12 +39,16 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
     private string _hideoutFilter = "ALL";
     private string _craftSearch = string.Empty;
     private string _craftFilter = "ALL";
+    private bool _craftAvailableOnly;
     private string _stashSearch = string.Empty;
     private string _stashView = "OVERVIEW";
     private string _loadoutView = "OVERVIEW";
     private string _raidSearch = string.Empty;
     private string _lastItemResultSetKey = string.Empty;
     private string _lastSelectedItemKey = string.Empty;
+
+    private static NativeFleaCheckboxStyle? _nativeFleaCheckboxStyle;
+    private static bool _nativeFleaCheckboxProbeLogged;
 
     internal void Initialize(HermesWindow window)
     {
@@ -743,7 +747,15 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             _craftSearch = value.Trim();
             Invalidate();
         });
-        AddButton(toolbar, $"FILTER: {_craftFilter}", CycleCraftFilter, 166f);
+        AddButton(toolbar, "READY", () => SetCraftFilter("READY"), 82f, selected: _craftFilter == "READY");
+        AddButton(toolbar, "PROFITABLE", () => SetCraftFilter("PROFITABLE"), 104f, selected: _craftFilter == "PROFITABLE");
+        AddButton(toolbar, "ACTIVE", () => SetCraftFilter("ACTIVE"), 82f, selected: _craftFilter == "ACTIVE");
+        AddButton(toolbar, "ALL", () => SetCraftFilter("ALL"), 68f, selected: _craftFilter == "ALL");
+        AddCheckbox(toolbar, "AVAILABLE", _craftAvailableOnly, value =>
+        {
+            _craftAvailableOnly = value;
+            Invalidate();
+        }, 118f);
 
         var split = HermesNativeUiFramework.CreateSplitView(root, 360f);
         var splitLayout = split.Root.gameObject.AddComponent<LayoutElement>();
@@ -787,12 +799,12 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                             || craft.OutputName.Contains(query, StringComparison.OrdinalIgnoreCase)
                             || craft.StationName.Contains(query, StringComparison.OrdinalIgnoreCase)
                             || craft.Status.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .Where(craft => !_craftAvailableOnly || craft.IsAvailable)
             .Where(craft => _craftFilter switch
             {
-                "AVAILABLE" => craft.IsAvailable,
                 "READY" => craft.CanStartNow,
                 "PROFITABLE" => craft.EstimatedEconomicProfit > 0,
-                "ACTIVE" => craft.IsActive || craft.IsComplete,
+                "ACTIVE" => craft.IsActive,
                 _ => true
             })
             .OrderByDescending(craft => craft.CanStartNow)
@@ -801,16 +813,14 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             .ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase);
     }
 
-    private void CycleCraftFilter()
+    private void SetCraftFilter(string filter)
     {
-        _craftFilter = _craftFilter switch
+        if (string.Equals(_craftFilter, filter, StringComparison.Ordinal))
         {
-            "ALL" => "AVAILABLE",
-            "AVAILABLE" => "READY",
-            "READY" => "PROFITABLE",
-            "PROFITABLE" => "ACTIVE",
-            _ => "ALL"
-        };
+            return;
+        }
+
+        _craftFilter = filter;
         Invalidate();
     }
 
@@ -1519,6 +1529,273 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             });
 
         return "Required items for next upgrade:\n" + string.Join("\n", items);
+    }
+
+    private static Toggle AddCheckbox(
+        Transform parent,
+        string text,
+        bool value,
+        UnityAction<bool> action,
+        float width)
+    {
+        var root = new GameObject(
+            "Checkbox",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image),
+            typeof(Toggle),
+            typeof(LayoutElement),
+            typeof(HorizontalLayoutGroup));
+        root.transform.SetParent(parent, false);
+
+        var hitArea = root.GetComponent<Image>();
+        hitArea.color = new Color(0f, 0f, 0f, 0f);
+        hitArea.raycastTarget = true;
+
+        var layout = root.GetComponent<LayoutElement>();
+        layout.minWidth = width;
+        layout.preferredWidth = width;
+        layout.flexibleWidth = 0f;
+        layout.minHeight = CompactControlHeight;
+        layout.preferredHeight = CompactControlHeight;
+        layout.flexibleHeight = 0f;
+
+        var row = root.GetComponent<HorizontalLayoutGroup>();
+        row.padding = new RectOffset(6, 6, 4, 4);
+        row.spacing = 7f;
+        row.childAlignment = TextAnchor.MiddleLeft;
+        row.childControlWidth = true;
+        row.childControlHeight = true;
+        row.childForceExpandWidth = false;
+        row.childForceExpandHeight = false;
+
+        var style = ResolveNativeFleaCheckboxStyle();
+        var box = new GameObject("Box", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(LayoutElement));
+        box.transform.SetParent(root.transform, false);
+        var boxImage = box.GetComponent<Image>();
+        boxImage.sprite = style?.BackgroundSprite;
+        boxImage.type = style?.BackgroundType ?? Image.Type.Simple;
+        boxImage.preserveAspect = style?.BackgroundPreserveAspect ?? false;
+        boxImage.color = style?.BackgroundColor ?? new Color(0.16f, 0.17f, 0.16f, 0.95f);
+        boxImage.raycastTarget = false;
+        var boxLayout = box.GetComponent<LayoutElement>();
+        boxLayout.minWidth = 18f;
+        boxLayout.preferredWidth = 18f;
+        boxLayout.minHeight = 18f;
+        boxLayout.preferredHeight = 18f;
+        boxLayout.flexibleWidth = 0f;
+        boxLayout.flexibleHeight = 0f;
+
+        Graphic? checkGraphic = null;
+        GameObject? fallbackCheckmark = null;
+        if (style?.CheckmarkSprite != null)
+        {
+            var check = new GameObject("Checkmark", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            check.transform.SetParent(box.transform, false);
+            var checkImage = check.GetComponent<Image>();
+            checkImage.sprite = style.CheckmarkSprite;
+            checkImage.type = style.CheckmarkType;
+            checkImage.preserveAspect = style.CheckmarkPreserveAspect;
+            checkImage.color = style.CheckmarkColor;
+            checkImage.raycastTarget = false;
+            HermesNativeUiFramework.Stretch((RectTransform)check.transform, 0f, 0f, 0f, 0f);
+            checkGraphic = checkImage;
+        }
+        else
+        {
+            fallbackCheckmark = CreateFallbackCheckmark(box.transform);
+            fallbackCheckmark.SetActive(value);
+        }
+
+        var label = HermesNativeUiFramework.CreateText("Label", root.transform, 12.5f, true, TextAlignmentOptions.Left);
+        label.text = text;
+        label.color = HermesNativeUiFramework.NormalTextColor;
+        label.raycastTarget = false;
+        var labelLayout = label.gameObject.AddComponent<LayoutElement>();
+        labelLayout.flexibleWidth = 1f;
+        labelLayout.minHeight = 18f;
+
+        var toggle = root.GetComponent<Toggle>();
+        toggle.targetGraphic = boxImage;
+        toggle.graphic = checkGraphic;
+        toggle.transition = Selectable.Transition.ColorTint;
+        if (style != null)
+        {
+            toggle.colors = style.ToggleColors;
+        }
+
+        toggle.SetIsOnWithoutNotify(value);
+        if (checkGraphic != null)
+        {
+            checkGraphic.canvasRenderer.SetAlpha(value ? 1f : 0f);
+        }
+
+        if (fallbackCheckmark != null)
+        {
+            toggle.onValueChanged.AddListener(isOn => fallbackCheckmark.SetActive(isOn));
+        }
+
+        toggle.onValueChanged.AddListener(action);
+        return toggle;
+    }
+
+    private static NativeFleaCheckboxStyle? ResolveNativeFleaCheckboxStyle()
+    {
+        if (_nativeFleaCheckboxStyle != null)
+        {
+            return _nativeFleaCheckboxStyle;
+        }
+
+        Toggle? best = null;
+        Image? bestBackground = null;
+        Image? bestCheckmark = null;
+        var bestScore = int.MinValue;
+
+        foreach (var candidate in Resources.FindObjectsOfTypeAll<Toggle>())
+        {
+            if (candidate == null || candidate.gameObject == null)
+            {
+                continue;
+            }
+
+            var path = BuildHierarchyPath(candidate.transform);
+            if (path.IndexOf("HERMES", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                continue;
+            }
+
+            if (candidate.targetGraphic is not Image background
+                || candidate.graphic is not Image checkmark
+                || ReferenceEquals(background, checkmark)
+                || background.sprite == null
+                || checkmark.sprite == null)
+            {
+                continue;
+            }
+
+            var lowerPath = path.ToLowerInvariant();
+            var lowerName = candidate.name.ToLowerInvariant();
+            var backgroundName = background.sprite.name?.ToLowerInvariant() ?? string.Empty;
+            var checkmarkName = checkmark.sprite.name?.ToLowerInvariant() ?? string.Empty;
+            var graphicName = checkmark.name.ToLowerInvariant();
+
+            var score = 0;
+            if (lowerPath.Contains("ragfair")) score += 320;
+            if (lowerPath.Contains("filter")) score += 260;
+            if (lowerPath.Contains("popup") || lowerPath.Contains("window")) score += 80;
+            if (lowerName.Contains("checkbox")) score += 220;
+            if (lowerName.Contains("check")) score += 100;
+            if (lowerName.Contains("filter")) score += 70;
+            if (backgroundName.Contains("checkbox")) score += 180;
+            if (backgroundName.Contains("filter")) score += 50;
+            if (checkmarkName.Contains("check")) score += 220;
+            if (graphicName.Contains("check")) score += 180;
+
+            var rect = candidate.transform as RectTransform;
+            if (rect != null && rect.rect.width <= 64f && rect.rect.height <= 64f)
+            {
+                score += 25;
+            }
+
+            if (score <= bestScore)
+            {
+                continue;
+            }
+
+            best = candidate;
+            bestBackground = background;
+            bestCheckmark = checkmark;
+            bestScore = score;
+        }
+
+        if (best == null || bestBackground == null || bestCheckmark == null || bestScore < 350)
+        {
+            if (!_nativeFleaCheckboxProbeLogged)
+            {
+                _nativeFleaCheckboxProbeLogged = true;
+                Plugin.Log?.LogWarning(
+                    "HERMES could not resolve the native Ragfair filter checkbox sprites yet; using the visible fallback checkmark.");
+            }
+
+            return null;
+        }
+
+        _nativeFleaCheckboxStyle = new NativeFleaCheckboxStyle
+        {
+            BackgroundSprite = bestBackground.sprite,
+            BackgroundColor = bestBackground.color,
+            BackgroundType = bestBackground.type,
+            BackgroundPreserveAspect = bestBackground.preserveAspect,
+            CheckmarkSprite = bestCheckmark.sprite,
+            CheckmarkColor = bestCheckmark.color,
+            CheckmarkType = bestCheckmark.type,
+            CheckmarkPreserveAspect = bestCheckmark.preserveAspect,
+            ToggleColors = best.colors
+        };
+
+        Plugin.Log?.LogInfo(
+            $"HERMES captured native Ragfair filter checkbox '{BuildHierarchyPath(best.transform)}' "
+            + $"with checkmark sprite '{bestCheckmark.sprite.name}'.");
+        return _nativeFleaCheckboxStyle;
+    }
+
+    private static string BuildHierarchyPath(Transform transform)
+    {
+        var names = new Stack<string>();
+        var current = transform;
+        var depth = 0;
+        while (current != null && depth++ < 16)
+        {
+            names.Push(current.name);
+            current = current.parent;
+        }
+
+        return string.Join("/", names);
+    }
+
+    private static GameObject CreateFallbackCheckmark(Transform parent)
+    {
+        var root = new GameObject("FallbackCheckmark", typeof(RectTransform));
+        root.transform.SetParent(parent, false);
+        HermesNativeUiFramework.Stretch((RectTransform)root.transform, 1f, 1f, 1f, 1f);
+
+        AddFallbackCheckLine(root.transform, "ShortStroke", new Vector2(-3.2f, -1.4f), new Vector2(2.5f, 7f), -42f);
+        AddFallbackCheckLine(root.transform, "LongStroke", new Vector2(2.1f, 1.3f), new Vector2(2.5f, 11f), 43f);
+        return root;
+    }
+
+    private static void AddFallbackCheckLine(
+        Transform parent,
+        string name,
+        Vector2 anchoredPosition,
+        Vector2 size,
+        float rotation)
+    {
+        var line = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        line.transform.SetParent(parent, false);
+        var rect = (RectTransform)line.transform;
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.pivot = new Vector2(0.5f, 0.5f);
+        rect.anchoredPosition = anchoredPosition;
+        rect.sizeDelta = size;
+        rect.localEulerAngles = new Vector3(0f, 0f, rotation);
+        var image = line.GetComponent<Image>();
+        image.color = HermesNativeUiFramework.AccentTextColor;
+        image.raycastTarget = false;
+    }
+
+    private sealed class NativeFleaCheckboxStyle
+    {
+        public Sprite? BackgroundSprite { get; set; }
+        public Color BackgroundColor { get; set; }
+        public Image.Type BackgroundType { get; set; }
+        public bool BackgroundPreserveAspect { get; set; }
+        public Sprite? CheckmarkSprite { get; set; }
+        public Color CheckmarkColor { get; set; }
+        public Image.Type CheckmarkType { get; set; }
+        public bool CheckmarkPreserveAspect { get; set; }
+        public ColorBlock ToggleColors { get; set; }
     }
 
     private static Button AddButton(

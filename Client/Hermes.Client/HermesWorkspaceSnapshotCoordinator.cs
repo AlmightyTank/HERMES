@@ -16,7 +16,7 @@ namespace Hermes.Client;
 /// </summary>
 internal sealed class HermesWorkspaceSnapshotCoordinator
 {
-    private const float InitialDelaySeconds = 5f;
+    private const float InitialDelaySeconds = 0.5f;
     private const float WatchReconnectDelaySeconds = 0.2f;
     private const float RetrySeconds = 15f;
     private const BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -30,8 +30,12 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
 
     private readonly HermesWindow _window;
     private readonly object _pendingSync = new();
+    private readonly object _sharedLoadoutSync = new();
     private HermesWorkspaceSnapshotResponse? _pendingSnapshot;
     private DeltaBundle? _pendingDelta;
+    private HermesLoadoutSummaryResponse? _pendingSharedLoadout;
+    private HermesLoadoutSummaryResponse? _cachedLoadout;
+    private Task<HermesLoadoutSummaryResponse>? _sharedLoadoutTask;
     private bool _loading;
     private bool _initialized;
     private float _nextCheckAt;
@@ -49,6 +53,32 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     /// ignore this background work, so waiting for a real server change never flashes a spinner.
     /// </summary>
     internal static bool IsBackgroundCheckActive => Current?._loading == true && Current._initialized;
+
+    /// <summary>
+    /// The exact loadout model currently displayed by the HERMES Loadout and Raid Planner pages.
+    /// Pre-raid readiness reads this object directly instead of issuing a second independent request.
+    /// </summary>
+    internal HermesLoadoutSummaryResponse? CachedLoadout
+    {
+        get
+        {
+            // The Loadout panel is the user-visible source of truth. Prefer the exact object
+            // currently rendered there, then fall back to the coordinator cache while the panel
+            // is still being initialized.
+            var panel = LoadoutPanelField.GetValue(_window);
+            var displayed = panel is null
+                ? null
+                : Get<HermesLoadoutSummaryResponse>(panel, "_summary");
+            return displayed is { Found: true } ? displayed : _cachedLoadout;
+        }
+    }
+
+    /// <summary>
+    /// Starts or joins one full shared loadout refresh. Pre-raid uses this after painting the
+    /// existing HERMES findings so stale equipment or quest warnings cannot remain hidden.
+    /// </summary>
+    internal Task<HermesLoadoutSummaryResponse> RefreshSharedLoadoutAsync()
+        => GetSharedLoadoutAsync(forceRefresh: true);
 
     private HermesWorkspaceSnapshotCoordinator(HermesWindow window)
     {
@@ -109,9 +139,37 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     {
         try
         {
-            var snapshot = await HermesRevisionApiClient.GetWorkspaceSnapshotAsync(
-                Plugin.Settings.CreateStashRequestSettings(),
-                Plugin.Settings.CreateLoadoutRequestSettings());
+            // The old /hermes/snapshot route built Hideout, Crafts, Stash, and Loadout serially.
+            // The same domain endpoints are safe to request together (normal HERMES refresh already
+            // does this), so startup now waits for the slowest domain instead of the sum of all four.
+            var changesTask = HermesRevisionApiClient.GetChangesAsync(0);
+            var hideoutTask = HermesApiClient.GetHideoutSummaryAsync();
+            var craftsTask = HermesApiClient.GetCraftsAsync();
+            var stashTask = HermesApiClient.GetStashSummaryAsync(
+                Plugin.Settings.CreateStashRequestSettings());
+            var loadoutTask = GetSharedLoadoutAsync(forceRefresh: true);
+
+            await Task.WhenAll(
+                (Task)changesTask,
+                hideoutTask,
+                craftsTask,
+                stashTask,
+                loadoutTask);
+
+            var changes = changesTask.Result;
+            var snapshot = new HermesWorkspaceSnapshotResponse
+            {
+                Found = changes.Found,
+                Message = changes.Message,
+                ContextToken = changes.ContextToken,
+                Revision = changes.Revision,
+                Domains = changes.Domains,
+                Hideout = hideoutTask.Result,
+                Crafts = craftsTask.Result,
+                Stash = stashTask.Result,
+                Loadout = loadoutTask.Result
+            };
+
             lock (_pendingSync)
             {
                 _pendingSnapshot = snapshot;
@@ -121,16 +179,110 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"HERMES initial server snapshot failed: {ex.Message}");
+            Plugin.Log.LogWarning($"HERMES parallel initial workspace load failed: {ex.Message}");
             RefreshStatusField.SetValue(
                 _window,
-                HermesApiClient.DescribeFailure(ex, "Initial HERMES snapshot"));
+                HermesApiClient.DescribeFailure(ex, "Initial HERMES workspace load"));
             _nextCheckAt = Time.realtimeSinceStartup + RetrySeconds;
         }
         finally
         {
             _loading = false;
         }
+    }
+
+    /// <summary>
+    /// Returns one shared loadout request. Initial HERMES loading, the Loadout page, Raid Planner,
+    /// and pre-raid readiness all join this task instead of calculating the same profile twice.
+    /// </summary>
+    internal Task<HermesLoadoutSummaryResponse> GetSharedLoadoutAsync(bool forceRefresh)
+    {
+        lock (_sharedLoadoutSync)
+        {
+            if (_sharedLoadoutTask is { IsCompleted: false })
+            {
+                return _sharedLoadoutTask;
+            }
+
+            if (!forceRefresh && _cachedLoadout is { Found: true })
+            {
+                return Task.FromResult(_cachedLoadout);
+            }
+
+            _sharedLoadoutTask = FetchSharedLoadoutAsync();
+            return _sharedLoadoutTask;
+        }
+    }
+
+    private async Task<HermesLoadoutSummaryResponse> FetchSharedLoadoutAsync()
+    {
+        try
+        {
+            var response = await HermesApiClient.GetLoadoutSummaryAsync(
+                Plugin.Settings.CreateLoadoutRequestSettings());
+            lock (_sharedLoadoutSync)
+            {
+                _cachedLoadout = response;
+            }
+            lock (_pendingSync)
+            {
+                _pendingSharedLoadout = response;
+            }
+
+            return response;
+        }
+        finally
+        {
+            lock (_sharedLoadoutSync)
+            {
+                _sharedLoadoutTask = null;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Performs one lightweight source revision check first. When inventory, vitals, and quest
+    /// inputs did not change, the already-rendered HERMES loadout object is returned immediately.
+    /// A full loadout analysis is requested only after the server reports a loadout-domain change.
+    /// </summary>
+    internal async Task<HermesLoadoutSummaryResponse> RevalidateLoadoutAsync()
+    {
+        var cached = _cachedLoadout;
+        try
+        {
+            var changes = await HermesRevisionApiClient.GetChangesAsync(_revision);
+            var profileChanged = !string.IsNullOrWhiteSpace(_profileToken)
+                                 && !string.IsNullOrWhiteSpace(changes.ContextToken)
+                                 && !string.Equals(
+                                     _profileToken,
+                                     changes.ContextToken,
+                                     StringComparison.Ordinal);
+            var loadoutChanged = changes.Changed.Any(domain =>
+                domain.Equals("loadout", StringComparison.OrdinalIgnoreCase)
+                || domain.Equals("raidPlanner", StringComparison.OrdinalIgnoreCase));
+
+            if (!profileChanged && !loadoutChanged && cached is { Found: true })
+            {
+                return cached;
+            }
+        }
+        catch (Exception ex)
+        {
+            // A failed lightweight revalidation should not discard useful already-loaded data.
+            if (cached is { Found: true })
+            {
+                if (Plugin.Settings.DetailedLogging.Value)
+                {
+                    Plugin.Log.LogWarning($"HERMES loadout revalidation used cached data: {ex.Message}");
+                }
+
+                return cached;
+            }
+
+            throw;
+        }
+
+        return await GetSharedLoadoutAsync(forceRefresh: true);
     }
 
     private async Task WatchServerChangesAsync()
@@ -174,7 +326,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
                 : Task.FromResult<HermesStashSummaryResponse?>(null);
             var loadoutTask = domains.Contains("loadout") || domains.Contains("raidPlanner")
                 ? TryFetchAsync(
-                    () => HermesApiClient.GetLoadoutSummaryAsync(Plugin.Settings.CreateLoadoutRequestSettings()),
+                    () => GetSharedLoadoutAsync(forceRefresh: true),
                     "changed loadout and raid planner")
                 : Task.FromResult<HermesLoadoutSummaryResponse?>(null);
 
@@ -210,12 +362,15 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     {
         HermesWorkspaceSnapshotResponse? snapshot;
         DeltaBundle? delta;
+        HermesLoadoutSummaryResponse? sharedLoadout;
         lock (_pendingSync)
         {
             snapshot = _pendingSnapshot;
             delta = _pendingDelta;
+            sharedLoadout = _pendingSharedLoadout;
             _pendingSnapshot = null;
             _pendingDelta = null;
+            _pendingSharedLoadout = null;
         }
 
         if (snapshot is not null)
@@ -226,6 +381,16 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         if (delta is not null)
         {
             ApplyDelta(delta);
+        }
+
+        if (sharedLoadout is { Found: true })
+        {
+            var changed = ApplyLoadout(sharedLoadout);
+            ApplyRaidPlanner(sharedLoadout);
+            if (changed)
+            {
+                UpdateNoticeCandidates(manual: false);
+            }
         }
     }
 
@@ -487,6 +652,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
 
     private bool ApplyLoadout(HermesLoadoutSummaryResponse response)
     {
+        _cachedLoadout = response;
         var fingerprint = BuildLoadoutSemanticFingerprint(response);
         if (string.Equals(_loadoutSemanticFingerprint, fingerprint, StringComparison.Ordinal))
         {
@@ -717,6 +883,12 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
 
     private void ClearProfileBoundWorkspaceData()
     {
+        _cachedLoadout = null;
+        lock (_pendingSync)
+        {
+            _pendingSharedLoadout = null;
+        }
+
         var hideout = HideoutPanelField.GetValue(_window);
         if (hideout is not null)
         {
