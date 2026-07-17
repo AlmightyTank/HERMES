@@ -328,9 +328,9 @@ internal sealed class HermesAssistantNoticeService
             .Where(craft => craft.CanStartNow
                             && !craft.IsActive
                             && !craft.IsComplete
-                            && craft.EstimatedEconomicProfit >= minimumProfit)
-            .OrderByDescending(craft => craft.EstimatedEconomicProfitPerHour)
-            .ThenByDescending(craft => craft.EstimatedEconomicProfit)
+                            && craft.EstimatedBestSaleProfit >= minimumProfit)
+            .OrderByDescending(craft => craft.EstimatedBestSaleProfitPerHour)
+            .ThenByDescending(craft => craft.EstimatedBestSaleProfit)
             .FirstOrDefault();
         if (best is null)
         {
@@ -342,8 +342,21 @@ internal sealed class HermesAssistantNoticeService
             "Information",
             "Crafts",
             $"Craft ready: {best.OutputName}",
-            $"{best.StationName} • estimated economic profit ₽{best.EstimatedEconomicProfit:N0} (₽{best.EstimatedEconomicProfitPerHour:N0}/h).",
+            $"{best.StationName} • {CraftSaleRecommendation(best)} • estimated profit ₽{best.EstimatedBestSaleProfit:N0} (₽{best.EstimatedBestSaleProfitPerHour:N0}/h).",
             "Crafts"));
+    }
+
+    private static string CraftSaleRecommendation(HermesCraftSummary craft)
+    {
+        if (string.Equals(craft.BestSaleSource, "Flea Market", StringComparison.OrdinalIgnoreCase))
+        {
+            return "sell on Flea";
+        }
+
+        return string.IsNullOrWhiteSpace(craft.BestSaleSource)
+               || string.Equals(craft.BestSaleSource, "No available buyer", StringComparison.OrdinalIgnoreCase)
+            ? "no available buyer"
+            : $"sell to {craft.BestSaleSource}";
     }
 
     private void AddStashCandidates(

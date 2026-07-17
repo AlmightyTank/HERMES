@@ -31,11 +31,16 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     private readonly HermesWindow _window;
     private readonly object _pendingSync = new();
     private readonly object _sharedLoadoutSync = new();
+    private readonly object _preRaidPrefetchSync = new();
     private HermesWorkspaceSnapshotResponse? _pendingSnapshot;
     private DeltaBundle? _pendingDelta;
     private HermesLoadoutSummaryResponse? _pendingSharedLoadout;
     private HermesLoadoutSummaryResponse? _cachedLoadout;
     private Task<HermesLoadoutSummaryResponse>? _sharedLoadoutTask;
+    private Task<HermesLoadoutSummaryResponse>? _preRaidPrefetchTask;
+    private HermesLoadoutSummaryResponse? _preRaidPreparedLoadout;
+    private long _preRaidPreparedUnixTime;
+    private int _preRaidPrefetchGeneration;
     private bool _loading;
     private bool _initialized;
     private float _nextCheckAt;
@@ -79,6 +84,85 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     /// </summary>
     internal Task<HermesLoadoutSummaryResponse> RefreshSharedLoadoutAsync()
         => GetSharedLoadoutAsync(forceRefresh: true);
+
+    /// <summary>
+    /// Starts the expensive readiness/loadout refresh while the player is still on EFT's map
+    /// selection screen. Every later pre-raid consumer joins this task or reads its completed
+    /// result, so Insurance never launches a duplicate full analysis.
+    /// </summary>
+    internal Task<HermesLoadoutSummaryResponse> BeginPreRaidReadinessPrefetch()
+    {
+        TaskCompletionSource<HermesLoadoutSummaryResponse> completion;
+        int generation;
+        lock (_preRaidPrefetchSync)
+        {
+            if (_preRaidPrefetchTask is { IsCompleted: false })
+            {
+                return _preRaidPrefetchTask;
+            }
+
+            completion = new TaskCompletionSource<HermesLoadoutSummaryResponse>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+            generation = ++_preRaidPrefetchGeneration;
+            _preRaidPrefetchTask = completion.Task;
+        }
+
+        _ = CompletePreRaidReadinessPrefetchAsync(completion, generation);
+        return completion.Task;
+    }
+
+    private async Task CompletePreRaidReadinessPrefetchAsync(
+        TaskCompletionSource<HermesLoadoutSummaryResponse> completion,
+        int generation)
+    {
+        try
+        {
+            var response = await GetSharedLoadoutAsync(forceRefresh: true);
+            if (response is { Found: true })
+            {
+                lock (_preRaidPrefetchSync)
+                {
+                    if (generation == _preRaidPrefetchGeneration)
+                    {
+                        _preRaidPreparedLoadout = response;
+                        _preRaidPreparedUnixTime = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    }
+                }
+            }
+
+            completion.TrySetResult(response);
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log.LogWarning($"HERMES map-selection readiness preparation failed: {ex.Message}");
+            completion.TrySetException(ex);
+        }
+    }
+
+    internal bool TryGetPreparedPreRaidLoadout(
+        out HermesLoadoutSummaryResponse? response,
+        out long preparedUnixTime)
+    {
+        lock (_preRaidPrefetchSync)
+        {
+            response = _preRaidPreparedLoadout;
+            preparedUnixTime = _preRaidPreparedUnixTime;
+            return response is { Found: true };
+        }
+    }
+
+    internal Task<HermesLoadoutSummaryResponse>? ActivePreRaidPrefetch
+    {
+        get
+        {
+            lock (_preRaidPrefetchSync)
+            {
+                return _preRaidPrefetchTask is { IsCompleted: false }
+                    ? _preRaidPrefetchTask
+                    : null;
+            }
+        }
+    }
 
     private HermesWorkspaceSnapshotCoordinator(HermesWindow window)
     {
@@ -884,6 +968,13 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     private void ClearProfileBoundWorkspaceData()
     {
         _cachedLoadout = null;
+        lock (_preRaidPrefetchSync)
+        {
+            _preRaidPreparedLoadout = null;
+            _preRaidPreparedUnixTime = 0;
+            _preRaidPrefetchTask = null;
+            _preRaidPrefetchGeneration++;
+        }
         lock (_pendingSync)
         {
             _pendingSharedLoadout = null;

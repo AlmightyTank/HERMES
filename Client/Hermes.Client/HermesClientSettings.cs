@@ -251,7 +251,7 @@ internal sealed class HermesClientSettings
             "Assistant",
             "Enable follow-up conversation context",
             true,
-            "Allows Alpha12.3 to remember resolved items, quests, maps, crafts, stations, and hideout areas for follow-up questions such as 'where do I use it?' or 'what key?'.");
+            "Allows HERMES to remember resolved items, quests, maps, crafts, stations, and hideout areas for follow-up questions such as 'where do I use it?' or 'what key?'.");
         ShowAssistantConversationContext = config.Bind(
             "Assistant",
             "Show conversation context",

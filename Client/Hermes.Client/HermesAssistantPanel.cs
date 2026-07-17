@@ -477,7 +477,7 @@ internal sealed class HermesAssistantPanel
             "• Hideout upgrades, missing materials, active production, and available crafts",
             "• Selected-item trader, flea, quest, hideout, and crafting use",
             string.Empty,
-            "Alpha12.3 also remembers resolved items, quests, maps, crafts, stations, and hideout areas for follow-up questions. You can ask \"why?\", \"what key?\", \"where do I use it?\", or choose an ambiguity result with \"the second one\". It does not buy, sell, insure, equip, move, craft, or complete anything."
+            "HERMES also remembers resolved items, quests, maps, crafts, stations, and hideout areas for follow-up questions. You can ask \"why?\", \"what key?\", \"where do I use it?\", or choose an ambiguity result with \"the second one\". It does not buy, sell, insure, equip, move, craft, or complete anything."
         ]);
 
         return new AssistantMessage(

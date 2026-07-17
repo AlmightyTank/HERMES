@@ -12,7 +12,7 @@ using UnityEngine.UI;
 namespace Hermes.Client;
 
 /// <summary>
-/// Alpha13.0.4 pre-raid readiness interception. It is deliberately client-only and read-only:
+/// Alpha13.0.10 pre-raid readiness interception and map-selection prefetch. It is deliberately client-only and read-only:
 /// a Harmony prefix intercepts MatchmakerInsuranceScreen.method_9 before EFT advances, displays
 /// the current HERMES loadout analysis, and allows that original method exactly once after the
 /// player chooses Continue. The confirmation-screen Back button is then detected through EFT's native DefaultUIButton event and returns to the existing readiness review.
@@ -69,6 +69,31 @@ internal static class HermesPreRaidReadinessSettings
     }
 }
 
+internal sealed class HermesPreRaidMapSelectionPrefetchPatch : ModulePatch
+{
+    protected override MethodBase GetTargetMethod()
+    {
+        var screenType = typeof(MatchMakerSelectionLocationScreen);
+        var showMethod = screenType
+            .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(method => method.DeclaringType == screenType && method.Name == "Show")
+            .OrderByDescending(method => method.GetParameters().Length)
+            .FirstOrDefault();
+
+        return showMethod
+               ?? screenType.GetMethod(
+                   "Awake",
+                   BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+               ?? throw new MissingMethodException(screenType.FullName, "Show/Awake");
+    }
+
+    [PatchPostfix]
+    private static void Postfix()
+    {
+        HermesPreRaidReadinessController.BeginMapSelectionPreparation();
+    }
+}
+
 internal sealed class HermesPreRaidInsuranceNextPatch : ModulePatch
 {
     protected override MethodBase GetTargetMethod()
@@ -114,6 +139,29 @@ internal static class HermesPreRaidReadinessController
     private static MatchmakerInsuranceScreen? _nativeNextBypassScreen;
     private static MatchmakerInsuranceScreen? _confirmationReturnInsuranceScreen;
     private static HermesPreRaidInsuranceBridge? _confirmationReturnBridge;
+
+    internal static void BeginMapSelectionPreparation()
+    {
+        if (!HermesPreRaidReadinessSettings.Enabled.Value)
+        {
+            return;
+        }
+
+        var coordinator = HermesWorkspaceSnapshotCoordinator.Current;
+        if (coordinator is null)
+        {
+            Plugin.Log.LogWarning(
+                "HERMES reached map selection before the shared workspace coordinator was available.");
+            return;
+        }
+
+        _ = coordinator.BeginPreRaidReadinessPrefetch();
+        if (Plugin.Settings.DetailedLogging.Value)
+        {
+            Plugin.Log.LogInfo(
+                "HERMES started pre-raid readiness preparation from the map selection screen.");
+        }
+    }
 
     internal static bool TryOpen(MatchmakerInsuranceScreen insuranceScreen)
     {
@@ -398,7 +446,43 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
         }
 
         var coordinator = HermesWorkspaceSnapshotCoordinator.Current;
+        if (!refreshSnapshot
+            && coordinator is not null
+            && coordinator.TryGetPreparedPreRaidLoadout(out var prepared, out var preparedUnixTime)
+            && prepared is { Found: true })
+        {
+            RenderSummary(prepared);
+            var preparedAge = preparedUnixTime > 0
+                ? Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeSeconds() - preparedUnixTime)
+                : 0L;
+            SetStatus(
+                $"Readiness was prepared at map selection {preparedAge}s ago. No duplicate Insurance refresh is needed.");
+            return;
+        }
+
+        var activePrefetch = coordinator?.ActivePreRaidPrefetch;
         var cached = coordinator?.CachedLoadout;
+        if (!refreshSnapshot && activePrefetch is not null)
+        {
+            if (cached is { Found: true })
+            {
+                RenderSummary(cached);
+            }
+            else
+            {
+                ClearFindings();
+                if (_summaryText is not null)
+                {
+                    _summaryText.text = $"{ResolveSelectedMap()} • finishing map-selection preparation";
+                }
+            }
+
+            SetStatus(
+                "Finishing the readiness refresh started at map selection; this screen is joining that same request.");
+            _loadTask = activePrefetch;
+            return;
+        }
+
         if (!refreshSnapshot && cached is { Found: true })
         {
             RenderSummary(cached);
@@ -406,8 +490,8 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
                 ? Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeSeconds() - cached.GeneratedUnixTime)
                 : 0L;
             SetStatus(
-                $"Showing the exact HERMES Loadout snapshot ({ageSeconds}s old). A fresh pre-raid update is running in the background.");
-            StartLoadoutRefresh(preserveRenderedFindings: true, forceRefresh: true);
+                $"Showing the shared HERMES Loadout snapshot ({ageSeconds}s old) while a lightweight change check runs.");
+            StartLoadoutRefresh(preserveRenderedFindings: true, forceRefresh: false);
             return;
         }
 
@@ -743,15 +827,16 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
                 ? ReadinessSeverity.Critical
                 : ReadinessSeverity.Warning;
 
-            // Keep the same warnings visible on both HERMES and pre-raid. A quest warning for a
-            // different map is still useful context, but it is advisory for this deployment and
-            // must not be silently discarded.
-            if (category.Contains("Quest", StringComparison.OrdinalIgnoreCase)
-                && TryResolveMentionedMap(message, out var warningMap)
-                && !MapMatches(warningMap, mapName))
+            // Pre-raid quest advice is deployment-specific. Never show it unless HERMES can
+            // positively resolve both the selected raid map and the warning's objective map.
+            if (category.Contains("Quest", StringComparison.OrdinalIgnoreCase))
             {
-                category = $"{category} • {warningMap}";
-                severity = ReadinessSeverity.Warning;
+                if (!IsKnownSelectedMap(mapName)
+                    || !TryResolveQuestWarningMap(summary, message, out var warningMap)
+                    || !MapMatches(warningMap, mapName))
+                {
+                    continue;
+                }
             }
 
             AddUnique(output, seen, new ReadinessFinding(
@@ -808,9 +893,13 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
                 $"Total health is {summary.Vitals.HealthPercent}%."));
         }
 
+        var selectedMapKnown = IsKnownSelectedMap(mapName);
         foreach (var requirement in summary.QuestRequirements)
         {
-            if (requirement.IsCompleted || requirement.AcquireInRaid || requirement.IsSatisfied)
+            if (!selectedMapKnown
+                || requirement.IsCompleted
+                || requirement.AcquireInRaid
+                || requirement.IsSatisfied)
             {
                 continue;
             }
@@ -829,7 +918,9 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
                 $"{requirement.QuestName}: {requirement.RequiredEquipment}{amount} is not in the raid loadout and may have been left in the stash.{note}"));
         }
 
-        var selectedPlan = summary.RaidPlans.FirstOrDefault(plan => MapMatches(plan.MapName, mapName));
+        var selectedPlan = selectedMapKnown
+            ? summary.RaidPlans.FirstOrDefault(plan => MapMatches(plan.MapName, mapName))
+            : null;
         if (selectedPlan is not null)
         {
             foreach (var requirement in selectedPlan.CombinedRequirements.Where(requirement => !requirement.IsSatisfied && !requirement.AcquireInRaid))
@@ -945,6 +1036,53 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
         return !string.IsNullOrWhiteSpace(mapName);
     }
 
+    private static bool TryResolveQuestWarningMap(
+        HermesLoadoutSummaryResponse summary,
+        string message,
+        out string mapName)
+    {
+        if (TryResolveMentionedMap(message, out mapName))
+        {
+            return true;
+        }
+
+        var questNameMatches = summary.QuestRequirements
+            .Where(requirement => !string.IsNullOrWhiteSpace(requirement.MapName)
+                                  && !string.IsNullOrWhiteSpace(requirement.QuestName)
+                                  && message.Contains(
+                                      requirement.QuestName,
+                                      StringComparison.OrdinalIgnoreCase))
+            .Select(requirement => requirement.MapName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (questNameMatches.Count == 1)
+        {
+            mapName = questNameMatches[0];
+            return true;
+        }
+
+        var planMatches = summary.RaidPlans
+            .Where(plan => plan.CombinedRequirements.Any(requirement =>
+                requirement.QuestNames.Any(questName =>
+                    !string.IsNullOrWhiteSpace(questName)
+                    && message.Contains(questName, StringComparison.OrdinalIgnoreCase))))
+            .Select(plan => plan.MapName)
+            .Where(candidate => !string.IsNullOrWhiteSpace(candidate))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (planMatches.Count == 1)
+        {
+            mapName = planMatches[0];
+            return true;
+        }
+
+        mapName = string.Empty;
+        return false;
+    }
+
+    private static bool IsKnownSelectedMap(string mapName)
+        => KnownMapNames.Any(known => MapMatches(known, mapName));
+
     private static void AddUnique(
         ICollection<ReadinessFinding> output,
         ISet<string> seen,
@@ -972,7 +1110,7 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
     {
         if (string.IsNullOrWhiteSpace(candidate) || string.IsNullOrWhiteSpace(selected))
         {
-            return true;
+            return false;
         }
 
         static string Normalize(string value)

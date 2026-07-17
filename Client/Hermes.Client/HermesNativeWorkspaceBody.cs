@@ -734,7 +734,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             ("TOTAL", response.Crafts.Count.ToString("N0")),
             ("AVAILABLE", response.Crafts.Count(craft => craft.IsAvailable).ToString("N0")),
             ("READY NOW", response.Crafts.Count(craft => craft.CanStartNow).ToString("N0")),
-            ("PROFITABLE", response.Crafts.Count(craft => craft.EstimatedEconomicProfit > 0).ToString("N0")),
+            ("PROFITABLE", response.Crafts.Count(IsCraftProfitable).ToString("N0")),
             ("ACTIVE", response.Crafts.Count(craft => craft.IsActive).ToString("N0")),
             ("COMPLETE", response.Crafts.Count(craft => craft.IsComplete).ToString("N0")));
 
@@ -774,8 +774,8 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             AddCard(
                 list.Content,
                 $"{craft.OutputQuantity:N0}× {craft.OutputName}",
-                $"{craft.StationName} L{craft.RequiredStationLevel} • {FormatDuration(craft.DurationSeconds)} • input {Money(craft.EstimatedEconomicInputValue)} • output {Money(craft.EstimatedOutputValue)}",
-                $"{craft.Status} • PROFIT {Money(craft.EstimatedEconomicProfit)}",
+                $"{craft.StationName} L{craft.RequiredStationLevel} • {FormatDuration(craft.DurationSeconds)} • input {Money(craft.EstimatedEconomicInputValue)} • best sale {Money(craft.EstimatedBestSaleValue)}",
+                $"{craft.Status} • BEST PROFIT {Money(BestCraftProfit(craft))} • {CraftProfitSource(craft)}",
                 () =>
                 {
                     _state.SelectCraft(craft);
@@ -799,18 +799,78 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                             || craft.OutputName.Contains(query, StringComparison.OrdinalIgnoreCase)
                             || craft.StationName.Contains(query, StringComparison.OrdinalIgnoreCase)
                             || craft.Status.Contains(query, StringComparison.OrdinalIgnoreCase))
-            .Where(craft => !_craftAvailableOnly || craft.IsAvailable)
+            // The four buttons are the primary status filter. Available is only an
+            // additional narrowing condition and never replaces or resets that filter.
             .Where(craft => _craftFilter switch
             {
                 "READY" => craft.CanStartNow,
-                "PROFITABLE" => craft.EstimatedEconomicProfit > 0,
+                "PROFITABLE" => IsCraftProfitable(craft),
                 "ACTIVE" => craft.IsActive,
                 _ => true
             })
+            .Where(MatchesCraftAvailabilityFilter)
             .OrderByDescending(craft => craft.CanStartNow)
             .ThenByDescending(craft => craft.IsActive || craft.IsComplete)
-            .ThenByDescending(craft => craft.EstimatedEconomicProfitPerHour)
+            .ThenByDescending(BestCraftProfitPerHour)
             .ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private bool MatchesCraftAvailabilityFilter(HermesCraftSummary craft)
+    {
+        if (!_craftAvailableOnly)
+        {
+            return true;
+        }
+
+        // A running or completed production is already available to this profile.
+        // Its consumed ingredients should not make it disappear when Available is checked.
+        return craft.IsAvailable || craft.IsActive || craft.IsComplete;
+    }
+
+    private static bool IsCraftProfitable(HermesCraftSummary craft)
+        => craft.EstimatedBestSaleProfit > 0;
+
+    private static long BestCraftProfit(HermesCraftSummary craft)
+        => craft.EstimatedBestSaleProfit;
+
+    private static long BestCraftProfitPerHour(HermesCraftSummary craft)
+        => craft.EstimatedBestSaleProfitPerHour;
+
+    private static string CraftProfitSource(HermesCraftSummary craft)
+    {
+        if (string.Equals(craft.BestSaleSource, "Flea Market", StringComparison.OrdinalIgnoreCase))
+        {
+            return "SELL ON FLEA";
+        }
+
+        return string.IsNullOrWhiteSpace(craft.BestSaleSource)
+               || string.Equals(craft.BestSaleSource, "No available buyer", StringComparison.OrdinalIgnoreCase)
+            ? "NO AVAILABLE BUYER"
+            : $"SELL TO {craft.BestSaleSource.ToUpperInvariant()}";
+    }
+
+    private static string CraftFleaSaleText(HermesCraftSummary craft)
+    {
+        if (!craft.FleaUnlocked)
+        {
+            return "LOCKED";
+        }
+
+        return craft.CanSellOnFlea && craft.EstimatedFleaNetSaleValue > 0
+            ? Money(craft.EstimatedFleaNetSaleValue)
+            : "UNAVAILABLE";
+    }
+
+    private static string CraftFleaProfitText(HermesCraftSummary craft)
+    {
+        if (!craft.FleaUnlocked)
+        {
+            return "LOCKED";
+        }
+
+        return craft.CanSellOnFlea && craft.EstimatedFleaNetSaleValue > 0
+            ? Money(craft.EstimatedFleaProfit)
+            : "UNAVAILABLE";
     }
 
     private void SetCraftFilter(string filter)
@@ -840,9 +900,15 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             ("OUTPUT", craft.OutputQuantity.ToString("N0")),
             ("DURATION", FormatDuration(craft.DurationSeconds)),
             ("STATUS", craft.Status),
-            ("CASH NEEDED", Money(craft.EstimatedAdditionalCashCost)),
-            ("ECONOMIC PROFIT", Money(craft.EstimatedEconomicProfit)),
-            ("PROFIT / HOUR", Money(craft.EstimatedEconomicProfitPerHour)),
+            ("ECONOMIC INPUT", Money(craft.EstimatedEconomicInputValue)),
+            ("TRADER SALE", Money(craft.EstimatedTraderSaleValue)),
+            ("TRADER PROFIT", Money(craft.EstimatedTraderProfit)),
+            ("FLEA NET", CraftFleaSaleText(craft)),
+            ("FLEA PROFIT", CraftFleaProfitText(craft)),
+            ("BEST SALE", Money(craft.EstimatedBestSaleValue)),
+            ("BEST PROFIT", Money(craft.EstimatedBestSaleProfit)),
+            ("BEST SELL PATH", CraftProfitSource(craft)),
+            ("BEST PROFIT / HOUR", Money(BestCraftProfitPerHour(craft))),
             ("PLAN", craft.AcquisitionPlanComplete ? "COMPLETE" : "INCOMPLETE"));
 
         if (!string.IsNullOrWhiteSpace(craft.OutputTemplateId))

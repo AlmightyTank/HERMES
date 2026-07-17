@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0-alpha13.0.7</Version>
+    <Version>0.1.0-alpha13.0.10</Version>
     <OutputType>Library</OutputType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDependencyFile>false</GenerateDependencyFile>
@@ -95,18 +95,31 @@
   </ItemGroup>
 
   <Target Name="ValidateSptClientReferences" BeforeTargets="ResolveReferences" Condition="'$(DesignTimeBuild)' != 'true'">
-    <Error Condition="!Exists('$(SptRoot)')" Text="SPT root was not found at '$(SptRoot)'. Edit SptRoot in Hermes.Client.csproj." />
-    <Error Condition="!Exists('$(BepInExCore)\BepInEx.dll')" Text="Missing BepInEx.dll at '$(BepInExCore)\BepInEx.dll'. Check SptRoot in Hermes.Client.csproj." />
-    <Error Condition="!Exists('$(SptClientPlugins)\spt-common.dll')" Text="Missing spt-common.dll at '$(SptClientPlugins)\spt-common.dll'. Check SptRoot and your SPT 4.0.13 installation." />
-    <Error Condition="!Exists('$(SptClientPlugins)\spt-reflection.dll')" Text="Missing spt-reflection.dll at '$(SptClientPlugins)\spt-reflection.dll'. Check SptRoot and your SPT 4.0.13 installation." />
-    <Error Condition="!Exists('$(EftManaged)\Assembly-CSharp.dll')" Text="Missing Assembly-CSharp.dll at '$(EftManaged)\Assembly-CSharp.dll'." />
-    <Error Condition="!Exists('$(EftManaged)\Newtonsoft.Json.dll')" Text="Missing Newtonsoft.Json.dll at '$(EftManaged)\Newtonsoft.Json.dll'." />
-    <Error Condition="!Exists('$(EftManaged)\UnityEngine.CoreModule.dll')" Text="Missing UnityEngine.CoreModule.dll at '$(EftManaged)\UnityEngine.CoreModule.dll'." />
-    <Error Condition="!Exists('$(EftManaged)\UnityEngine.IMGUIModule.dll')" Text="Missing UnityEngine.IMGUIModule.dll at '$(EftManaged)\UnityEngine.IMGUIModule.dll'." />
-    <Error Condition="!Exists('$(EftManaged)\UnityEngine.UI.dll')" Text="Missing UnityEngine.UI.dll at '$(EftManaged)\UnityEngine.UI.dll'." />
-    <Error Condition="!Exists('$(EftManaged)\UnityEngine.UIModule.dll')" Text="Missing UnityEngine.UIModule.dll at '$(EftManaged)\UnityEngine.UIModule.dll'." />
-    <Error Condition="!Exists('$(EftManaged)\UnityEngine.ImageConversionModule.dll')" Text="Missing UnityEngine.ImageConversionModule.dll at '$(EftManaged)\UnityEngine.ImageConversionModule.dll'." />
-    <Error Condition="!Exists('$(EftManaged)\UnityEngine.TextRenderingModule.dll')" Text="Missing UnityEngine.TextRenderingModule.dll at '$(EftManaged)\UnityEngine.TextRenderingModule.dll'." />
-    <Error Condition="!Exists('$(EftManaged)\UnityEngine.InputLegacyModule.dll')" Text="Missing UnityEngine.InputLegacyModule.dll at '$(EftManaged)\UnityEngine.InputLegacyModule.dll'." />
+    <Error Condition="!Exists('$(SptRoot)')"
+           Text="SPT root was not found at '$(SptRoot)'. Edit SptRoot in Hermes.Client.csproj." />
+    <Error Condition="!Exists('$(BepInExCore)\BepInEx.dll')"
+           Text="Missing BepInEx.dll at '$(BepInExCore)\BepInEx.dll'. Check SptRoot in Hermes.Client.csproj." />
+    <Error Condition="!Exists('$(SptClientPlugins)\spt-common.dll')"
+           Text="Missing spt-common.dll at '$(SptClientPlugins)\spt-common.dll'. Check SptRoot and your SPT 4.0.13 installation." />
+    <Error Condition="!Exists('$(SptClientPlugins)\spt-reflection.dll')"
+           Text="Missing spt-reflection.dll at '$(SptClientPlugins)\spt-reflection.dll'. Check SptRoot and your SPT 4.0.13 installation." />
+    <Error Condition="!Exists('$(EftManaged)\Assembly-CSharp.dll')"
+           Text="Missing Assembly-CSharp.dll at '$(EftManaged)\Assembly-CSharp.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\Newtonsoft.Json.dll')"
+           Text="Missing Newtonsoft.Json.dll at '$(EftManaged)\Newtonsoft.Json.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.CoreModule.dll')"
+           Text="Missing UnityEngine.CoreModule.dll at '$(EftManaged)\UnityEngine.CoreModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.IMGUIModule.dll')"
+           Text="Missing UnityEngine.IMGUIModule.dll at '$(EftManaged)\UnityEngine.IMGUIModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.UI.dll')"
+           Text="Missing UnityEngine.UI.dll at '$(EftManaged)\UnityEngine.UI.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.UIModule.dll')"
+           Text="Missing UnityEngine.UIModule.dll at '$(EftManaged)\UnityEngine.UIModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.ImageConversionModule.dll')"
+           Text="Missing UnityEngine.ImageConversionModule.dll at '$(EftManaged)\UnityEngine.ImageConversionModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.TextRenderingModule.dll')"
+           Text="Missing UnityEngine.TextRenderingModule.dll at '$(EftManaged)\UnityEngine.TextRenderingModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.InputLegacyModule.dll')"
+           Text="Missing UnityEngine.InputLegacyModule.dll at '$(EftManaged)\UnityEngine.InputLegacyModule.dll'." />
   </Target>
 </Project>

@@ -232,7 +232,7 @@ internal sealed class HermesNativeWorkspaceState
                 SelectedCraft?.CraftKey,
                 Identity(CraftDetail),
                 CraftDetail?.Ingredients.Count,
-                CraftDetail?.Craft?.EstimatedEconomicProfit),
+                CraftDetail?.Craft?.EstimatedBestSaleProfit),
             "Stash" => string.Join("|",
                 tab,
                 StashStatus,

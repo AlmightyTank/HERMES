@@ -46,6 +46,9 @@ public sealed class Plugin : BaseUnityPlugin
         TryEnable("native Items & Market search toolbar", () => new HermesNativeItemSearchBarSuppressionPatch().Enable());
         TryEnable("native EFT notification click routing", () => new HermesNativeNotificationClickPatch().Enable());
         TryEnable(
+            "pre-raid readiness map-selection preparation",
+            () => new HermesPreRaidMapSelectionPrefetchPatch().Enable());
+        TryEnable(
             "PMC pre-raid readiness native Insurance interception",
             () => new HermesPreRaidInsuranceNextPatch().Enable());
         TryEnable(
@@ -55,7 +58,7 @@ public sealed class Plugin : BaseUnityPlugin
         HermesRagfairNativeAssets.TryResolve();
 
         Logger.LogInfo(
-            $"HERMES 0.1.0-alpha13.0.7 native flea checkbox controls loaded. "
+            $"HERMES 0.1.0-alpha13.0.10 map-prefetched readiness and best trader/flea craft profit loaded. "
             + $"Native Ragfair templates ready: {HermesRagfairNativeAssets.Ready}. "
             + $"Inventory-only workspace: {Settings.UseNativeInventoryTabs.Value}. "
             + $"Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");

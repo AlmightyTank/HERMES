@@ -368,6 +368,19 @@ public sealed class HermesCraftSummary
     public long EstimatedCashProfit { get; set; }
     public long EstimatedEconomicProfit { get; set; }
     public long EstimatedEconomicProfitPerHour { get; set; }
+    public string? BestTraderName { get; set; }
+    public long EstimatedTraderSaleValue { get; set; }
+    public long EstimatedTraderProfit { get; set; }
+    public long EstimatedTraderProfitPerHour { get; set; }
+    public bool FleaUnlocked { get; set; }
+    public bool CanSellOnFlea { get; set; }
+    public long EstimatedFleaNetSaleValue { get; set; }
+    public long EstimatedFleaProfit { get; set; }
+    public long EstimatedFleaProfitPerHour { get; set; }
+    public string BestSaleSource { get; set; } = string.Empty;
+    public long EstimatedBestSaleValue { get; set; }
+    public long EstimatedBestSaleProfit { get; set; }
+    public long EstimatedBestSaleProfitPerHour { get; set; }
     public bool IsActive { get; set; }
     public bool IsComplete { get; set; }
 }

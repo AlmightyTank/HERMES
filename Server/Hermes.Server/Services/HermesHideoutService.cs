@@ -144,13 +144,22 @@ public sealed class HermesHideoutService(
         }
 
         var valuationCache = new Dictionary<string, ItemValuation>(StringComparer.OrdinalIgnoreCase);
+        var traderSaleCache = new Dictionary<string, TraderSaleEstimate>(StringComparer.OrdinalIgnoreCase);
+        var fleaSaleCache = new FleaSaleCache();
         var crafts = _craftsByKey!
             .Values
             .Where(craft => IsCraftStationAvailable(craft, snapshot))
-            .Select(craft => BuildCraftEvaluation(craft, snapshot, sessionId, valuationCache, includeLivePricing: false))
+            .Select(craft => BuildCraftEvaluation(
+                craft,
+                snapshot,
+                sessionId,
+                valuationCache,
+                includeLivePricing: false,
+                traderSaleCache: traderSaleCache,
+                fleaSaleCache: fleaSaleCache))
             .OrderByDescending(craft => craft.CanStartNow)
             .ThenByDescending(craft => craft.IsAvailable)
-            .ThenByDescending(craft => craft.EstimatedEconomicProfitPerHour)
+            .ThenByDescending(craft => craft.EstimatedBestSaleProfitPerHour)
             .ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -199,8 +208,17 @@ public sealed class HermesHideoutService(
         }
 
         var valuationCache = new Dictionary<string, ItemValuation>(StringComparer.OrdinalIgnoreCase);
+        var traderSaleCache = new Dictionary<string, TraderSaleEstimate>(StringComparer.OrdinalIgnoreCase);
+        var fleaSaleCache = new FleaSaleCache();
         var ingredients = BuildCraftIngredients(craft, snapshot, sessionId, valuationCache);
-        var summary = BuildCraftEvaluation(craft, snapshot, sessionId, valuationCache, ingredients);
+        var summary = BuildCraftEvaluation(
+            craft,
+            snapshot,
+            sessionId,
+            valuationCache,
+            prebuiltIngredients: ingredients,
+            traderSaleCache: traderSaleCache,
+            fleaSaleCache: fleaSaleCache);
         var requiredQuestName = craft.QuestId is not null && MongoId.IsValidMongoId(craft.QuestId)
             ? catalogService.GetQuestName(new MongoId(craft.QuestId))
             : null;
@@ -259,6 +277,9 @@ public sealed class HermesHideoutService(
         var upgradeUses = BuildPlayerAwareUpgradeUses(item, templateText, snapshot, sessionId);
         var producedBy = new List<HermesCraftUse>();
         var usedBy = new List<HermesCraftUse>();
+        var craftValuationCache = new Dictionary<string, ItemValuation>(StringComparer.OrdinalIgnoreCase);
+        var craftTraderSaleCache = new Dictionary<string, TraderSaleEstimate>(StringComparer.OrdinalIgnoreCase);
+        var craftFleaSaleCache = new FleaSaleCache();
 
         foreach (var craft in _craftsByKey!.Values)
         {
@@ -280,8 +301,10 @@ public sealed class HermesHideoutService(
                 craft,
                 snapshot,
                 sessionId,
-                new Dictionary<string, ItemValuation>(StringComparer.OrdinalIgnoreCase),
-                includeLivePricing: false);
+                craftValuationCache,
+                includeLivePricing: false,
+                traderSaleCache: craftTraderSaleCache,
+                fleaSaleCache: craftFleaSaleCache);
             var currentStationLevel = snapshot.Areas.GetValueOrDefault(craft.AreaType)?.Level ?? 0;
             var unlocked = !craft.Locked
                            || snapshot.UnlockedRecipes.Contains(craft.Id)
@@ -1028,7 +1051,9 @@ public sealed class HermesHideoutService(
         MongoId sessionId,
         IDictionary<string, ItemValuation> valuationCache,
         IReadOnlyList<HermesCraftIngredient>? prebuiltIngredients = null,
-        bool includeLivePricing = true)
+        bool includeLivePricing = true,
+        IDictionary<string, TraderSaleEstimate>? traderSaleCache = null,
+        FleaSaleCache? fleaSaleCache = null)
     {
         var stationLevel = snapshot.Areas.GetValueOrDefault(craft.AreaType)?.Level ?? 0;
         var stationReady = stationLevel >= craft.RequiredStationLevel;
@@ -1117,6 +1142,11 @@ public sealed class HermesHideoutService(
         var economicInputValue = ownedIngredientValue + additionalCashCost + unavailableEconomicEstimate;
 
         var outputValue = 0L;
+        string? bestTraderName = null;
+        var traderSaleValue = 0L;
+        var fleaUnlocked = false;
+        var canSellOnFlea = false;
+        var fleaNetSaleValue = 0L;
         if (MongoId.IsValidMongoId(craft.OutputTemplateId))
         {
             var outputItem = catalogService.ResolveTemplate(new MongoId(craft.OutputTemplateId));
@@ -1127,6 +1157,17 @@ public sealed class HermesHideoutService(
                                       ?? valuation.HandbookUnitValue
                                       ?? 0L;
                 outputValue = unitOutputValue * Math.Max(1, craft.OutputQuantity);
+
+                traderSaleCache ??= new Dictionary<string, TraderSaleEstimate>(StringComparer.OrdinalIgnoreCase);
+                var traderSale = GetBestTraderSale(outputItem, sessionId, traderSaleCache);
+                bestTraderName = traderSale.TraderName;
+                traderSaleValue = traderSale.UnitValue * Math.Max(1, craft.OutputQuantity);
+
+                fleaSaleCache ??= new FleaSaleCache();
+                var fleaSale = GetFleaSale(outputItem, sessionId, fleaSaleCache);
+                fleaUnlocked = fleaSale.FleaUnlocked;
+                canSellOnFlea = fleaSale.CanSellOnFlea;
+                fleaNetSaleValue = fleaSale.UnitNetValue * Math.Max(1, craft.OutputQuantity);
             }
         }
 
@@ -1135,6 +1176,28 @@ public sealed class HermesHideoutService(
         var economicProfitPerHour = craft.DurationSeconds > 0
             ? Convert.ToInt64(Math.Round(economicProfit / (craft.DurationSeconds / 3600d)))
             : economicProfit;
+        var traderProfit = traderSaleValue - economicInputValue;
+        var traderProfitPerHour = craft.DurationSeconds > 0
+            ? Convert.ToInt64(Math.Round(traderProfit / (craft.DurationSeconds / 3600d)))
+            : traderProfit;
+        var fleaProfit = fleaNetSaleValue - economicInputValue;
+        var fleaProfitPerHour = craft.DurationSeconds > 0
+            ? Convert.ToInt64(Math.Round(fleaProfit / (craft.DurationSeconds / 3600d)))
+            : fleaProfit;
+
+        var useFlea = fleaUnlocked
+                      && canSellOnFlea
+                      && fleaNetSaleValue > traderSaleValue;
+        var bestSaleSource = useFlea
+            ? "Flea Market"
+            : !string.IsNullOrWhiteSpace(bestTraderName)
+                ? bestTraderName!
+                : "No available buyer";
+        var bestSaleValue = useFlea ? fleaNetSaleValue : traderSaleValue;
+        var bestSaleProfit = bestSaleValue - economicInputValue;
+        var bestSaleProfitPerHour = craft.DurationSeconds > 0
+            ? Convert.ToInt64(Math.Round(bestSaleProfit / (craft.DurationSeconds / 3600d)))
+            : bestSaleProfit;
 
         return new HermesCraftSummary(
             CraftKey: craft.Key,
@@ -1155,6 +1218,19 @@ public sealed class HermesHideoutService(
             EstimatedCashProfit: cashProfit,
             EstimatedEconomicProfit: economicProfit,
             EstimatedEconomicProfitPerHour: economicProfitPerHour,
+            BestTraderName: bestTraderName,
+            EstimatedTraderSaleValue: traderSaleValue,
+            EstimatedTraderProfit: traderProfit,
+            EstimatedTraderProfitPerHour: traderProfitPerHour,
+            FleaUnlocked: fleaUnlocked,
+            CanSellOnFlea: canSellOnFlea,
+            EstimatedFleaNetSaleValue: fleaNetSaleValue,
+            EstimatedFleaProfit: fleaProfit,
+            EstimatedFleaProfitPerHour: fleaProfitPerHour,
+            BestSaleSource: bestSaleSource,
+            EstimatedBestSaleValue: bestSaleValue,
+            EstimatedBestSaleProfit: bestSaleProfit,
+            EstimatedBestSaleProfitPerHour: bestSaleProfitPerHour,
             IsActive: activeProduction is not null,
             IsComplete: activeProduction?.IsComplete == true);
     }
@@ -1294,6 +1370,76 @@ public sealed class HermesHideoutService(
         return output;
     }
 
+    private TraderSaleEstimate GetBestTraderSale(
+        HermesCatalogItem item,
+        MongoId sessionId,
+        IDictionary<string, TraderSaleEstimate> cache)
+    {
+        if (cache.TryGetValue(item.ItemKey, out var cached))
+        {
+            return cached;
+        }
+
+        TraderSaleEstimate estimate;
+        try
+        {
+            var summary = traderService.GetSummary(item.ItemKey, null, sessionId);
+            var bestSell = summary.BestSellOffer;
+            estimate = bestSell is not null && bestSell.RoubleEquivalent > 0
+                ? new TraderSaleEstimate(bestSell.TraderName, bestSell.RoubleEquivalent)
+                : new TraderSaleEstimate(null, 0L);
+        }
+        catch
+        {
+            estimate = new TraderSaleEstimate(null, 0L);
+        }
+
+        cache[item.ItemKey] = estimate;
+        return estimate;
+    }
+
+    private FleaSaleEstimate GetFleaSale(
+        HermesCatalogItem item,
+        MongoId sessionId,
+        FleaSaleCache cache)
+    {
+        if (cache.ByItem.TryGetValue(item.ItemKey, out var cached))
+        {
+            return cached;
+        }
+
+        if (cache.FleaUnlocked == false)
+        {
+            var locked = new FleaSaleEstimate(false, false, 0L);
+            cache.ByItem[item.ItemKey] = locked;
+            return locked;
+        }
+
+        FleaSaleEstimate estimate;
+        try
+        {
+            var market = marketService.GetSummary(item.ItemKey, sessionId);
+            if (market.Found)
+            {
+                cache.FleaUnlocked = market.FleaUnlocked;
+            }
+
+            estimate = market.Found
+                && market.FleaUnlocked
+                && market.CanSellOnFlea
+                && market.EstimatedNetSale is > 0
+                    ? new FleaSaleEstimate(true, true, market.EstimatedNetSale.Value)
+                    : new FleaSaleEstimate(market.FleaUnlocked, false, 0L);
+        }
+        catch
+        {
+            estimate = new FleaSaleEstimate(cache.FleaUnlocked == true, false, 0L);
+        }
+
+        cache.ByItem[item.ItemKey] = estimate;
+        return estimate;
+    }
+
     private ItemValuation GetItemValuation(
         HermesCatalogItem item,
         MongoId sessionId,
@@ -1307,9 +1453,9 @@ public sealed class HermesHideoutService(
 
         var handbook = catalogService.GetReferencePrice(item.TemplateId);
 
-        // Craft summary requests must stay fast. They can cover hundreds of recipes,
-        // so only use handbook values there. Live trader/flea scans are reserved for
-        // the selected recipe detail request.
+        // Craft summary requests can cover hundreds of recipes, so ingredient and general
+        // economic values stay on the handbook path here. Best trader output sale values are
+        // resolved separately once per unique output through traderSaleCache.
         if (!includeLivePricing)
         {
             var lightweight = new ItemValuation(
@@ -2608,6 +2754,20 @@ public sealed class HermesHideoutService(
         double? AvailableQuantity);
 
     private sealed record ValueEstimate(string Source, long UnitPrice);
+
+    private sealed record TraderSaleEstimate(string? TraderName, long UnitValue);
+
+    private sealed record FleaSaleEstimate(
+        bool FleaUnlocked,
+        bool CanSellOnFlea,
+        long UnitNetValue);
+
+    private sealed class FleaSaleCache
+    {
+        public bool? FleaUnlocked { get; set; }
+        public Dictionary<string, FleaSaleEstimate> ByItem { get; } =
+            new(StringComparer.OrdinalIgnoreCase);
+    }
 
     private sealed record ItemValuation(
         long? HandbookUnitValue,
