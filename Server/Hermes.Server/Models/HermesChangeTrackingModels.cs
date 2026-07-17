@@ -30,3 +30,8 @@ public sealed record HermesChangesResponse(
     HermesDomainRevisions Domains,
     IReadOnlyList<string> Changed,
     string? Reason);
+
+public sealed record HermesRecheckResponse(
+    bool Accepted,
+    string? Message,
+    string ContextToken);

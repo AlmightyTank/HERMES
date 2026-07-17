@@ -21,7 +21,7 @@ namespace Hermes.Server.Services;
 [Injectable(InjectionType.Singleton)]
 public sealed class HermesChangeTrackingService(
     DatabaseService databaseService,
-    ProfileHelper profileHelper,
+    HermesProfileScopeService profileScopeService,
     RagfairOfferService ragfairOfferService,
     JsonUtil jsonUtil,
     HermesCatalogService catalogService,
@@ -30,8 +30,10 @@ public sealed class HermesChangeTrackingService(
     HermesLoadoutService loadoutService,
     HermesHideoutService hideoutService)
 {
-    private const long StaticDatabaseCheckSeconds = 300;
-    private const long MarketCheckSeconds = 60;
+    private const long StaticDatabaseCheckSeconds = 60;
+    private const long MarketCheckSeconds = 30;
+    private const int ActiveWatchSeconds = 30;
+    private const int InactiveWatchSeconds = 60;
 
     private static readonly string[] AllDomains =
     [
@@ -83,65 +85,82 @@ public sealed class HermesChangeTrackingService(
 
     private readonly ConcurrentDictionary<string, SessionState> _sessions =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _activeScopeBySession =
+        new(StringComparer.OrdinalIgnoreCase);
 
     public HermesWorkspaceSnapshotResponse GetSnapshot(
         MongoId sessionId,
         HermesStashAnalysisSettings stashSettings,
         HermesLoadoutAnalysisSettings loadoutSettings)
     {
-        var profile = profileHelper.GetPmcProfile(sessionId);
-        if (profile is null)
+        // A large snapshot can take several seconds. Resolve the concrete PMC identity before and
+        // after the build so HERMES can never return a response assembled across two profiles.
+        for (var attempt = 0; attempt < 2; attempt++)
         {
-            return new HermesWorkspaceSnapshotResponse(
-                false,
-                "HERMES could not read the active PMC profile.",
-                string.Empty,
-                0,
-                EmptyDomains(),
-                hideoutService.GetSummary(sessionId),
-                hideoutService.GetCrafts(sessionId),
-                stashAnalysisService.GetSummary(sessionId, stashSettings),
-                loadoutService.GetSummary(sessionId, loadoutSettings));
+            var scope = profileScopeService.Resolve(sessionId);
+            if (scope is null)
+            {
+                return MissingSnapshot(sessionId, stashSettings, loadoutSettings);
+            }
+
+            var state = RefreshState(scope, forceSlowSources: true);
+
+            // Warm the static catalog index once at snapshot time without downloading the catalog.
+            _ = catalogService.GetStatus();
+
+            var hideout = hideoutService.GetSummary(sessionId);
+            var crafts = hideoutService.GetCrafts(sessionId);
+            var stash = stashAnalysisService.GetSummary(sessionId, stashSettings);
+            var loadout = loadoutService.GetSummary(sessionId, loadoutSettings);
+
+            var confirmedScope = profileScopeService.Resolve(sessionId);
+            if (confirmedScope is not null
+                && string.Equals(confirmedScope.ContextToken, scope.ContextToken, StringComparison.Ordinal))
+            {
+                var revision = ReadRevision(state);
+                return new HermesWorkspaceSnapshotResponse(
+                    true,
+                    null,
+                    scope.ContextToken,
+                    revision.Revision,
+                    revision.Domains,
+                    hideout,
+                    crafts,
+                    stash,
+                    loadout);
+            }
+
+            RetireScope(scope, "Active PMC profile changed while HERMES was building a snapshot");
         }
 
-        var state = RefreshState(sessionId, forceSlowSources: true);
-
-        // Warm the static catalog index once at snapshot time without downloading the catalog.
-        _ = catalogService.GetStatus();
-
-        var hideout = hideoutService.GetSummary(sessionId);
-        var crafts = hideoutService.GetCrafts(sessionId);
-        var stash = stashAnalysisService.GetSummary(sessionId, stashSettings);
-        var loadout = loadoutService.GetSummary(sessionId, loadoutSettings);
-        var revision = ReadRevision(state);
-
         return new HermesWorkspaceSnapshotResponse(
-            true,
-            null,
-            CreateContextToken(sessionId),
-            revision.Revision,
-            revision.Domains,
-            hideout,
-            crafts,
-            stash,
-            loadout);
+            false,
+            "The active PMC profile changed while HERMES was loading. Retrying with the new profile.",
+            profileScopeService.Resolve(sessionId)?.ContextToken ?? string.Empty,
+            0,
+            EmptyDomains(),
+            hideoutService.GetSummary(sessionId),
+            hideoutService.GetCrafts(sessionId),
+            stashAnalysisService.GetSummary(sessionId, stashSettings),
+            loadoutService.GetSummary(sessionId, loadoutSettings));
     }
 
     public HermesChangesResponse GetChanges(MongoId sessionId, long knownRevision)
     {
-        if (profileHelper.GetPmcProfile(sessionId) is null)
+        var scope = profileScopeService.Resolve(sessionId);
+        if (scope is null)
         {
             return new HermesChangesResponse(
                 false,
                 "HERMES could not read the active PMC profile.",
-                CreateContextToken(sessionId),
+                string.Empty,
                 Math.Max(0, knownRevision),
                 EmptyDomains(),
                 [],
                 null);
         }
 
-        var state = RefreshState(sessionId, forceSlowSources: false);
+        var state = RefreshState(scope, forceSlowSources: false);
         var revision = ReadRevision(state);
         var changed = revision.DomainValues
             .Where(pair => pair.Value > knownRevision)
@@ -152,11 +171,123 @@ public sealed class HermesChangeTrackingService(
         return new HermesChangesResponse(
             true,
             null,
-            CreateContextToken(sessionId),
+            scope.ContextToken,
             revision.Revision,
             revision.Domains,
             changed,
             revision.Reason);
+    }
+
+    /// <summary>
+    /// Holds one client request on the server instead of making the client repeatedly ask for
+    /// changes. Revision state and the wake signal are scoped to the concrete active PMC profile,
+    /// not merely the launcher/account session.
+    /// </summary>
+    public async ValueTask<HermesChangesResponse> WaitForChangesAsync(
+        MongoId sessionId,
+        long knownRevision,
+        bool hermesOpen)
+    {
+        var scope = profileScopeService.Resolve(sessionId);
+        if (scope is null)
+        {
+            return GetChanges(sessionId, knownRevision);
+        }
+
+        var state = ResolveState(scope);
+        Task changeSignal;
+        lock (state.Sync)
+        {
+            changeSignal = state.ChangeSignal.Task;
+        }
+
+        var immediate = GetChanges(sessionId, knownRevision);
+        if (HasTrueUpdate(immediate, knownRevision) || !immediate.Found
+            || !string.Equals(immediate.ContextToken, scope.ContextToken, StringComparison.Ordinal))
+        {
+            return immediate;
+        }
+
+        var holdSeconds = hermesOpen ? ActiveWatchSeconds : InactiveWatchSeconds;
+        var holdDelay = Task.Delay(TimeSpan.FromSeconds(holdSeconds));
+        _ = await Task.WhenAny(changeSignal, holdDelay);
+
+        return GetChanges(sessionId, knownRevision);
+    }
+
+    private static bool HasTrueUpdate(HermesChangesResponse response, long knownRevision)
+        => response.Found
+           && response.Revision > Math.Max(0L, knownRevision)
+           && response.Changed.Count > 0;
+
+    private HermesWorkspaceSnapshotResponse MissingSnapshot(
+        MongoId sessionId,
+        HermesStashAnalysisSettings stashSettings,
+        HermesLoadoutAnalysisSettings loadoutSettings)
+        => new(
+            false,
+            "HERMES could not read the active PMC profile.",
+            string.Empty,
+            0,
+            EmptyDomains(),
+            hideoutService.GetSummary(sessionId),
+            hideoutService.GetCrafts(sessionId),
+            stashAnalysisService.GetSummary(sessionId, stashSettings),
+            loadoutService.GetSummary(sessionId, loadoutSettings));
+
+    private SessionState ResolveState(HermesProfileScope scope)
+    {
+        var sessionKey = scope.SessionId.ToString();
+        while (true)
+        {
+            if (!_activeScopeBySession.TryGetValue(sessionKey, out var previousScopeKey))
+            {
+                if (_activeScopeBySession.TryAdd(sessionKey, scope.ScopeKey))
+                {
+                    break;
+                }
+
+                continue;
+            }
+
+            if (string.Equals(previousScopeKey, scope.ScopeKey, StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            if (_activeScopeBySession.TryUpdate(sessionKey, scope.ScopeKey, previousScopeKey))
+            {
+                if (_sessions.TryRemove(previousScopeKey, out var previousState))
+                {
+                    lock (previousState.Sync)
+                    {
+                        Advance(previousState, AllDomains, "Active PMC profile changed");
+                    }
+                }
+
+                break;
+            }
+        }
+
+        return _sessions.GetOrAdd(scope.ScopeKey, _ => new SessionState());
+    }
+
+    private void RetireScope(HermesProfileScope scope, string reason)
+    {
+        if (_sessions.TryRemove(scope.ScopeKey, out var state))
+        {
+            lock (state.Sync)
+            {
+                Advance(state, AllDomains, reason);
+            }
+        }
+
+        var sessionKey = scope.SessionId.ToString();
+        if (_activeScopeBySession.TryGetValue(sessionKey, out var activeScope)
+            && string.Equals(activeScope, scope.ScopeKey, StringComparison.OrdinalIgnoreCase))
+        {
+            _activeScopeBySession.TryRemove(sessionKey, out _);
+        }
     }
 
     public void MarkAllSessionsDirty(string? reason = null)
@@ -176,18 +307,57 @@ public sealed class HermesChangeTrackingService(
         }
     }
 
-    private SessionState RefreshState(MongoId sessionId, bool forceSlowSources)
+    public HermesRecheckResponse RequestRecheck(MongoId sessionId, string? reason = null)
     {
-        var key = sessionId.ToString();
-        var state = _sessions.GetOrAdd(key, _ => new SessionState());
-        var profile = profileHelper.GetPmcProfile(sessionId);
-        if (profile is null)
+        var scope = profileScopeService.Resolve(sessionId);
+        if (scope is null)
         {
-            return state;
+            return new HermesRecheckResponse(
+                false,
+                "HERMES could not read the active PMC profile.",
+                string.Empty);
         }
 
-        var profileJson = jsonUtil.Serialize(profile) ?? "{}";
-        var profileRoot = ParseObject(profileJson);
+        var normalizedReason = string.IsNullOrWhiteSpace(reason)
+            ? "Manual HERMES source recheck"
+            : reason.Trim();
+        var state = ResolveState(scope);
+        lock (state.Sync)
+        {
+            state.NextStaticCheckUnix = 0;
+            state.NextMarketCheckUnix = 0;
+            state.LastReason = normalizedReason;
+            Pulse(state);
+        }
+
+        return new HermesRecheckResponse(
+            true,
+            "The server is checking the active PMC sources. Workspace revisions advance only when semantic data changed.",
+            scope.ContextToken);
+    }
+
+    public void RequestRecheckAllSessions(string? reason = null)
+    {
+        var normalizedReason = string.IsNullOrWhiteSpace(reason)
+            ? "Manual HERMES source recheck"
+            : reason.Trim();
+
+        foreach (var state in _sessions.Values)
+        {
+            lock (state.Sync)
+            {
+                state.NextStaticCheckUnix = 0;
+                state.NextMarketCheckUnix = 0;
+                state.LastReason = normalizedReason;
+                Pulse(state);
+            }
+        }
+    }
+
+    private SessionState RefreshState(HermesProfileScope scope, bool forceSlowSources)
+    {
+        var state = ResolveState(scope);
+        var profileRoot = ParseObject(scope.ProfileJson);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var changedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var reasons = new List<string>();
@@ -203,6 +373,7 @@ public sealed class HermesChangeTrackingService(
                 ["inventory"] = HashJsonSections(profileRoot, "Inventory"),
                 ["quests"] = HashJsonSections(profileRoot, "Quests"),
                 ["hideout"] = HashJsonSections(profileRoot, "Hideout"),
+                ["hideoutMilestones"] = HashHideoutMilestones(profileRoot, now),
                 ["vitals"] = HashJsonSections(profileRoot, "Health"),
                 ["progression"] = HashProfileProgression(profileRoot),
                 ["profileMarket"] = HashJsonSections(profileRoot, "RagfairInfo", "RagFairInfo", "InsuredItems")
@@ -237,6 +408,7 @@ public sealed class HermesChangeTrackingService(
             DetectChange(state, current, "inventory", InventoryDomains, "inventory changed", changedDomains, reasons);
             DetectChange(state, current, "quests", QuestDomains, "quest progress changed", changedDomains, reasons);
             DetectChange(state, current, "hideout", HideoutDomains, "hideout state changed", changedDomains, reasons);
+            DetectChange(state, current, "hideoutMilestones", HideoutDomains, "hideout completion milestone changed", changedDomains, reasons);
             DetectChange(state, current, "vitals", VitalsDomains, "health or raid vitals changed", changedDomains, reasons);
             DetectChange(state, current, "progression", ProgressionDomains, "profile progression changed", changedDomains, reasons);
             DetectChange(state, current, "profileMarket", ProfileMarketDomains, "profile trader, insurance, or flea state changed", changedDomains, reasons);
@@ -562,6 +734,127 @@ public sealed class HermesChangeTrackingService(
         return Hash(builder.ToString());
     }
 
+    private static string HashHideoutMilestones(JsonObject? root, long nowUnixSeconds)
+    {
+        if (root is null)
+        {
+            return Hash("hideout-milestones-unavailable");
+        }
+
+        var hideout = root
+            .FirstOrDefault(pair => pair.Key.Equals("Hideout", StringComparison.OrdinalIgnoreCase))
+            .Value;
+        if (hideout is null)
+        {
+            return Hash("hideout-milestones-missing");
+        }
+
+        var milestones = new List<string>();
+        CollectHideoutMilestones(hideout, "Hideout", nowUnixSeconds, milestones);
+        milestones.Sort(StringComparer.Ordinal);
+        return Hash(string.Join("|", milestones));
+    }
+
+    private static void CollectHideoutMilestones(
+        JsonNode? node,
+        string path,
+        long nowUnixSeconds,
+        ICollection<string> milestones)
+    {
+        if (node is JsonObject obj)
+        {
+            var identity = ReadJsonText(obj, "id", "_id", "recipeId", "RecipeId", "type", "areaType", "key")
+                           ?? path;
+
+            if (TryReadJsonNumber(obj, out var completeTime, "completeTime", "CompleteTime", "endTime", "EndTime")
+                && completeTime > 0d)
+            {
+                milestones.Add($"complete:{identity}:{nowUnixSeconds >= NormalizeUnixSeconds(completeTime)}");
+            }
+
+            if (TryReadJsonNumber(obj, out var startTime, "startTimestamp", "StartTimestamp", "startTime", "StartTime")
+                && TryReadJsonNumber(obj, out var productionTime, "productionTime", "ProductionTime")
+                && startTime > 0d
+                && productionTime > 0d)
+            {
+                var completion = NormalizeUnixSeconds(startTime) + productionTime;
+                milestones.Add($"production-time:{identity}:{nowUnixSeconds >= completion}");
+            }
+
+            if (TryReadJsonNumber(obj, out var progress, "progress", "Progress")
+                && TryReadJsonNumber(obj, out var duration, "productionTime", "ProductionTime", "duration", "Duration")
+                && duration > 0d)
+            {
+                milestones.Add($"production-progress:{identity}:{progress >= duration}");
+            }
+
+            if (path.Contains("Counter", StringComparison.OrdinalIgnoreCase)
+                && TryReadJsonNumber(obj, out var counterValue, "value", "Value"))
+            {
+                milestones.Add($"counter-empty:{identity}:{counterValue <= 0d}");
+            }
+
+            foreach (var pair in obj.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+            {
+                CollectHideoutMilestones(pair.Value, path + "." + pair.Key, nowUnixSeconds, milestones);
+            }
+            return;
+        }
+
+        if (node is JsonArray array)
+        {
+            for (var index = 0; index < array.Count; index++)
+            {
+                CollectHideoutMilestones(array[index], path + "[]", nowUnixSeconds, milestones);
+            }
+        }
+    }
+
+    private static string? ReadJsonText(JsonObject obj, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var pair = obj.FirstOrDefault(candidate => candidate.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (pair.Value is not null)
+            {
+                var value = pair.Value.ToString();
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    return value.Trim();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryReadJsonNumber(JsonObject obj, out double value, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var pair = obj.FirstOrDefault(candidate => candidate.Key.Equals(name, StringComparison.OrdinalIgnoreCase));
+            if (pair.Value is null)
+            {
+                continue;
+            }
+
+            if (double.TryParse(
+                    pair.Value.ToString(),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out value))
+            {
+                return true;
+            }
+        }
+
+        value = 0d;
+        return false;
+    }
+
+    private static double NormalizeUnixSeconds(double value)
+        => value > 10_000_000_000d ? value / 1000d : value;
+
     private static string HashJsonSections(JsonObject? root, params string[] names)
     {
         if (root is null)
@@ -652,10 +945,29 @@ public sealed class HermesChangeTrackingService(
                || (ignoreRuntimeProgress
                    && (normalized.Equals("progress", StringComparison.OrdinalIgnoreCase)
                        || normalized.Equals("progressTime", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("productionTime", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("startTimestamp", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("startTime", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("endTime", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("completeTime", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("skipTime", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("lastTime", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("sptLastTime", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("sptUpdateLast", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("sptLastTimeUpdated", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("hideoutCounters", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("fuelCounter", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("airFilterCounter", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("waterFilterCounter", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("resourceRemaining", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Equals("value", StringComparison.OrdinalIgnoreCase)
                        || normalized.Equals("elapsed", StringComparison.OrdinalIgnoreCase)
                        || normalized.Equals("elapsedSeconds", StringComparison.OrdinalIgnoreCase)
                        || normalized.Equals("remainingTime", StringComparison.OrdinalIgnoreCase)
-                       || normalized.Equals("remainingSeconds", StringComparison.OrdinalIgnoreCase)));
+                       || normalized.Equals("remainingSeconds", StringComparison.OrdinalIgnoreCase)
+                       || normalized.EndsWith("Timestamp", StringComparison.OrdinalIgnoreCase)
+                       || normalized.EndsWith("Time", StringComparison.OrdinalIgnoreCase)
+                       || normalized.Contains("Counter", StringComparison.OrdinalIgnoreCase)));
     }
 
     private static object? ReadPath(object root, string path)
@@ -742,6 +1054,13 @@ public sealed class HermesChangeTrackingService(
         }
     }
 
+    private static void Pulse(SessionState state)
+    {
+        var previousSignal = state.ChangeSignal;
+        state.ChangeSignal = CreateChangeSignal();
+        previousSignal.TrySetResult(true);
+    }
+
     private static void Advance(SessionState state, IEnumerable<string> domains, string reason)
     {
         state.Revision++;
@@ -751,6 +1070,11 @@ public sealed class HermesChangeTrackingService(
         }
 
         state.LastReason = reason;
+
+        // Wake the single server-held client watch only after a real domain revision advances.
+        // RunContinuationsAsynchronously prevents the router continuation from running inside
+        // the state lock used by RefreshState and manual cache invalidation.
+        Pulse(state);
     }
 
     private static RevisionSnapshot ReadRevision(SessionState state)
@@ -791,11 +1115,11 @@ public sealed class HermesChangeTrackingService(
         return index >= 0 ? index : int.MaxValue;
     }
 
-    private static string CreateContextToken(MongoId sessionId)
-        => Hash($"HERMES:PROFILE:{sessionId}");
-
     private static string Hash(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static TaskCompletionSource<bool> CreateChangeSignal()
+        => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private sealed class SessionState
     {
@@ -808,6 +1132,7 @@ public sealed class HermesChangeTrackingService(
         public long NextMarketCheckUnix { get; set; }
         public string LastReason { get; set; } = "Server startup";
         public bool Initialized { get; set; }
+        public TaskCompletionSource<bool> ChangeSignal { get; set; } = CreateChangeSignal();
     }
 
     private sealed record RevisionSnapshot(

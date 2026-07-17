@@ -1,26 +1,31 @@
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
 using Hermes.Client.Models;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using SPT.Reflection.Patching;
 using UnityEngine;
 
 namespace Hermes.Client;
 
 /// <summary>
-/// Loads one server-created workspace snapshot, then polls only a tiny domain-revision route.
-/// Full workspace summaries are requested again only for domains the server marked as changed.
+/// Loads one server-created workspace snapshot, then maintains one quiet server-held change watch.
+/// The server holds that request for 30 seconds while HERMES is open or 60 seconds while closed,
+/// and the client downloads full summaries only after a real domain revision is reported.
 /// </summary>
 internal sealed class HermesWorkspaceSnapshotCoordinator
 {
     private const float InitialDelaySeconds = 5f;
-    private const float ActiveRevisionCheckSeconds = 10f;
-    private const float InactiveRevisionCheckSeconds = 30f;
-    private const float RetrySeconds = 10f;
+    private const float WatchReconnectDelaySeconds = 0.2f;
+    private const float RetrySeconds = 15f;
     private const BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.NonPublic;
 
     private static readonly FieldInfo HideoutPanelField = RequiredField(typeof(HermesWindow), "_hideoutPanel");
     private static readonly FieldInfo CraftPanelField = RequiredField(typeof(HermesWindow), "_craftPanel");
     private static readonly FieldInfo StashPanelField = RequiredField(typeof(HermesWindow), "_stashPanel");
     private static readonly FieldInfo LoadoutPanelField = RequiredField(typeof(HermesWindow), "_loadoutPanel");
+    private static readonly FieldInfo NoticeServiceField = RequiredField(typeof(HermesWindow), "_noticeService");
     private static readonly FieldInfo RefreshStatusField = RequiredField(typeof(HermesWindow), "_refreshStatus");
 
     private readonly HermesWindow _window;
@@ -32,12 +37,16 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     private float _nextCheckAt;
     private long _revision;
     private string? _profileToken;
+    private string _hideoutSemanticFingerprint = string.Empty;
+    private string _craftsSemanticFingerprint = string.Empty;
+    private string _stashSemanticFingerprint = string.Empty;
+    private string _loadoutSemanticFingerprint = string.Empty;
 
     internal static HermesWorkspaceSnapshotCoordinator? Current { get; private set; }
 
     /// <summary>
-    /// True only while the lightweight server revision request is in flight. Native UI activity
-    /// indicators ignore this background work so HERMES does not flash a spinner every poll.
+    /// True only while the quiet server-held watch is in flight. Native UI activity indicators
+    /// ignore this background work, so waiting for a real server change never flashes a spinner.
     /// </summary>
     internal static bool IsBackgroundCheckActive => Current?._loading == true && Current._initialized;
 
@@ -45,6 +54,8 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     {
         _window = window;
         _nextCheckAt = Time.realtimeSinceStartup + InitialDelaySeconds;
+        InvalidateProfileBoundRequests();
+        SuppressLegacyAutomaticRefresh();
     }
 
     internal static HermesWorkspaceSnapshotCoordinator Configure(HermesWindow window)
@@ -55,12 +66,22 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
 
     internal void EnsureInitialLoad()
     {
-        // Opening HERMES only accelerates the very first snapshot. Reopening the tab no longer
-        // forces an extra revision request on top of the normal quiet polling cadence.
+        // Opening HERMES only accelerates the very first snapshot. Once initialized, one server-
+        // held watch is already active and reopening the tab never forces a second request.
         if (!_initialized)
         {
             _nextCheckAt = Time.realtimeSinceStartup;
         }
+    }
+
+    internal void RequestImmediateRecheck()
+    {
+        _nextCheckAt = Time.realtimeSinceStartup;
+    }
+
+    internal void RefreshNoticesFromLoadedData(bool manual)
+    {
+        UpdateNoticeCandidates(manual);
     }
 
     internal void Tick()
@@ -81,7 +102,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             return;
         }
 
-        _ = CheckServerRevisionAsync();
+        _ = WatchServerChangesAsync();
     }
 
     private async Task FetchInitialSnapshotAsync()
@@ -96,7 +117,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
                 _pendingSnapshot = snapshot;
             }
 
-            ScheduleNextCheck();
+            ScheduleWatchReconnect();
         }
         catch (Exception ex)
         {
@@ -112,11 +133,12 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         }
     }
 
-    private async Task CheckServerRevisionAsync()
+    private async Task WatchServerChangesAsync()
     {
         try
         {
-            var changes = await HermesRevisionApiClient.GetChangesAsync(_revision);
+            var hermesOpen = HermesNativeWorkspaceRuntime.Active;
+            var changes = await HermesRevisionApiClient.WatchChangesAsync(_revision, hermesOpen);
             if (!changes.Found)
             {
                 throw new InvalidOperationException(changes.Message ?? "HERMES revision status is unavailable.");
@@ -126,17 +148,15 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
                 && !string.IsNullOrWhiteSpace(changes.ContextToken)
                 && !string.Equals(_profileToken, changes.ContextToken, StringComparison.Ordinal))
             {
-                _initialized = false;
-                _revision = 0;
-                _profileToken = changes.ContextToken;
-                _nextCheckAt = Time.realtimeSinceStartup;
+                ResetForProfileChange(changes.ContextToken);
                 return;
             }
 
             if (changes.Revision <= _revision || changes.Changed.Count == 0)
             {
                 _revision = Math.Max(_revision, changes.Revision);
-                ScheduleNextCheck();
+                RefreshStatusField.SetValue(_window, string.Empty);
+                ScheduleWatchReconnect();
                 return;
             }
 
@@ -169,13 +189,13 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
                     loadoutTask.Result);
             }
 
-            ScheduleNextCheck();
+            ScheduleWatchReconnect();
         }
         catch (Exception ex)
         {
             if (Plugin.Settings.DetailedLogging.Value)
             {
-                Plugin.Log.LogWarning($"HERMES server revision check failed: {ex.Message}");
+                Plugin.Log.LogWarning($"HERMES server-held update watch failed: {ex.Message}");
             }
 
             _nextCheckAt = Time.realtimeSinceStartup + RetrySeconds;
@@ -211,6 +231,13 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
 
     private void ApplySnapshot(HermesWorkspaceSnapshotResponse snapshot)
     {
+        if (!string.IsNullOrWhiteSpace(_profileToken)
+            && !string.IsNullOrWhiteSpace(snapshot.ContextToken)
+            && !string.Equals(_profileToken, snapshot.ContextToken, StringComparison.Ordinal))
+        {
+            ClearProfileBoundWorkspaceData();
+        }
+
         if (!snapshot.Found)
         {
             _initialized = false;
@@ -267,6 +294,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         }
 
         RefreshStatusField.SetValue(_window, string.Empty);
+        UpdateNoticeCandidates(manual: false);
         if (Plugin.Settings.DetailedLogging.Value)
         {
             Plugin.Log.LogDebug(
@@ -282,27 +310,23 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         }
 
         var changed = new List<string>();
-        if (delta.Hideout is { Found: true })
+        if (delta.Hideout is { Found: true } && ApplyHideout(delta.Hideout))
         {
-            ApplyHideout(delta.Hideout);
             changed.Add("Hideout");
         }
 
-        if (delta.Crafts is { Found: true })
+        if (delta.Crafts is { Found: true } && ApplyCrafts(delta.Crafts))
         {
-            ApplyCrafts(delta.Crafts);
             changed.Add("Crafts");
         }
 
-        if (delta.Stash is { Found: true })
+        if (delta.Stash is { Found: true } && ApplyStash(delta.Stash))
         {
-            ApplyStash(delta.Stash);
             changed.Add("Stash");
         }
 
-        if (delta.Loadout is { Found: true })
+        if (delta.Loadout is { Found: true } && ApplyLoadout(delta.Loadout))
         {
-            ApplyLoadout(delta.Loadout);
             ApplyRaidPlanner(delta.Loadout);
             changed.Add("Loadout / Raid Planner");
         }
@@ -312,6 +336,10 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         // Background server revisions are intentionally silent. They update only the affected
         // workspace models and never replace the normal workspace subtitle with diagnostic text.
         RefreshStatusField.SetValue(_window, string.Empty);
+        if (changed.Count > 0)
+        {
+            UpdateNoticeCandidates(manual: false);
+        }
         if (Plugin.Settings.DetailedLogging.Value)
         {
             var displayed = changed.Count > 0
@@ -331,20 +359,26 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         return active.Contains(expected, StringComparison.OrdinalIgnoreCase);
     }
 
-    private void ScheduleNextCheck()
+    private void ScheduleWatchReconnect()
     {
-        _nextCheckAt = Time.realtimeSinceStartup
-                       + (HermesNativeWorkspaceRuntime.Active
-                           ? ActiveRevisionCheckSeconds
-                           : InactiveRevisionCheckSeconds);
+        // The previous request already waited on the server. Reconnect quickly so there is only
+        // one continuous watch instead of a client timer repeatedly asking whether anything changed.
+        _nextCheckAt = Time.realtimeSinceStartup + WatchReconnectDelaySeconds;
     }
 
-    private void ApplyHideout(HermesHideoutSummaryResponse response)
+    private bool ApplyHideout(HermesHideoutSummaryResponse response)
     {
+        var fingerprint = BuildHideoutSemanticFingerprint(response);
+        if (string.Equals(_hideoutSemanticFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        _hideoutSemanticFingerprint = fingerprint;
+
         var panel = HideoutPanelField.GetValue(_window);
         if (panel is null)
         {
-            return;
+            return false;
         }
 
         IncrementInt(panel, "_refreshVersion");
@@ -368,14 +402,23 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
                 InvokeTask(panel, "SelectAreaAsync", selected);
             }
         }
+
+        return true;
     }
 
-    private void ApplyCrafts(HermesCraftsResponse response)
+    private bool ApplyCrafts(HermesCraftsResponse response)
     {
+        var fingerprint = BuildCraftsSemanticFingerprint(response);
+        if (string.Equals(_craftsSemanticFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        _craftsSemanticFingerprint = fingerprint;
+
         var panel = CraftPanelField.GetValue(_window);
         if (panel is null)
         {
-            return;
+            return false;
         }
 
         IncrementInt(panel, "_refreshVersion");
@@ -389,26 +432,44 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         var previous = Get<HermesCraftSummary>(panel, "_selectedCraft");
         if (previous is null)
         {
-            return;
+            Set(panel, "_detail", null);
+            Set(panel, "_detailLoading", false);
+            return true;
         }
 
         var selected = response.Crafts.FirstOrDefault(craft => craft.CraftKey == previous.CraftKey);
-        if (selected is not null)
+        if (selected is null)
         {
-            Set(panel, "_selectedCraft", selected);
-            if (IsActiveTab("Crafts"))
-            {
-                InvokeTask(panel, "SelectCraftAsync", selected);
-            }
+            // The previously selected recipe may belong to a different profile or may no longer
+            // be visible for this profile. Never leave its detail model on screen.
+            Set(panel, "_selectedCraft", null);
+            Set(panel, "_detail", null);
+            Set(panel, "_detailLoading", false);
+            return true;
         }
+
+        Set(panel, "_selectedCraft", selected);
+        if (IsActiveTab("Crafts"))
+        {
+            InvokeTask(panel, "SelectCraftAsync", selected);
+        }
+
+        return true;
     }
 
-    private void ApplyStash(HermesStashSummaryResponse response)
+    private bool ApplyStash(HermesStashSummaryResponse response)
     {
+        var fingerprint = BuildStashSemanticFingerprint(response);
+        if (string.Equals(_stashSemanticFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        _stashSemanticFingerprint = fingerprint;
+
         var panel = StashPanelField.GetValue(_window);
         if (panel is null)
         {
-            return;
+            return false;
         }
 
         IncrementInt(panel, "_requestVersion");
@@ -421,14 +482,22 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             $"Snapshot complete: {response.IndependentItemCount:N0} independent items; "
             + $"{response.SafeToSellInstanceCount + response.SellSurplusInstanceCount:N0} sell recommendation(s); "
             + $"{response.RecoverableCells:N0} recoverable cell(s).");
+        return true;
     }
 
-    private void ApplyLoadout(HermesLoadoutSummaryResponse response)
+    private bool ApplyLoadout(HermesLoadoutSummaryResponse response)
     {
+        var fingerprint = BuildLoadoutSemanticFingerprint(response);
+        if (string.Equals(_loadoutSemanticFingerprint, fingerprint, StringComparison.Ordinal))
+        {
+            return false;
+        }
+        _loadoutSemanticFingerprint = fingerprint;
+
         var panel = LoadoutPanelField.GetValue(_window);
         if (panel is null)
         {
-            return;
+            return false;
         }
 
         IncrementInt(panel, "_requestVersion");
@@ -443,6 +512,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             $"Loadout assessment: {response.Readiness} ({response.ReadinessScore}/100) • "
             + $"{response.CriticalCount} critical • {response.WarningCount} warning(s).");
         Invoke(panel, "InitializeWarningGroups", response.Warnings);
+        return true;
     }
 
     private static void ApplyRaidPlanner(HermesLoadoutSummaryResponse response)
@@ -460,20 +530,233 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             + $"{response.RaidPlans.Sum(plan => plan.ActiveQuestCount):N0} active quest stage(s)");
     }
 
-    private void SuppressLegacyAutomaticRefresh()
+    private void UpdateNoticeCandidates(bool manual)
     {
-        if (!_initialized)
+        if (NoticeServiceField.GetValue(_window) is not HermesAssistantNoticeService notices)
         {
             return;
+        }
+
+        var hideout = HideoutPanelField.GetValue(_window);
+        var crafts = CraftPanelField.GetValue(_window);
+        var stash = StashPanelField.GetValue(_window);
+        var loadout = LoadoutPanelField.GetValue(_window);
+        notices.UpdateFromWorkspaceData(
+            _profileToken,
+            loadout is null ? null : Get<HermesLoadoutSummaryResponse>(loadout, "_summary"),
+            hideout is null ? null : Get<HermesHideoutSummaryResponse>(hideout, "_summary"),
+            crafts is null ? null : Get<HermesCraftsResponse>(crafts, "_response"),
+            stash is null ? null : Get<HermesStashSummaryResponse>(stash, "_summary"),
+            manual);
+    }
+
+    private static string BuildHideoutSemanticFingerprint(HermesHideoutSummaryResponse response)
+        => BuildSemanticFingerprint(
+            response,
+            "SecondsUntilComplete",
+            "SecondsRemaining",
+            "EstimatedGeneratorRuntimeSeconds",
+            "FuelResourceRemaining",
+            "FuelCounter",
+            "AirFilterCounter",
+            "WaterFilterCounter");
+
+    private static string BuildCraftsSemanticFingerprint(HermesCraftsResponse response)
+        => BuildSemanticFingerprint(response);
+
+    private static string BuildStashSemanticFingerprint(HermesStashSummaryResponse response)
+        => BuildSemanticFingerprint(response, "GeneratedUnixTime", "CacheTtlSeconds");
+
+    private static string BuildLoadoutSemanticFingerprint(HermesLoadoutSummaryResponse response)
+        => BuildSemanticFingerprint(response, "GeneratedUnixTime");
+
+    private static string BuildSemanticFingerprint(object response, params string[] ignoredProperties)
+    {
+        var ignored = ignoredProperties.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var token = JToken.FromObject(response);
+        RemoveIgnoredProperties(token, ignored);
+
+        var json = token.ToString(Formatting.None);
+        using var sha = SHA256.Create();
+        return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(json))).Replace("-", string.Empty).ToLowerInvariant();
+    }
+
+    private static void RemoveIgnoredProperties(JToken token, ISet<string> ignored)
+    {
+        if (token is JObject obj)
+        {
+            foreach (var property in obj.Properties().ToList())
+            {
+                if (ignored.Contains(property.Name))
+                {
+                    property.Remove();
+                    continue;
+                }
+
+                RemoveIgnoredProperties(property.Value, ignored);
+            }
+            return;
+        }
+
+        if (token is JArray array)
+        {
+            foreach (var child in array)
+            {
+                RemoveIgnoredProperties(child, ignored);
+            }
+        }
+    }
+
+    private void ClearSemanticFingerprints()
+    {
+        _hideoutSemanticFingerprint = string.Empty;
+        _craftsSemanticFingerprint = string.Empty;
+        _stashSemanticFingerprint = string.Empty;
+        _loadoutSemanticFingerprint = string.Empty;
+    }
+
+    private void SuppressLegacyAutomaticRefresh()
+    {
+        // The revision coordinator is the only owner of automatic profile-bound summary loads.
+        // Setting these request flags from the first frame prevents the legacy panel Draw methods
+        // from launching overlapping /hideout, /crafts, /stash and /loadout requests. An older
+        // response can therefore never arrive after a new profile snapshot and overwrite it.
+        var hideout = HideoutPanelField.GetValue(_window);
+        if (hideout is not null)
+        {
+            Set(hideout, "_loadRequested", true);
+        }
+
+        var crafts = CraftPanelField.GetValue(_window);
+        if (crafts is not null)
+        {
+            Set(crafts, "_loadRequested", true);
+        }
+
+        var stash = StashPanelField.GetValue(_window);
+        if (stash is not null)
+        {
+            Set(stash, "_requested", true);
         }
 
         var loadout = LoadoutPanelField.GetValue(_window);
         if (loadout is not null)
         {
+            Set(loadout, "_requested", true);
             Set(loadout, "_nextAutomaticRefresh", float.PositiveInfinity);
         }
 
-        Set(HermesWorkspaceSeparation.RaidPlanner, "_nextAutomaticRefresh", float.PositiveInfinity);
+        var raidPlanner = HermesWorkspaceSeparation.RaidPlanner;
+        Set(raidPlanner, "_requested", true);
+        Set(raidPlanner, "_nextAutomaticRefresh", float.PositiveInfinity);
+    }
+
+    private void ResetForProfileChange(string contextToken)
+    {
+        InvalidateProfileBoundRequests();
+        ClearProfileBoundWorkspaceData();
+        ClearSemanticFingerprints();
+        _initialized = false;
+        _revision = 0;
+        _profileToken = contextToken;
+        _nextCheckAt = Time.realtimeSinceStartup;
+        RefreshStatusField.SetValue(_window, "Loading HERMES data for the active PMC profile...");
+        UpdateNoticeCandidates(manual: false);
+
+        if (Plugin.Settings.DetailedLogging.Value)
+        {
+            Plugin.Log.LogInfo("HERMES detected an active PMC profile change and discarded the previous profile snapshot.");
+        }
+    }
+
+    private void InvalidateProfileBoundRequests()
+    {
+        var hideout = HideoutPanelField.GetValue(_window);
+        if (hideout is not null)
+        {
+            IncrementInt(hideout, "_refreshVersion");
+            IncrementInt(hideout, "_detailVersion");
+            Set(hideout, "_loading", false);
+            Set(hideout, "_detailLoading", false);
+            Set(hideout, "_loadRequested", true);
+        }
+
+        var crafts = CraftPanelField.GetValue(_window);
+        if (crafts is not null)
+        {
+            IncrementInt(crafts, "_refreshVersion");
+            IncrementInt(crafts, "_detailVersion");
+            Set(crafts, "_loading", false);
+            Set(crafts, "_detailLoading", false);
+            Set(crafts, "_loadRequested", true);
+        }
+
+        var stash = StashPanelField.GetValue(_window);
+        if (stash is not null)
+        {
+            IncrementInt(stash, "_requestVersion");
+            Set(stash, "_loading", false);
+            Set(stash, "_requested", true);
+        }
+
+        var loadout = LoadoutPanelField.GetValue(_window);
+        if (loadout is not null)
+        {
+            IncrementInt(loadout, "_requestVersion");
+            Set(loadout, "_loading", false);
+            Set(loadout, "_requested", true);
+            Set(loadout, "_nextAutomaticRefresh", float.PositiveInfinity);
+        }
+
+        var raidPlanner = HermesWorkspaceSeparation.RaidPlanner;
+        IncrementInt(raidPlanner, "_requestVersion");
+        Set(raidPlanner, "_loading", false);
+        Set(raidPlanner, "_requested", true);
+        Set(raidPlanner, "_nextAutomaticRefresh", float.PositiveInfinity);
+    }
+
+    private void ClearProfileBoundWorkspaceData()
+    {
+        var hideout = HideoutPanelField.GetValue(_window);
+        if (hideout is not null)
+        {
+            Set(hideout, "_summary", null);
+            Set(hideout, "_selectedArea", null);
+            Set(hideout, "_detail", null);
+            Set(hideout, "_status", "Loading current hideout status for the active PMC profile...");
+            Set(hideout, "_loadRequested", true);
+        }
+
+        var crafts = CraftPanelField.GetValue(_window);
+        if (crafts is not null)
+        {
+            Set(crafts, "_response", null);
+            Set(crafts, "_selectedCraft", null);
+            Set(crafts, "_detail", null);
+            Set(crafts, "_status", "Loading recipes for the active PMC profile...");
+            Set(crafts, "_loadRequested", true);
+        }
+
+        var stash = StashPanelField.GetValue(_window);
+        if (stash is not null)
+        {
+            Set(stash, "_summary", null);
+            Set(stash, "_status", "Loading stash analysis for the active PMC profile...");
+            Set(stash, "_requested", true);
+        }
+
+        var loadout = LoadoutPanelField.GetValue(_window);
+        if (loadout is not null)
+        {
+            Set(loadout, "_summary", null);
+            Set(loadout, "_status", "Loading loadout analysis for the active PMC profile...");
+            Set(loadout, "_requested", true);
+        }
+
+        var raidPlanner = HermesWorkspaceSeparation.RaidPlanner;
+        Set(raidPlanner, "_summary", null);
+        Set(raidPlanner, "_status", "Loading raid plans for the active PMC profile...");
+        Set(raidPlanner, "_requested", true);
     }
 
     private static async Task<T?> TryFetchAsync<T>(Func<Task<T>> fetch, string source)

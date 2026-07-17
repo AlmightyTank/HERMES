@@ -686,21 +686,21 @@ public sealed class HermesHideoutService(
         ProfileProductionState? production)
     {
         return new HermesCraftUse(
-            craft.Key,
-            craft.StationName,
-            currentStationLevel,
-            craft.RequiredStationLevel,
-            craft.OutputName,
-            craft.OutputQuantity,
-            craft.DurationSeconds,
-            Math.Max(0d, itemCount),
-            owned,
-            missing,
-            unlocked,
-            evaluation.CanStartNow,
-            production is not null && !production.IsComplete,
-            production?.IsComplete == true,
-            evaluation.Status);
+            CraftKey: craft.Key,
+            StationName: craft.StationName,
+            CurrentStationLevel: currentStationLevel,
+            RequiredStationLevel: craft.RequiredStationLevel,
+            OutputName: craft.OutputName,
+            OutputQuantity: craft.OutputQuantity,
+            DurationSeconds: craft.DurationSeconds,
+            ItemCount: Math.Max(0d, itemCount),
+            Owned: owned,
+            Missing: missing,
+            IsUnlocked: unlocked,
+            CanStartNow: evaluation.CanStartNow,
+            IsActive: production is not null && !production.IsComplete,
+            IsComplete: production?.IsComplete == true,
+            Status: evaluation.Status);
     }
 
     private AreaEvaluation BuildAreaEvaluation(
@@ -759,22 +759,37 @@ public sealed class HermesHideoutService(
             ? Math.Max(0L, profileArea.CompleteTime.Value - now)
             : null;
 
+        var requiredItems = requirements
+            .Where(requirement => requirement.Type.Equals("Item", StringComparison.OrdinalIgnoreCase))
+            .Select(requirement => new HermesHideoutItemRequirementSummary(
+                ItemTemplateId: requirement.ItemTemplateId ?? string.Empty,
+                Name: requirement.Name,
+                Required: requirement.Required,
+                Owned: requirement.Owned,
+                Missing: requirement.Missing,
+                IsMet: requirement.IsMet,
+                FoundInRaidRequired: requirement.FoundInRaidRequired))
+            .OrderBy(requirement => requirement.IsMet)
+            .ThenByDescending(requirement => requirement.Missing)
+            .ThenBy(requirement => requirement.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         var summary = new HermesHideoutAreaSummary(
-            area.Key,
-            area.Name,
-            currentLevel,
-            maximumLevel,
-            targetStage?.Level,
-            status,
-            profileArea.Active,
-            profileArea.Constructing,
-            secondsUntilComplete,
-            requirements.Count(requirement =>
-                requirement.Type.Equals("Item", StringComparison.OrdinalIgnoreCase) && !requirement.IsMet),
-            requirements.Sum(requirement =>
+            AreaKey: area.Key,
+            Name: area.Name,
+            CurrentLevel: currentLevel,
+            MaximumLevel: maximumLevel,
+            TargetLevel: targetStage?.Level,
+            Status: status,
+            IsActive: profileArea.Active,
+            IsConstructing: profileArea.Constructing,
+            SecondsUntilComplete: secondsUntilComplete,
+            MissingItemTypes: requiredItems.Count(requirement => !requirement.IsMet),
+            EstimatedMissingHandbookCost: requirements.Sum(requirement =>
                 requirement.Type.Equals("Item", StringComparison.OrdinalIgnoreCase)
                     ? Convert.ToInt64(Math.Round((requirement.UnitPrice ?? 0L) * requirement.Missing))
-                    : 0L));
+                    : 0L),
+            RequiredItems: requiredItems);
 
         return new AreaEvaluation(
             summary,
@@ -1102,13 +1117,11 @@ public sealed class HermesHideoutService(
         var economicInputValue = ownedIngredientValue + additionalCashCost + unavailableEconomicEstimate;
 
         var outputValue = 0L;
-        string? outputTemplateId = null;
         if (MongoId.IsValidMongoId(craft.OutputTemplateId))
         {
             var outputItem = catalogService.ResolveTemplate(new MongoId(craft.OutputTemplateId));
             if (outputItem is not null)
             {
-                outputTemplateId = craft.OutputTemplateId;
                 var valuation = GetItemValuation(outputItem, sessionId, valuationCache, includeLivePricing);
                 var unitOutputValue = valuation.EconomicUnitValue
                                       ?? valuation.HandbookUnitValue
@@ -1124,26 +1137,26 @@ public sealed class HermesHideoutService(
             : economicProfit;
 
         return new HermesCraftSummary(
-            craft.Key,
-            craft.StationName,
-            craft.RequiredStationLevel,
-            craft.OutputName,
-            outputTemplateId,
-            craft.OutputQuantity,
-            craft.DurationSeconds,
-            isAvailable,
-            canStart,
-            status,
-            acquisitionPlanComplete,
-            additionalCashCost,
-            ownedIngredientValue,
-            economicInputValue,
-            outputValue,
-            cashProfit,
-            economicProfit,
-            economicProfitPerHour,
-            activeProduction is not null,
-            activeProduction?.IsComplete == true);
+            CraftKey: craft.Key,
+            StationName: craft.StationName,
+            RequiredStationLevel: craft.RequiredStationLevel,
+            OutputName: craft.OutputName,
+            OutputTemplateId: craft.OutputTemplateId,
+            OutputQuantity: craft.OutputQuantity,
+            DurationSeconds: craft.DurationSeconds,
+            IsAvailable: isAvailable,
+            CanStartNow: canStart,
+            Status: status,
+            AcquisitionPlanComplete: acquisitionPlanComplete,
+            EstimatedAdditionalCashCost: additionalCashCost,
+            EstimatedOwnedIngredientValue: ownedIngredientValue,
+            EstimatedEconomicInputValue: economicInputValue,
+            EstimatedOutputValue: outputValue,
+            EstimatedCashProfit: cashProfit,
+            EstimatedEconomicProfit: economicProfit,
+            EstimatedEconomicProfitPerHour: economicProfitPerHour,
+            IsActive: activeProduction is not null,
+            IsComplete: activeProduction?.IsComplete == true);
     }
 
     private IReadOnlyList<HermesCraftIngredient> BuildCraftIngredients(
@@ -1457,8 +1470,19 @@ public sealed class HermesHideoutService(
 
     private bool IsCraftStationAvailable(CraftDefinition craft, ProfileSnapshot snapshot)
     {
-        return _areasByType!.TryGetValue(craft.AreaType, out var area)
-               && IsAreaAvailable(area, snapshot);
+        if (!_areasByType!.TryGetValue(craft.AreaType, out var area)
+            || !IsAreaAvailable(area, snapshot)
+            || !snapshot.Areas.TryGetValue(craft.AreaType, out var profileArea))
+        {
+            return false;
+        }
+
+        // SPT keeps level-zero placeholders for hideout areas that the active PMC has not
+        // constructed yet. Presence in Hideout.Areas therefore does not mean the station is
+        // installed. Only expose recipes after this exact profile has built level 1 or higher.
+        // Higher-level recipes can still be shown for planning once the station exists; their
+        // required level remains evaluated separately by BuildCraftEvaluation().
+        return profileArea.Level > 0;
     }
 
     private bool IsAreaAvailable(AreaDefinition area, ProfileSnapshot snapshot)
@@ -1517,16 +1541,10 @@ public sealed class HermesHideoutService(
                     ? "In production"
                     : "Paused";
 
-            var outputTemplateId = craft is not null
-                                   && MongoId.IsValidMongoId(craft.OutputTemplateId)
-                                   && catalogService.ResolveTemplate(new MongoId(craft.OutputTemplateId)) is not null
-                ? craft.OutputTemplateId
-                : null;
-
             output.Add(new HermesActiveProductionSummary(
                 stationName,
                 outputName,
-                outputTemplateId,
+                craft?.OutputTemplateId,
                 outputQuantity,
                 production.IsComplete,
                 production.IsContinuous,

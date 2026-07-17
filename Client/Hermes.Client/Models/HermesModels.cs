@@ -275,6 +275,18 @@ public sealed class HermesHideoutAreaSummary
     public long? SecondsUntilComplete { get; set; }
     public int MissingItemTypes { get; set; }
     public long EstimatedMissingHandbookCost { get; set; }
+    public List<HermesHideoutItemRequirementSummary> RequiredItems { get; set; } = [];
+}
+
+public sealed class HermesHideoutItemRequirementSummary
+{
+    public string ItemTemplateId { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public double Required { get; set; }
+    public double Owned { get; set; }
+    public double Missing { get; set; }
+    public bool IsMet { get; set; }
+    public bool FoundInRaidRequired { get; set; }
 }
 
 public sealed class HermesHideoutAreaDetailResponse

@@ -7,9 +7,8 @@ using UnityEngine.UI;
 namespace Hermes.Client;
 
 /// <summary>
-/// Native EFT workspace shell for HERMES. Alpha12.7.3.4 keeps the current data-heavy workspace
-/// bodies behind the bridge, while native uGUI owns the header, activity state, workspace rail,
-/// action controls, and Items & Market search toolbar.
+/// Native EFT workspace shell for HERMES. Alpha12.7.4 owns the complete interface through
+/// native uGUI: header, activity state, workspace rail, search toolbar, and every workspace body.
 /// </summary>
 internal sealed class HermesNativeWorkspaceView : MonoBehaviour
 {
@@ -102,7 +101,10 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         HermesRagfairNativeAssets.TryResolve();
 
         var shellImage = GetComponent<Image>() ?? gameObject.AddComponent<Image>();
-        shellImage.color = new Color(0f, 0f, 0f, 0.059f);
+        // Keep the shell root transparent while it blocks clicks from reaching the inventory.
+        // Every visible HERMES element now belongs to the native uGUI canvas hierarchy, so EFT
+        // messenger, notification, and confirmation layers can sort above the center body.
+        shellImage.color = Color.clear;
         shellImage.raycastTarget = true;
 
         _headerRect = CreatePanel("Header", transform, new Color(0f, 0f, 0f, 0.255f));
@@ -115,12 +117,12 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         BuildNavigation();
         BuildSearchToolbar();
 
-        var bodyHost = _bodyRect.gameObject.AddComponent<HermesNativeBodyGuiHost>();
+        var bodyHost = _bodyRect.gameObject.AddComponent<HermesNativeWorkspaceBody>();
         bodyHost.Initialize(_window);
 
         ApplyResponsiveLayout(true);
         _built = true;
-        Plugin.Log?.LogInfo($"HERMES Alpha12.7.3.4 snapshot and readability pass built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
+        Plugin.Log?.LogInfo($"HERMES Alpha12.7.4.6 native workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
     }
 
     private void BuildHeader()
@@ -164,7 +166,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         layout.childControlWidth = false;
         layout.childControlHeight = true;
         layout.childForceExpandWidth = false;
-        layout.childForceExpandHeight = true;
+        layout.childForceExpandHeight = false;
 
         _activityBadgeRect = HermesNativeUiFramework.CreateStatusBadge(
             actions,
@@ -392,8 +394,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
             tabName = "ItemSearch";
         }
 
-        var backgroundRevisionCheck = HermesWorkspaceSnapshotCoordinator.IsBackgroundCheckActive;
-        var refreshing = HermesEftWindowReflection.IsRefreshing(_window) && !backgroundRevisionCheck;
+        var refreshing = HermesEftWindowReflection.IsRefreshing(_window);
         var searching = HermesNativeSearchBridge.IsSearching(_window);
         var tabChanged = force || !string.Equals(tabName, _lastTabName, StringComparison.Ordinal);
 

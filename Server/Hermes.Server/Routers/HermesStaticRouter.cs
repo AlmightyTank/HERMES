@@ -28,16 +28,22 @@ public sealed class HermesStaticRouter(
                         stashAnalysisService.GetCacheDiagnostics(),
                         loadoutService.GetCacheDiagnostics())))),
             new RouteAction(
+                "/hermes/recheck",
+                (_, _, sessionId, _) => ValueTask.FromResult<object>(
+                    httpResponseUtil.GetBody(changeTrackingService.RequestRecheck(
+                        sessionId,
+                        "Manual HERMES workspace recheck")))),
+            new RouteAction(
                 "/hermes/cache/clear",
                 (_, _, _, _) =>
                 {
                     stashAnalysisService.Clear("Manual refresh from HERMES client");
                     loadoutService.Clear("Manual refresh from HERMES client");
                     var cleared = cacheService.Clear("Manual refresh from HERMES client");
-                    changeTrackingService.MarkAllSessionsDirty("Manual refresh from HERMES client");
+                    changeTrackingService.RequestRecheckAllSessions("Manual refresh from HERMES client");
                     var response = cleared with
                     {
-                        Message = "HERMES caches were cleared and every server revision was invalidated. New requests will read the current profile, quest, hideout, trader, and flea data.",
+                        Message = "HERMES caches were cleared and the server was asked to recheck current sources. Workspace revisions advance only when the underlying profile, hideout, quest, inventory, trader, or market data truly changed.",
                         Status = cacheService.GetStatus(
                             stashAnalysisService.GetCacheDiagnostics(),
                             loadoutService.GetCacheDiagnostics())

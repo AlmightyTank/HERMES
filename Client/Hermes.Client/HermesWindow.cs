@@ -72,9 +72,17 @@ internal sealed class HermesWindow
 
     public void Toggle()
     {
-        if (!HermesNativeScreenRegistry.TryToggle() && Plugin.Settings.DetailedLogging.Value)
+        if (HermesNativeScreenRegistry.TryToggle())
         {
-            Plugin.Log?.LogDebug("HERMES inventory tab is unavailable because no Character or in-raid InventoryScreen is open.");
+            return;
+        }
+
+        // HERMES is inventory-only. When F8 is pressed outside Character/inventory,
+        // use the same native taskbar navigation path as Ask HERMES and notices.
+        HermesGlobalNavigation.RequestOpen();
+        if (Plugin.Settings.DetailedLogging.Value)
+        {
+            Plugin.Log?.LogDebug("HERMES F8 queued native Character-screen navigation.");
         }
     }
 
@@ -120,7 +128,42 @@ internal sealed class HermesWindow
 
         EnsurePresentationVisible();
         SetActiveTab(HermesTab.ItemSearch);
-        _ = OpenForInventoryItemAsync(profileItemId);
+        _ = OpenForInventoryItemAsync(profileItemId, null);
+    }
+
+    internal void OpenForLoadoutItem(string profileItemId, string itemName)
+    {
+        if (string.IsNullOrWhiteSpace(profileItemId) && string.IsNullOrWhiteSpace(itemName))
+        {
+            return;
+        }
+
+        EnsurePresentationVisible();
+        SetActiveTab(HermesTab.ItemSearch);
+        if (string.IsNullOrWhiteSpace(profileItemId))
+        {
+            OpenForNamedItem(itemName, "loadout");
+            return;
+        }
+
+        _ = OpenForInventoryItemAsync(profileItemId, itemName);
+    }
+
+    internal void OpenForNamedItem(string itemName, string sourceLabel)
+    {
+        if (string.IsNullOrWhiteSpace(itemName))
+        {
+            return;
+        }
+
+        EnsurePresentationVisible();
+        SetActiveTab(HermesTab.ItemSearch);
+
+        // Cancel any stale exact-instance/detail operation before starting the visible search.
+        Clear();
+        _query = itemName.Trim();
+        _status = $"Looking up the selected {sourceLabel} item: {_query}...";
+        _ = RunSearchAsync();
     }
 
     internal void OpenForStashItem(string profileItemId)
@@ -202,7 +245,7 @@ internal sealed class HermesWindow
         }
     }
 
-    private async Task OpenForInventoryItemAsync(string profileItemId)
+    private async Task OpenForInventoryItemAsync(string profileItemId, string? fallbackItemName)
     {
         var requestVersion = ++_openRequestVersion;
         _detailRequestVersion++;
@@ -231,6 +274,13 @@ internal sealed class HermesWindow
 
             if (!response.Found || response.Item is null || response.Instance is null)
             {
+                if (await TryFallbackNamedSearchAsync(
+                        fallbackItemName,
+                        response.Message ?? "The exact loadout instance could not be resolved."))
+                {
+                    return;
+                }
+
                 _status = response.Message ?? "HERMES could not analyze the selected inventory item.";
                 _detailStatus = _status;
                 return;
@@ -243,13 +293,20 @@ internal sealed class HermesWindow
         }
         catch (Exception ex)
         {
+            Plugin.Log.LogError(ex);
+            if (requestVersion == _openRequestVersion
+                && await TryFallbackNamedSearchAsync(
+                    fallbackItemName,
+                    HermesApiClient.DescribeFailure(ex, "Exact PMC inventory-item analysis")))
+            {
+                return;
+            }
+
             if (requestVersion == _openRequestVersion)
             {
                 _status = HermesApiClient.DescribeFailure(ex, "Exact PMC inventory-item analysis");
                 _detailStatus = _status;
             }
-
-            Plugin.Log.LogError(ex);
         }
         finally
         {
@@ -262,6 +319,25 @@ internal sealed class HermesWindow
                 }
             }
         }
+    }
+
+    private async Task<bool> TryFallbackNamedSearchAsync(string? fallbackItemName, string failureReason)
+    {
+        if (string.IsNullOrWhiteSpace(fallbackItemName))
+        {
+            return false;
+        }
+
+        // Exact equipment-instance resolution can fail after a profile refresh or while the
+        // loadout snapshot is older than the live inventory. A name lookup still resolves the
+        // correct catalog item and loads trader/flea/hideout intelligence for the clicked row.
+        _searching = false;
+        _loadingDetails = false;
+        _query = fallbackItemName.Trim();
+        _status = $"{failureReason} Looking up {_query} by item name...";
+        _detailStatus = "Resolving the selected loadout item through the HERMES catalog.";
+        await RunSearchAsync();
+        return true;
     }
 
     public void Tick()
@@ -1611,36 +1687,53 @@ internal sealed class HermesWindow
         }
 
         _refreshingCurrent = true;
-        _refreshStatus = clearCaches
-            ? "Clearing short-lived caches and reloading the current view..."
-            : "Reloading the current view...";
+        var isProfileWorkspace = _activeTab is HermesTab.Assistant
+            or HermesTab.Hideout
+            or HermesTab.Crafts
+            or HermesTab.Stash
+            or HermesTab.Loadout
+            or HermesTab.RaidPlanner;
+        var clearedCaches = false;
+        _refreshStatus = isProfileWorkspace
+            ? "Asking the server to check the active PMC sources..."
+            : clearCaches
+                ? "Clearing short-lived item caches and reloading the current view..."
+                : "Reloading the current view...";
+
         try
         {
-            if (clearCaches)
+            if (isProfileWorkspace)
+            {
+                var recheck = await HermesRevisionApiClient.RequestRecheckAsync();
+                if (!recheck.Accepted)
+                {
+                    throw new InvalidOperationException(
+                        recheck.Message ?? "The HERMES server did not accept the profile source recheck.");
+                }
+
+                _refreshStatus = recheck.Message ?? "The server is checking the active PMC sources.";
+                HermesWorkspaceSnapshotCoordinator.Current?.RequestImmediateRecheck();
+            }
+            else if (clearCaches)
             {
                 var cleared = await HermesApiClient.ClearCachesAsync();
                 _cacheStatus = cleared.Status;
                 _refreshStatus = cleared.Message;
+                clearedCaches = true;
             }
 
             switch (_activeTab)
             {
                 case HermesTab.Assistant:
-                    await _noticeService.RefreshNowAsync();
-                    await _assistantPanel.RefreshLastAsync(_selectedItem, _selectedStashInstanceKey);
+                    HermesWorkspaceSnapshotCoordinator.Current?.RefreshNoticesFromLoadedData(manual: true);
+                    _refreshStatus = "Checking current profile sources. Alerts and pages change only when new semantic data is found.";
                     break;
                 case HermesTab.Hideout:
-                    await _hideoutPanel.RefreshFromServerAsync(false, true);
-                    break;
                 case HermesTab.Crafts:
-                    await _craftPanel.RefreshFromServerAsync(false, true);
-                    break;
                 case HermesTab.Stash:
-                    await _stashPanel.RefreshFromServerAsync(false, true);
-                    break;
                 case HermesTab.Loadout:
                 case HermesTab.RaidPlanner:
-                    await _loadoutPanel.RefreshFromServerAsync(true);
+                    _refreshStatus = "Checking current profile sources. This workspace changes only when new semantic data is found.";
                     break;
                 default:
                     if (_selectedItem is not null)
@@ -1666,7 +1759,7 @@ internal sealed class HermesWindow
                     break;
             }
 
-            if (clearCaches)
+            if (clearedCaches)
             {
                 await LoadCacheStatusAsync();
             }

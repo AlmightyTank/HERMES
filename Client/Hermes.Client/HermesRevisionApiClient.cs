@@ -25,6 +25,34 @@ internal static class HermesRevisionApiClient
             TimeSpan.FromSeconds(Math.Max(120, Plugin.Settings.GetLongRequestTimeoutSeconds())));
     }
 
+    /// <summary>
+    /// Opens one server-held change watch. The SPT server keeps the request open for 30 seconds
+    /// while HERMES is visible or 60 seconds while it is closed. It returns early only when a
+    /// real HERMES domain revision advances. An empty changed-domain list is only a quiet
+    /// keep-alive response and never causes a workspace refresh.
+    /// </summary>
+    public static Task<HermesChangesResponse> WatchChangesAsync(long knownRevision, bool hermesOpen)
+    {
+        var holdSeconds = hermesOpen ? 30 : 60;
+        var route = "/hermes/watch/"
+                    + Math.Max(0L, knownRevision)
+                    + "/"
+                    + (hermesOpen ? "open" : "closed");
+        var transportGraceSeconds = Math.Max(30, Plugin.Settings.GetRequestTimeoutSeconds());
+        return GetAsync<HermesChangesResponse>(
+            route,
+            TimeSpan.FromSeconds(holdSeconds + transportGraceSeconds));
+    }
+
+    public static Task<HermesRecheckResponse> RequestRecheckAsync()
+    {
+        return GetAsync<HermesRecheckResponse>(
+            "/hermes/recheck",
+            TimeSpan.FromSeconds(Plugin.Settings.GetRequestTimeoutSeconds()));
+    }
+
+    // Kept for diagnostics and backwards compatibility. Normal operation uses the
+    // server-held watch route above instead of repeatedly polling this immediate route.
     public static Task<HermesChangesResponse> GetChangesAsync(long knownRevision)
     {
         var route = "/hermes/changes/" + Math.Max(0L, knownRevision);
@@ -71,13 +99,17 @@ internal static class HermesRevisionApiClient
             stopwatch.Stop();
         }
 
-        if (stopwatch.Elapsed >= TimeSpan.FromSeconds(Plugin.Settings.GetSlowRequestWarningSeconds()))
+        var isServerHeldWatch = route.StartsWith("/hermes/watch/", StringComparison.OrdinalIgnoreCase);
+        if (!isServerHeldWatch
+            && stopwatch.Elapsed >= TimeSpan.FromSeconds(Plugin.Settings.GetSlowRequestWarningSeconds()))
         {
             Plugin.Log.LogWarning($"Slow HERMES revision request ({stopwatch.Elapsed.TotalSeconds:N1}s): {route}");
         }
         else if (Plugin.Settings.DetailedLogging.Value)
         {
-            Plugin.Log.LogDebug($"HERMES revision request completed in {stopwatch.Elapsed.TotalMilliseconds:N0}ms: {route}");
+            var kind = isServerHeldWatch ? "server-held watch" : "revision request";
+            Plugin.Log.LogDebug(
+                $"HERMES {kind} completed in {stopwatch.Elapsed.TotalMilliseconds:N0}ms: {route}");
         }
 
         if (string.IsNullOrWhiteSpace(json))

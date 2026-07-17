@@ -246,7 +246,17 @@ public sealed record HermesHideoutAreaSummary(
     bool IsConstructing,
     long? SecondsUntilComplete,
     int MissingItemTypes,
-    long EstimatedMissingHandbookCost);
+    long EstimatedMissingHandbookCost,
+    IReadOnlyList<HermesHideoutItemRequirementSummary> RequiredItems);
+
+public sealed record HermesHideoutItemRequirementSummary(
+    string ItemTemplateId,
+    string Name,
+    double Required,
+    double Owned,
+    double Missing,
+    bool IsMet,
+    bool FoundInRaidRequired);
 
 public sealed record HermesHideoutAreaDetailResponse(
     bool Found,

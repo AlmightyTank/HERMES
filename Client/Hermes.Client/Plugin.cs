@@ -34,33 +34,11 @@ public sealed class Plugin : BaseUnityPlugin
         TryEnable("Ask HERMES context actions", () => new AskHermesContextMenuPatch().Enable());
         TryEnable("Character and in-raid inventory tab injection", () => new HermesNativeInventoryScreenPatch().Enable());
         TryEnable("InventoryScreen close lifecycle cleanup", () => new HermesNativeInventoryScreenClosePatch().Enable());
-        TryEnable("native inventory-tab icon correction", () => new HermesNativeTabIconFixPatch().Enable());
+        TryEnable("native inventory-tab icon correction and click preservation", () => new HermesNativeTabIconFixPatch().Enable());
 
-        try
-        {
-            new HermesWindowRaidPlannerDrawPatch().Enable();
-            new HermesWindowRaidPlannerRefreshPatch().Enable();
-            new HermesWindowRaidPlannerClearPatch().Enable();
-            new HermesLoadoutTabsWithoutRaidPlannerPatch().Enable();
-            new HermesLoadoutOpenViewSeparationPatch().Enable();
-            new HermesLoadoutDefaultViewSeparationPatch().Enable();
-            new HermesLoadoutSummaryViewGuardPatch().Enable();
-            Logger.LogInfo("HERMES Loadout and Raid Planner workspace separation enabled.");
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError($"HERMES Loadout/Raid Planner separation could not be enabled: {ex}");
-        }
-
-        try
-        {
-            HermesEftThemeBootstrap.Enable();
-            Logger.LogInfo("HERMES EFT body-panel theme enabled for the staged native conversion.");
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError($"HERMES EFT body-panel theme could not be enabled: {ex}");
-        }
+        // Alpha12.7.4.4 improves native text inset/readability and pins new item-search results to the top.
+        // Legacy controller methods remain request/state owners only; every visible workspace is
+        // built by HermesNativeWorkspaceBody under the EFT Canvas.
 
         TryEnable("server revision workspace loading", () => new HermesSnapshotPresentationOpenPatch().Enable());
         TryEnable("native Ragfair asset capture", () => new HermesRagfairNativeAssetPatch().Enable());
@@ -70,7 +48,7 @@ public sealed class Plugin : BaseUnityPlugin
         HermesRagfairNativeAssets.TryResolve();
 
         Logger.LogInfo(
-            $"HERMES 0.1.0-alpha12.7.3.7 quiet server revisions loaded. "
+            $"HERMES 0.1.0-alpha12.7.4.6 true-change refresh and hideout requirements loaded. "
             + $"Native Ragfair templates ready: {HermesRagfairNativeAssets.Ready}. "
             + $"Inventory-only workspace: {Settings.UseNativeInventoryTabs.Value}. "
             + $"Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");
@@ -97,6 +75,7 @@ public sealed class Plugin : BaseUnityPlugin
         }
 
         _window.OpenForInventoryItem(profileItemId);
+        HermesGlobalNavigation.RequestOpen();
     }
 
     internal void OpenForStashItem(string profileItemId)
@@ -112,6 +91,7 @@ public sealed class Plugin : BaseUnityPlugin
         }
 
         _window.OpenForPreviewItem(templateId, sourceLabel);
+        HermesGlobalNavigation.RequestOpen();
     }
 
     internal void OpenNoticeTarget(string targetTab)
@@ -122,11 +102,13 @@ public sealed class Plugin : BaseUnityPlugin
         }
 
         _window.OpenNativeNoticeTarget(targetTab);
+        HermesGlobalNavigation.RequestOpen();
     }
 
     private void Update()
     {
         HermesNativeScreenRegistry.TickDiscovery();
+        HermesGlobalNavigation.Tick();
         _snapshotCoordinator?.Tick();
         _window?.Tick();
 

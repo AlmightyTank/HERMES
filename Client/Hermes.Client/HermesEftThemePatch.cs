@@ -185,6 +185,7 @@ internal static class HermesEftTheme
         var headerTexture = CreateBottomLineTexture(Header, Line);
         var panelTexture = CreateFlatTexture(Panel);
         var raisedTexture = CreateBottomLineTexture(PanelRaised, Line);
+        var panelHeadingTexture = CreateFlatTexture(PanelRaised);
         var rowTexture = CreateBottomLineTexture(Row, LineSoft);
         var alternateRowTexture = CreateBottomLineTexture(RowAlternate, LineSoft);
         var hoverTexture = CreateFlatTexture(Hover);
@@ -213,7 +214,7 @@ internal static class HermesEftTheme
         }
 
         _workspaceShell = FlatBox(backdropTexture, new RectOffset(4, 4, 4, 4));
-        _headerBand = FlatBox(headerTexture, new RectOffset(14, 12, 8, 8));
+        _headerBand = BottomLineBox(headerTexture, new RectOffset(14, 12, 8, 8));
         _headerBand.margin = new RectOffset(0, 0, 0, 0);
 
         _headerTitle = Label(17, PrimaryText, FontStyle.Normal, TextAnchor.MiddleLeft, false);
@@ -246,7 +247,7 @@ internal static class HermesEftTheme
         // subtle Flea-style band, while status text is drawn below it without a box.
         _panelHeader = FlatBox(CreateFlatTexture(Color.clear), new RectOffset(0, 0, 0, 0));
         _panelHeader.margin = new RectOffset(0, 0, 0, 4);
-        _panelHeadingBand = FlatBox(raisedTexture, new RectOffset(12, 12, 6, 5));
+        _panelHeadingBand = FlatBox(panelHeadingTexture, new RectOffset(12, 12, 6, 5));
         _panelHeadingBand.margin = new RectOffset(0, 0, 0, 0);
         _panelTitle = Label(16, Accent, FontStyle.Bold, TextAnchor.MiddleLeft, false);
         _subtitle = Label(12, MutedText, FontStyle.Normal, TextAnchor.MiddleLeft, true);
@@ -255,12 +256,12 @@ internal static class HermesEftTheme
         _status.padding = new RectOffset(8, 8, 2, 0);
         _status.margin = new RectOffset(0, 0, 2, 0);
 
-        _statusDivider = FlatBox(CreateFlatTexture(Rgba(64, 74, 76, 135)), new RectOffset(0, 0, 0, 0));
+        _statusDivider = FlatBox(CreateFlatTexture(Rgba(58, 68, 70, 82)), new RectOffset(0, 0, 0, 0));
         _statusDivider.fixedHeight = 1f;
         _statusDivider.stretchHeight = false;
-        _statusDivider.margin = new RectOffset(0, 0, 2, 1);
+        _statusDivider.margin = new RectOffset(0, 0, 3, 1);
 
-        _toolbar = FlatBox(raisedTexture, new RectOffset(8, 8, 6, 6));
+        _toolbar = BottomLineBox(raisedTexture, new RectOffset(8, 8, 6, 6));
         _toolbar.margin = new RectOffset(0, 0, 0, 5);
         _searchField = new GUIStyle(_skin.textField)
         {
@@ -277,9 +278,9 @@ internal static class HermesEftTheme
         SetAllTextColors(_selectedFilter, DarkText);
         _selectedFilter.fontStyle = FontStyle.Bold;
 
-        _summaryBar = FlatBox(raisedTexture, new RectOffset(0, 0, 0, 0));
+        _summaryBar = BottomLineBox(raisedTexture, new RectOffset(0, 0, 0, 0));
         _summaryBar.margin = new RectOffset(0, 0, 0, 6);
-        _summaryCell = FlatBox(raisedTexture, new RectOffset(10, 10, 7, 7));
+        _summaryCell = BottomLineBox(raisedTexture, new RectOffset(10, 10, 7, 7));
         _summaryCell.margin = new RectOffset(0, 1, 0, 0);
         _summaryTitle = Label(11, MutedText, FontStyle.Bold, TextAnchor.UpperLeft, false);
         _summaryValue = Label(18, PrimaryText, FontStyle.Normal, TextAnchor.MiddleLeft, false);
@@ -289,6 +290,7 @@ internal static class HermesEftTheme
         _contentPanel.margin = new RectOffset(0, 0, 0, 6);
         _sectionHeader = Label(12, Accent, FontStyle.Bold, TextAnchor.MiddleLeft, false);
         _sectionHeader.normal.background = raisedTexture;
+        _sectionHeader.border = new RectOffset(0, 0, 0, 1);
         _sectionHeader.padding = new RectOffset(10, 10, 5, 5);
         _sectionHeader.margin = new RectOffset(0, 0, 5, 0);
 
@@ -297,8 +299,9 @@ internal static class HermesEftTheme
         _mapHeader.fontStyle = FontStyle.Bold;
         _mapHeader.padding = new RectOffset(10, 10, 7, 7);
         _mapHeader.margin = new RectOffset(0, 0, 0, 0);
+        _mapHeader.border = new RectOffset(0, 0, 0, 1);
 
-        _dataRow = FlatBox(rowTexture, new RectOffset(9, 9, 6, 6));
+        _dataRow = BottomLineBox(rowTexture, new RectOffset(9, 9, 6, 6));
         _dataRow.margin = new RectOffset(0, 0, 0, 0);
         _dataRowAlternate = new GUIStyle(_dataRow);
         _dataRowAlternate.normal.background = alternateRowTexture;
@@ -311,7 +314,7 @@ internal static class HermesEftTheme
         _statusWarning = Badge(warningTexture, WarningBright);
         _statusNeutral = Badge(neutralTexture, Text);
 
-        _emptyState = FlatBox(rowTexture, new RectOffset(14, 14, 13, 13));
+        _emptyState = BottomLineBox(rowTexture, new RectOffset(14, 14, 13, 13));
         _emptyState.margin = new RectOffset(0, 0, 4, 4);
         _emptyState.normal.textColor = MutedText;
 
@@ -361,6 +364,14 @@ internal static class HermesEftTheme
         };
         style.normal.background = background;
         style.normal.textColor = Text;
+        return style;
+    }
+
+    private static GUIStyle BottomLineBox(Texture2D background, RectOffset padding)
+    {
+        var style = FlatBox(background, padding);
+        // Preserve the texture's final row instead of stretching it across 25% of the control.
+        style.border = new RectOffset(0, 0, 0, 1);
         return style;
     }
 

@@ -36,3 +36,10 @@ internal sealed class HermesChangesResponse
     public List<string> Changed { get; set; } = [];
     public string? Reason { get; set; }
 }
+
+internal sealed class HermesRecheckResponse
+{
+    public bool Accepted { get; set; }
+    public string? Message { get; set; }
+    public string ContextToken { get; set; } = string.Empty;
+}

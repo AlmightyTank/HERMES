@@ -9,14 +9,17 @@ internal sealed class HermesAssistantNoticeService
     private const int MaximumRetainedNotices = 8;
 
     private readonly List<HermesAssistantNotice> _notices = [];
+    private readonly HashSet<string> _dismissedFingerprints = new(StringComparer.Ordinal);
     private HashSet<string> _activeFingerprints = new(StringComparer.Ordinal);
     private bool _checking;
-    private float _nextCheckAt = 8f;
-    private string _status = "Alerts are waiting for the first profile check.";
+    private string _status = "Alerts are waiting for the initial HERMES snapshot.";
     private string? _profileToken;
-    private int _requestVersion;
     private bool _hermesVisible;
     private bool _assistantVisible;
+    private HermesLoadoutSummaryResponse? _cachedLoadout;
+    private HermesHideoutSummaryResponse? _cachedHideout;
+    private HermesCraftsResponse? _cachedCrafts;
+    private HermesStashSummaryResponse? _cachedStash;
 
     public int ActiveNoticeCount => _notices.Count(notice => !notice.Dismissed);
 
@@ -27,10 +30,9 @@ internal sealed class HermesAssistantNoticeService
 
     public string GetDiagnosticsSummary()
     {
-        var nextSeconds = Math.Max(0, Convert.ToInt32(Math.Ceiling(_nextCheckAt - Time.realtimeSinceStartup)));
         return $"enabled={Plugin.Settings.EnableProactiveAssistantNotices.Value}, active={ActiveNoticeCount}, "
                + $"native-active={HermesNativeNotificationBridge.ActiveCount}, retained={_notices.Count}, "
-               + $"checking={_checking}, next-check-seconds={nextSeconds}, "
+               + $"checking={_checking}, source=server-revision-snapshot, "
                + $"profile-context={(!string.IsNullOrWhiteSpace(_profileToken) ? "available" : "unavailable")}";
     }
 
@@ -39,29 +41,100 @@ internal sealed class HermesAssistantNoticeService
         _hermesVisible = hermesVisible;
         _assistantVisible = assistantVisible;
         PublishPendingNativeNotices();
-
-        if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
-        {
-            return;
-        }
-
-        if (_checking || Time.realtimeSinceStartup < _nextCheckAt)
-        {
-            return;
-        }
-
-        if (!Plugin.Settings.ShowAssistantNoticesDuringRaid.Value && IsRaidActive())
-        {
-            _nextCheckAt = Time.realtimeSinceStartup + 15f;
-            return;
-        }
-
-        _ = RefreshAsync(false);
     }
 
     public Task RefreshNowAsync()
     {
-        return RefreshAsync(true);
+        RefreshFromCachedWorkspaceData(manual: true);
+        return Task.CompletedTask;
+    }
+
+    public void UpdateFromWorkspaceData(
+        string? profileToken,
+        HermesLoadoutSummaryResponse? loadout,
+        HermesHideoutSummaryResponse? hideout,
+        HermesCraftsResponse? crafts,
+        HermesStashSummaryResponse? stash,
+        bool manual = false)
+    {
+        if (!string.IsNullOrWhiteSpace(_profileToken)
+            && !string.IsNullOrWhiteSpace(profileToken)
+            && !string.Equals(_profileToken, profileToken, StringComparison.Ordinal))
+        {
+            HermesNativeNotificationBridge.DismissAll();
+            _notices.Clear();
+            _activeFingerprints.Clear();
+            _dismissedFingerprints.Clear();
+            _cachedLoadout = null;
+            _cachedHideout = null;
+            _cachedCrafts = null;
+            _cachedStash = null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(profileToken))
+        {
+            _profileToken = profileToken;
+        }
+
+        if (loadout is not null)
+        {
+            _cachedLoadout = loadout;
+        }
+        if (hideout is not null)
+        {
+            _cachedHideout = hideout;
+        }
+        if (crafts is not null)
+        {
+            _cachedCrafts = crafts;
+        }
+        if (stash is not null)
+        {
+            _cachedStash = stash;
+        }
+
+        RefreshFromCachedWorkspaceData(manual);
+    }
+
+    private void RefreshFromCachedWorkspaceData(bool manual)
+    {
+        if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
+        {
+            _status = "Alerts are disabled in F12 configuration.";
+            return;
+        }
+
+        _checking = true;
+        try
+        {
+            var candidates = new List<HermesAssistantNoticeCandidate>();
+            AddLoadoutCandidates(_cachedLoadout, candidates);
+            AddHideoutCandidates(_cachedHideout, candidates);
+            AddCraftCandidates(_cachedCrafts, candidates);
+            AddStashCandidates(_cachedStash, candidates);
+            ApplyCandidates(candidates);
+
+            var ordered = candidates
+                .OrderByDescending(candidate => SeverityRank(candidate.Severity))
+                .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (ordered.Count == 0)
+            {
+                _status = manual
+                    ? "Checked the loaded profile snapshot • no actionable conditions found."
+                    : "No actionable conditions in the current profile snapshot.";
+            }
+            else
+            {
+                var top = ordered[0];
+                var suffix = ordered.Count > 1 ? $" • +{ordered.Count - 1:N0} more" : string.Empty;
+                _status = $"{ordered.Count:N0} actionable • {top.Title} — {top.Message}{suffix}";
+            }
+        }
+        finally
+        {
+            _checking = false;
+        }
     }
 
     public void Clear()
@@ -69,6 +142,7 @@ internal sealed class HermesAssistantNoticeService
         HermesNativeNotificationBridge.DismissAll();
         _notices.Clear();
         _activeFingerprints.Clear();
+        _dismissedFingerprints.Clear();
         _status = "Alerts cleared.";
     }
 
@@ -135,103 +209,6 @@ internal sealed class HermesAssistantNoticeService
         }
 
         GUILayout.EndVertical();
-    }
-
-    private async Task RefreshAsync(bool manual)
-    {
-        if (_checking)
-        {
-            return;
-        }
-
-        if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
-        {
-            _status = "Alerts are disabled in F12 configuration.";
-            return;
-        }
-
-        if (!manual && !Plugin.Settings.ShowAssistantNoticesDuringRaid.Value && IsRaidActive())
-        {
-            _nextCheckAt = Time.realtimeSinceStartup + 15f;
-            return;
-        }
-
-        var requestVersion = ++_requestVersion;
-        var retrySoon = false;
-        _checking = true;
-        _status = manual ? "Checking current HERMES data..." : "Checking for meaningful changes...";
-
-        try
-        {
-            var profile = await TryFetchAsync(HermesApiClient.GetProfileContextAsync, "profile context");
-            if (requestVersion != _requestVersion)
-            {
-                return;
-            }
-
-            if (profile is null || !profile.Found || string.IsNullOrWhiteSpace(profile.ContextToken))
-            {
-                retrySoon = true;
-                _status = profile?.Message ?? "No active PMC profile is available for alerts.";
-                return;
-            }
-
-            if (!string.IsNullOrWhiteSpace(_profileToken)
-                && !_profileToken.Equals(profile.ContextToken, StringComparison.Ordinal))
-            {
-                HermesNativeNotificationBridge.DismissAll();
-                _notices.Clear();
-                _activeFingerprints.Clear();
-            }
-            _profileToken = profile.ContextToken;
-
-            var loadoutTask = NeedsLoadout()
-                ? TryFetchAsync(
-                    () => HermesApiClient.GetLoadoutSummaryAsync(Plugin.Settings.CreateLoadoutRequestSettings()),
-                    "loadout")
-                : Task.FromResult<HermesLoadoutSummaryResponse?>(null);
-            var hideoutTask = NeedsHideout()
-                ? TryFetchAsync(HermesApiClient.GetHideoutSummaryAsync, "hideout")
-                : Task.FromResult<HermesHideoutSummaryResponse?>(null);
-            var craftsTask = Plugin.Settings.NotifyReadyProfitableCrafts.Value
-                ? TryFetchAsync(HermesApiClient.GetCraftsAsync, "crafts")
-                : Task.FromResult<HermesCraftsResponse?>(null);
-            var stashTask = Plugin.Settings.NotifyStashOpportunities.Value
-                ? TryFetchAsync(
-                    () => HermesApiClient.GetStashSummaryAsync(Plugin.Settings.CreateStashRequestSettings()),
-                    "stash")
-                : Task.FromResult<HermesStashSummaryResponse?>(null);
-
-            await Task.WhenAll(loadoutTask, hideoutTask, craftsTask, stashTask);
-            if (requestVersion != _requestVersion)
-            {
-                return;
-            }
-
-            var candidates = new List<HermesAssistantNoticeCandidate>();
-            AddLoadoutCandidates(loadoutTask.Result, candidates);
-            AddHideoutCandidates(hideoutTask.Result, candidates);
-            AddCraftCandidates(craftsTask.Result, candidates);
-            AddStashCandidates(stashTask.Result, candidates);
-            ApplyCandidates(candidates);
-
-            _status = candidates.Count == 0
-                ? "No configured actionable conditions were found."
-                : $"Checked current profile data • {candidates.Count:N0} actionable condition(s) found.";
-        }
-        catch (Exception ex)
-        {
-            _status = HermesApiClient.DescribeFailure(ex, "Proactive notice check");
-            Plugin.Log.LogError(ex);
-        }
-        finally
-        {
-            _checking = false;
-            _nextCheckAt = Time.realtimeSinceStartup
-                           + (retrySoon
-                               ? 20f
-                               : Plugin.Settings.GetAssistantNoticeCheckIntervalMinutes() * 60f);
-        }
     }
 
     private void AddLoadoutCandidates(
@@ -406,7 +383,6 @@ internal sealed class HermesAssistantNoticeService
     private void ApplyCandidates(IReadOnlyCollection<HermesAssistantNoticeCandidate> candidates)
     {
         var now = Time.realtimeSinceStartup;
-        var previousFingerprints = _activeFingerprints;
         var currentFingerprints = candidates
             .Select(candidate => candidate.Fingerprint)
             .ToHashSet(StringComparer.Ordinal);
@@ -415,14 +391,15 @@ internal sealed class HermesAssistantNoticeService
                      .Where(notice => !currentFingerprints.Contains(notice.Fingerprint))
                      .ToList())
         {
-            DismissNotice(stale);
+            RemoveNotice(stale, rememberDismissal: false);
         }
         _notices.RemoveAll(notice => notice.Dismissed);
+        _dismissedFingerprints.RemoveWhere(fingerprint => !currentFingerprints.Contains(fingerprint));
 
         foreach (var candidate in candidates
                      .OrderByDescending(candidate => SeverityRank(candidate.Severity)))
         {
-            if (previousFingerprints.Contains(candidate.Fingerprint)
+            if (_dismissedFingerprints.Contains(candidate.Fingerprint)
                 || _notices.Any(notice => notice.Fingerprint.Equals(candidate.Fingerprint, StringComparison.Ordinal)))
             {
                 continue;
@@ -500,10 +477,7 @@ internal sealed class HermesAssistantNoticeService
         var notice = _notices.FirstOrDefault(candidate => candidate.Id == noticeId);
         if (notice is not null)
         {
-            notice.Dismissed = true;
-            notice.NativePublished = false;
-            notice.NativeDescription = null;
-            _notices.Remove(notice);
+            RemoveNotice(notice, rememberDismissal: true);
         }
 
         Plugin.Instance?.OpenNoticeTarget(targetTab);
@@ -517,7 +491,16 @@ internal sealed class HermesAssistantNoticeService
 
     private void DismissNotice(HermesAssistantNotice notice)
     {
+        RemoveNotice(notice, rememberDismissal: true);
+    }
+
+    private void RemoveNotice(HermesAssistantNotice notice, bool rememberDismissal)
+    {
         notice.Dismissed = true;
+        if (rememberDismissal)
+        {
+            _dismissedFingerprints.Add(notice.Fingerprint);
+        }
         if (notice.NativePublished)
         {
             HermesNativeNotificationBridge.Dismiss(notice.Id);
@@ -535,35 +518,6 @@ internal sealed class HermesAssistantNoticeService
             2 => "•",
             _ => "·"
         };
-    }
-
-    private static bool NeedsLoadout()
-    {
-        return Plugin.Settings.NotifyLoadoutReadiness.Value
-               || Plugin.Settings.NotifyHighValueUninsuredItems.Value;
-    }
-
-    private static bool NeedsHideout()
-    {
-        return Plugin.Settings.NotifyCompletedHideoutProduction.Value
-               || Plugin.Settings.NotifyReadyHideoutUpgrades.Value;
-    }
-
-    private static async Task<T?> TryFetchAsync<T>(Func<Task<T>> fetch, string source)
-        where T : class
-    {
-        try
-        {
-            return await fetch();
-        }
-        catch (Exception ex)
-        {
-            if (Plugin.Settings.DetailedLogging.Value)
-            {
-                Plugin.Log.LogWarning($"HERMES proactive {source} check failed: {ex.Message}");
-            }
-            return null;
-        }
     }
 
     private static int SeverityRank(string severity)

@@ -6,10 +6,9 @@ using UnityEngine.UI;
 namespace Hermes.Client;
 
 /// <summary>
-/// Shared native-uGUI building blocks used while the HERMES workspaces are migrated away
-/// from IMGUI. Alpha12.7.3.4 uses these primitives for shell chrome and exposes the same
-/// factories for the upcoming Assistant, Hideout, Crafts, Stash, Loadout, and Raid Planner
-/// body conversions.
+/// Shared native-uGUI building blocks for the complete HERMES shell and workspace bodies.
+/// Alpha12.7.4 uses these primitives for every visible control; legacy IMGUI controller
+/// methods remain data/request owners only and are no longer part of the render path.
 /// </summary>
 internal static class HermesNativeUiFramework
 {
@@ -171,6 +170,7 @@ internal static class HermesNativeUiFramework
         var layout = header.GetComponent<LayoutElement>();
         layout.minHeight = preferredHeight;
         layout.preferredHeight = preferredHeight;
+        layout.flexibleHeight = 0f;
 
         var text = CreateText("Title", header.transform, 16f, true, TextAlignmentOptions.Left);
         text.text = title.ToUpperInvariant();
@@ -197,8 +197,11 @@ internal static class HermesNativeUiFramework
         layout.childControlWidth = true;
         layout.childControlHeight = true;
         layout.childForceExpandWidth = true;
-        layout.childForceExpandHeight = true;
-        strip.GetComponent<LayoutElement>().preferredHeight = 58f;
+        layout.childForceExpandHeight = false;
+        var stripLayout = strip.GetComponent<LayoutElement>();
+        stripLayout.minHeight = 48f;
+        stripLayout.preferredHeight = 48f;
+        stripLayout.flexibleHeight = 0f;
         return (RectTransform)strip.transform;
     }
 
@@ -254,7 +257,7 @@ internal static class HermesNativeUiFramework
             typeof(RectMask2D));
         viewportObject.transform.SetParent(root.transform, false);
         var viewport = (RectTransform)viewportObject.transform;
-        Stretch(viewport, 0f, 0f, 12f, 0f);
+        Stretch(viewport, 0f, 0f, 15f, 0f);
         var viewportImage = viewportObject.GetComponent<Image>();
         viewportImage.color = Color.clear;
         viewportImage.raycastTarget = true;
@@ -280,6 +283,51 @@ internal static class HermesNativeUiFramework
         contentLayout.childForceExpandHeight = false;
         contentObject.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
+        var scrollbarObject = new GameObject(
+            "VerticalScrollbar",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image),
+            typeof(Scrollbar));
+        scrollbarObject.transform.SetParent(root.transform, false);
+        var scrollbarRect = (RectTransform)scrollbarObject.transform;
+        scrollbarRect.anchorMin = new Vector2(1f, 0f);
+        scrollbarRect.anchorMax = new Vector2(1f, 1f);
+        scrollbarRect.pivot = new Vector2(1f, 0.5f);
+        scrollbarRect.offsetMin = new Vector2(-11f, 3f);
+        scrollbarRect.offsetMax = new Vector2(-3f, -3f);
+
+        var trackImage = scrollbarObject.GetComponent<Image>();
+        trackImage.color = new Color(0.07f, 0.085f, 0.085f, 0.74f);
+        trackImage.raycastTarget = true;
+
+        var slidingAreaObject = new GameObject("SlidingArea", typeof(RectTransform));
+        slidingAreaObject.transform.SetParent(scrollbarObject.transform, false);
+        var slidingArea = (RectTransform)slidingAreaObject.transform;
+        Stretch(slidingArea, 1f, 2f, 1f, 2f);
+
+        var handleObject = new GameObject(
+            "Handle",
+            typeof(RectTransform),
+            typeof(CanvasRenderer),
+            typeof(Image));
+        handleObject.transform.SetParent(slidingArea, false);
+        var handle = (RectTransform)handleObject.transform;
+        Stretch(handle, 0f, 0f, 0f, 0f);
+        var handleImage = handleObject.GetComponent<Image>();
+        handleImage.color = new Color(
+            AccentTextColor.r,
+            AccentTextColor.g,
+            AccentTextColor.b,
+            0.72f);
+        handleImage.raycastTarget = true;
+
+        var scrollbar = scrollbarObject.GetComponent<Scrollbar>();
+        scrollbar.handleRect = handle;
+        scrollbar.targetGraphic = handleImage;
+        scrollbar.direction = Scrollbar.Direction.BottomToTop;
+        scrollbar.navigation = new Navigation { mode = Navigation.Mode.None };
+
         var scrollRect = root.GetComponent<ScrollRect>();
         scrollRect.content = content;
         scrollRect.viewport = viewport;
@@ -288,6 +336,9 @@ internal static class HermesNativeUiFramework
         scrollRect.movementType = ScrollRect.MovementType.Clamped;
         scrollRect.inertia = false;
         scrollRect.scrollSensitivity = 36f;
+        scrollRect.verticalScrollbar = scrollbar;
+        scrollRect.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+        scrollRect.verticalScrollbarSpacing = 3f;
         return ((RectTransform)root.transform, viewport, content, scrollRect);
     }
 
@@ -301,9 +352,10 @@ internal static class HermesNativeUiFramework
         var gameObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
         gameObject.transform.SetParent(parent, false);
         var text = gameObject.GetComponent<TextMeshProUGUI>();
-        var font = bold
-            ? HermesRagfairNativeAssets.ShadowedFont ?? HermesRagfairNativeAssets.NormalFont
-            : HermesRagfairNativeAssets.NormalFont ?? HermesRagfairNativeAssets.ShadowedFont;
+        // Body text uses the normal Bender asset even when bold. The shadowed asset has a
+        // baked offset intended for large EFT headers; at body sizes it pushes the readable
+        // glyph too far into the dark underlay and makes inputs/section labels look sunken.
+        var font = HermesRagfairNativeAssets.NormalFont ?? HermesRagfairNativeAssets.ShadowedFont;
         font ??= Resources.FindObjectsOfTypeAll<TMP_FontAsset>().FirstOrDefault(candidate => candidate != null);
         if (font != null)
         {
@@ -312,6 +364,7 @@ internal static class HermesNativeUiFramework
         text.fontSize = size;
         text.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
         text.alignment = alignment;
+        text.margin = new Vector4(3f, 0f, 3f, 0f);
         text.enableWordWrapping = false;
         text.overflowMode = TextOverflowModes.Ellipsis;
         text.raycastTarget = false;
