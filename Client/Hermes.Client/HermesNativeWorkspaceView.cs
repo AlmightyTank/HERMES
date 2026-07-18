@@ -7,7 +7,7 @@ using UnityEngine.UI;
 namespace Hermes.Client;
 
 /// <summary>
-/// Native EFT workspace shell for HERMES. Alpha12.7.4 owns the complete interface through
+/// Native EFT workspace shell for HERMES. The complete interface is owned through
 /// native uGUI: header, activity state, workspace rail, search toolbar, and every workspace body.
 /// </summary>
 internal sealed class HermesNativeWorkspaceView : MonoBehaviour
@@ -123,7 +123,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
 
         ApplyResponsiveLayout(true);
         _built = true;
-        Plugin.Log?.LogInfo($"HERMES Alpha14.0.8.1 client tab-refresh workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
+        Plugin.Log?.LogInfo($"HERMES {HermesVersionInfo.DisplayVersion} native workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
     }
 
     private void BuildHeader()

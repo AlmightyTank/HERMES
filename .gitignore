@@ -1,5 +1,8 @@
 **/bin/
 **/obj/
 dist/
-HERMES-*.zip
+*.user
+*.suo
 .vs/
+HERMES-*.zip
+*.binlog

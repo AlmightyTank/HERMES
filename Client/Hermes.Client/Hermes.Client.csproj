@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\..\Version.props" />
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <RootNamespace>Hermes.Client</RootNamespace>
@@ -6,13 +7,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0-alpha14.0.8.1</Version>
+    <Version>$(HermesVersion)</Version>
     <OutputType>Library</OutputType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <IsPackable>false</IsPackable>
 
     <!-- Change this value if your development SPT installation moves. -->
+    <SptRoot Condition="'$(SptRoot)' == '' and '$(SPT_ROOT)' != ''">$(SPT_ROOT)</SptRoot>
     <SptRoot Condition="'$(SptRoot)' == ''">C:\RealSPT</SptRoot>
     <EftManaged>$(SptRoot)\EscapeFromTarkov_Data\Managed</EftManaged>
     <BepInExCore>$(SptRoot)\BepInEx\core</BepInExCore>
@@ -72,26 +74,30 @@
       <HintPath>$(EftManaged)\UnityEngine.TextRenderingModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
-	<Reference Include="UnityEngine.AnimationModule">
-		<HintPath>$(EftManaged)\UnityEngine.AnimationModule.dll</HintPath>
-		<Private>false</Private>
-	</Reference>
-	<Reference Include="Unity.TextMeshPro">
-		<HintPath>$(EftManaged)\Unity.TextMeshPro.dll</HintPath>
-		<Private>false</Private>
-	</Reference>
+    <Reference Include="UnityEngine.AnimationModule">
+      <HintPath>$(EftManaged)\UnityEngine.AnimationModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(EftManaged)\Unity.TextMeshPro.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.InputLegacyModule">
       <HintPath>$(EftManaged)\UnityEngine.InputLegacyModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
-	<Reference Include="Sirenix.Serialization">
-		<HintPath>$(EftManaged)\Sirenix.Serialization.dll</HintPath>
-		<Private>false</Private>
-	</Reference>
+    <Reference Include="Sirenix.Serialization">
+      <HintPath>$(EftManaged)\Sirenix.Serialization.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="Assets\ask_hermes.png" LogicalName="Hermes.Client.Assets.ask_hermes.png" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(Configuration)' == 'Release'">
+    <Compile Remove="HermesRagfairUiDumpPatch.cs" />
   </ItemGroup>
 
   <Target Name="ValidateSptClientReferences" BeforeTargets="ResolveReferences" Condition="'$(DesignTimeBuild)' != 'true'">
@@ -105,6 +111,14 @@
            Text="Missing spt-reflection.dll at '$(SptClientPlugins)\spt-reflection.dll'. Check SptRoot and your SPT 4.0.13 installation." />
     <Error Condition="!Exists('$(EftManaged)\Assembly-CSharp.dll')"
            Text="Missing Assembly-CSharp.dll at '$(EftManaged)\Assembly-CSharp.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.dll')"
+           Text="Missing UnityEngine.dll at '$(EftManaged)\UnityEngine.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\UnityEngine.AnimationModule.dll')"
+           Text="Missing UnityEngine.AnimationModule.dll at '$(EftManaged)\UnityEngine.AnimationModule.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\Unity.TextMeshPro.dll')"
+           Text="Missing Unity.TextMeshPro.dll at '$(EftManaged)\Unity.TextMeshPro.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\Sirenix.Serialization.dll')"
+           Text="Missing Sirenix.Serialization.dll at '$(EftManaged)\Sirenix.Serialization.dll'." />
     <Error Condition="!Exists('$(EftManaged)\Comfort.dll')"
            Text="Missing Comfort.dll at '$(EftManaged)\Comfort.dll'." />
     <Error Condition="!Exists('$(EftManaged)\Newtonsoft.Json.dll')"

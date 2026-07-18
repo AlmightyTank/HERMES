@@ -1,4 +1,5 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="Version.props" />
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
     <OutputType>Library</OutputType>
@@ -9,10 +10,11 @@
     <IsPackable>false</IsPackable>
 
     <!-- Shared development and testing SPT path. -->
+    <SptRoot Condition="'$(SptRoot)' == '' and '$(SPT_ROOT)' != ''">$(SPT_ROOT)</SptRoot>
     <SptRoot Condition="'$(SptRoot)' == ''">C:\RealSPT</SptRoot>
 
-    <!-- Set DeployToTestEnvironment=false to package without installing. -->
-    <DeployToTestEnvironment Condition="'$(DeployToTestEnvironment)' == ''">true</DeployToTestEnvironment>
+    <!-- Set DeployToTestEnvironment=true to package and install into the test SPT root. -->
+    <DeployToTestEnvironment Condition="'$(DeployToTestEnvironment)' == ''">false</DeployToTestEnvironment>
     <TestSptRoot Condition="'$(TestSptRoot)' == ''">$(SptRoot)</TestSptRoot>
     <TestServerDir>$(TestSptRoot)\SPT\user\mods\HERMES</TestServerDir>
     <TestClientDir>$(TestSptRoot)\BepInEx\plugins\HERMES</TestClientDir>
@@ -21,10 +23,14 @@
     <DistRoot>$(HermesRoot)\dist</DistRoot>
     <ServerDist>$(DistRoot)\SPT\user\mods\HERMES</ServerDist>
     <ClientDist>$(DistRoot)\BepInEx\plugins\HERMES</ClientDist>
-    <PackagePath>$(HermesRoot)\HERMES-0.1.0-alpha14.0.8.1.zip</PackagePath>
+    <PackageConfigurationSuffix Condition="'$(Configuration)' != 'Release'">-$(Configuration)</PackageConfigurationSuffix>
+    <PackagePath>$(HermesRoot)\HERMES-$(HermesVersion)$(PackageConfigurationSuffix).zip</PackagePath>
 
     <ServerOutput>$(HermesRoot)\Server\Hermes.Server\bin\$(Configuration)\Hermes.Server.dll</ServerOutput>
     <ClientOutput>$(HermesRoot)\Client\Hermes.Client\bin\$(Configuration)\Hermes.Client.dll</ClientOutput>
+    <ReadmeFile>$(HermesRoot)\README.md</ReadmeFile>
+    <LicenseFile>$(HermesRoot)\LICENSE</LicenseFile>
+    <ChangelogFile>$(HermesRoot)\CHANGELOG.md</ChangelogFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -40,6 +46,9 @@
            Text="Hermes.Server.dll was not found at '$(ServerOutput)'." />
     <Error Condition="!Exists('$(ClientOutput)')"
            Text="Hermes.Client.dll was not found at '$(ClientOutput)'." />
+    <Error Condition="!Exists('$(ReadmeFile)')" Text="README.md is missing." />
+    <Error Condition="!Exists('$(LicenseFile)')" Text="LICENSE is missing." />
+    <Error Condition="!Exists('$(ChangelogFile)')" Text="CHANGELOG.md is missing." />
   </Target>
 
   <Target Name="PackageHermes" AfterTargets="ValidateHermesOutputs">
@@ -51,6 +60,10 @@
           SkipUnchangedFiles="true" />
     <Copy SourceFiles="$(ClientOutput)"
           DestinationFolder="$(ClientDist)"
+          SkipUnchangedFiles="true" />
+
+    <Copy SourceFiles="$(ReadmeFile);$(LicenseFile);$(ChangelogFile)"
+          DestinationFolder="$(DistRoot)"
           SkipUnchangedFiles="true" />
 
     <Delete Files="$(PackagePath)" Condition="Exists('$(PackagePath)')" />

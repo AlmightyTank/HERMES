@@ -347,7 +347,7 @@ internal sealed class HermesWindow
 
     public void Draw()
     {
-        // Alpha12.6.1 keeps the standalone floating window removed. HERMES renders only inside
+        // The standalone floating window is removed. HERMES renders only inside
         // the main Character screen or the in-raid InventoryScreen tab.
     }
 
@@ -1631,7 +1631,7 @@ internal sealed class HermesWindow
         var requests = HermesApiClient.GetDiagnosticsSnapshot();
         var lines = new List<string>
         {
-            "HERMES 0.1.0-alpha12.6.2 diagnostics",
+            $"HERMES {HermesVersionInfo.DisplayVersion} diagnostics",
             $"Active tab: {_activeTab}",
             $"Client requests: started={requests.Started}, completed={requests.Completed}, failed={requests.Failed}, active={requests.Active}",
             $"Failures: timeout={requests.TimedOut}, transport={requests.TransportFailures}, invalid-response={requests.InvalidResponses}",

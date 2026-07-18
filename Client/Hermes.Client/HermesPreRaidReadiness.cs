@@ -12,7 +12,7 @@ using UnityEngine.UI;
 namespace Hermes.Client;
 
 /// <summary>
-/// Alpha13.0.10 pre-raid readiness interception and map-selection prefetch. It is deliberately client-only and read-only:
+/// Pre-raid readiness interception and map-selection prefetch. It is deliberately client-only and read-only:
 /// a Harmony prefix intercepts MatchmakerInsuranceScreen.method_9 before EFT advances, displays
 /// the current HERMES loadout analysis, and allows that original method exactly once after the
 /// player chooses Continue. The confirmation-screen Back button is then detected through EFT's native DefaultUIButton event and returns to the existing readiness review.
@@ -1101,10 +1101,10 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
     }
 
     private static string NormalizeFinding(string value)
-        => new(value
-            .Where(character => !char.IsWhiteSpace(character) && !char.IsPunctuation(character))
-            .Select(char.ToLowerInvariant)
-            .ToArray());
+        => new string(
+            value.Where(character => !char.IsWhiteSpace(character) && !char.IsPunctuation(character))
+                .Select(char.ToLowerInvariant)
+                .ToArray());
 
     private static bool MapMatches(string candidate, string selected)
     {

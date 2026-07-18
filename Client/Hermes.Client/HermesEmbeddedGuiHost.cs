@@ -3,10 +3,10 @@ using UnityEngine;
 namespace Hermes.Client;
 
 /// <summary>
-/// Compatibility shim for pre-Alpha12.7.4 inventory hosts. The former embedded IMGUI
+/// Compatibility shim for older inventory hosts. The former embedded IMGUI
 /// renderer has been removed; legacy attachments are redirected to the native uGUI body.
 /// </summary>
-[Obsolete("Use HermesNativeWorkspaceBody. Embedded IMGUI rendering was removed in Alpha12.7.4.")]
+[Obsolete("Use HermesNativeWorkspaceBody. Embedded IMGUI rendering is no longer supported.")]
 internal sealed class HermesEmbeddedGuiHost : MonoBehaviour
 {
     internal void Initialize(HermesWindow window)

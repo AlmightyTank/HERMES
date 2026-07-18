@@ -4,7 +4,7 @@ using UnityEngine;
 namespace Hermes.Client;
 
 /// <summary>
-/// Native EFT UIElement that owns the Alpha12.7.3.4 HERMES workspace shell.
+/// Native EFT UIElement that owns the HERMES workspace shell.
 /// </summary>
 internal sealed class HermesNativeContentView : UIElement
 {

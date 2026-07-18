@@ -62,7 +62,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
 
     /// <summary>
     /// True while the one automatic startup/post-raid full workspace load is running.
-    /// There is no continuous client-side workspace watch in Alpha 14.0.7.
+    /// There is no continuous client-side workspace watch in the materialized workspace pipeline.
     /// </summary>
     internal static bool IsBackgroundCheckActive => Current?._loading == true;
 

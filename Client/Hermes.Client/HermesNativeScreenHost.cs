@@ -856,17 +856,22 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
 
     private IEnumerator SettleInitialHeaderState(int generation)
     {
-        // EFT finalizes the opening Gear/native tab after HERMES has been cloned. Repair the
-        // inactive state across the next few frames so the first inventory load looks exactly
-        // like later loads after the player has clicked another tab.
-        for (var frame = 0; frame < 4; frame++)
+        // EFT can finalize its opening native-tab selection well after the clone first looks
+        // correct. Keep HERMES inactive for the full one-second settling window instead of
+        // exiting after a few apparently stable frames. Stop immediately when the player begins
+        // opening HERMES, closes the inventory, or a newer InventoryScreen generation replaces it.
+        const int maximumFrames = 60;
+        for (var frame = 0; frame < maximumFrames; frame++)
         {
             yield return null;
             if (!_inventoryOpen
                 || generation != _showGeneration
                 || _hermesTabObject == null
                 || !isActiveAndEnabled
-                || !gameObject.activeInHierarchy)
+                || !gameObject.activeInHierarchy
+                || _showingHermes
+                || _selectionPending
+                || _showWhenReady)
             {
                 break;
             }

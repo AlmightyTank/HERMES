@@ -141,7 +141,6 @@ internal sealed class HermesClientSettings
     public ConfigEntry<bool> RaidPlannerIncludeInsuranceWarnings { get; private set; } = null!;
     public ConfigEntry<bool> RaidPlannerShowPlanNotes { get; private set; } = null!;
 
-    public ConfigEntry<int> AutomaticLoadoutRefreshSeconds { get; private set; } = null!;
 
     public void Bind(ConfigFile config)
     {
@@ -194,14 +193,14 @@ internal sealed class HermesClientSettings
         ShowDiagnosticsFooter = config.Bind(
             "Reliability",
             "Show diagnostics panel",
-            true,
+            false,
             "Shows compact request and cache health in the HERMES navigation rail.");
 
         EnableAssistantTab = config.Bind(
             "Assistant",
             "Enable Assistant tab",
             true,
-            "Shows the Alpha12 local conversational Assistant tab. The Assistant is deterministic, read-only, and does not use an external AI service.");
+            "Shows the local conversational Assistant tab. The Assistant is deterministic, read-only, and does not use an external AI service.");
         ShowAssistantSuggestedPrompts = config.Bind(
             "Assistant",
             "Show suggested prompts",
@@ -231,7 +230,7 @@ internal sealed class HermesClientSettings
             "Assistant",
             "Enable cross-system reasoning",
             true,
-            "Allows Alpha12.2 to rank next steps using loadout, Raid Planner, stash, crafts, and hideout data together.");
+            "Ranks next steps using loadout, Raid Planner, stash, crafts, and hideout data together.");
         MaximumAssistantRecommendations = config.Bind(
             "Assistant",
             "Maximum ranked recommendations",
@@ -338,7 +337,7 @@ internal sealed class HermesClientSettings
             "Interface",
             "Enable HERMES inventory tab",
             true,
-            "Adds the inventory-only HERMES workspace to both the main Character screen and the inventory opened during a raid. Alpha12.6.2 no longer includes a floating window fallback and keeps the native EFT top and bottom navigation visible.");
+            "Adds the inventory-only HERMES workspace to both the main Character screen and the inventory opened during a raid. HERMES has no floating-window fallback and keeps the native EFT navigation visible.");
         CompactMode = config.Bind(
             "Interface",
             "Compact mode",
@@ -767,11 +766,6 @@ internal sealed class HermesClientSettings
             true,
             "Shows HERMES notes about equipment conflicts, inferred keys, and acquire-in-raid requirements.");
 
-        AutomaticLoadoutRefreshSeconds = config.Bind(
-            "Loadout Refresh",
-            "Automatic refresh interval seconds",
-            10,
-            "Rechecks the profile-aware Loadout snapshot while the tab is open. Set to 0 to disable. Range: 0-60.");
     }
 
     public HermesStashRequestSettings CreateStashRequestSettings()
@@ -815,7 +809,9 @@ internal sealed class HermesClientSettings
             Math.Clamp(HighValueUninsuredThreshold.Value, 0, 10_000_000));
     }
 
-    public int GetAutomaticRefreshSeconds() => Math.Clamp(AutomaticLoadoutRefreshSeconds.Value, 0, 60);
+    // Continuous polling was removed. Client presentation refreshes on tab transitions, while
+    // server source refreshes remain explicit or lifecycle-driven.
+    public int GetAutomaticRefreshSeconds() => 0;
     public int GetRequestTimeoutSeconds() => Math.Clamp(RequestTimeoutSeconds.Value, 5, 60);
     public int GetLongRequestTimeoutSeconds() => Math.Max(30, GetRequestTimeoutSeconds());
     public int GetSlowRequestWarningSeconds() => Math.Clamp(SlowRequestWarningSeconds.Value, 1, 30);

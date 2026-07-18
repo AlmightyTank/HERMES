@@ -127,7 +127,7 @@ internal sealed class HermesNativeTabIconFixPatch : ModulePatch
     }
 
     /// <summary>
-    /// Alpha12.7.3.10/.11 placed a Canvas on the whole HERMES tab. That made the
+    /// Earlier builds placed a Canvas on the whole HERMES tab. That made the
     /// overlap work, but detached the cloned Tab from the native parent raycaster.
     /// Keep any Canvas that is genuinely part of the EFT template; remove only the
     /// HERMES-only root Canvas/raycaster pair.

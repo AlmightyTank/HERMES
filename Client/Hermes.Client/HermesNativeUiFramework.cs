@@ -7,7 +7,7 @@ namespace Hermes.Client;
 
 /// <summary>
 /// Shared native-uGUI building blocks for the complete HERMES shell and workspace bodies.
-/// Alpha12.7.4 uses these primitives for every visible control; legacy IMGUI controller
+/// These primitives are used for every visible control; the legacy IMGUI controller
 /// methods remain data/request owners only and are no longer part of the render path.
 /// </summary>
 internal static class HermesNativeUiFramework

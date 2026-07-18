@@ -99,7 +99,7 @@ internal sealed class HermesAssistantNoticeService
             _cachedStash = stash;
         }
 
-        // The server owns alert construction in Alpha 14.0.7. The client keeps these summaries
+        // The server owns alert construction in the materialized workspace pipeline. The client keeps these summaries
         // only as an offline/transport fallback and for native workspace rendering.
         if (manual || (_serverRevision == 0 && HasCompleteFallbackSnapshot()))
         {

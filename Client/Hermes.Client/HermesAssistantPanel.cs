@@ -2000,7 +2000,7 @@ internal sealed class HermesAssistantPanel
     {
         AddMessage(new AssistantMessage(
             false,
-            "Alpha12.3 Assistant is online with follow-up context and cross-system reasoning. Ask a question, then continue with phrases such as \"why?\", \"what key?\", or \"where do I use it?\" Answers are built from current local HERMES data and never perform game actions.",
+            "Assistant is online with follow-up context and cross-system reasoning. Ask a question, then continue with phrases such as \"why?\", \"what key?\", or \"where do I use it?\" Answers are built from current local HERMES data and never perform game actions.",
             "LOCAL ASSISTANT",
             [
                 new AssistantAction("Open Loadout", "Loadout"),

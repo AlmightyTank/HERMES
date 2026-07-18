@@ -3,8 +3,7 @@ using Hermes.Client.Models;
 namespace Hermes.Client;
 
 /// <summary>
-/// Dedicated client for the small server-revision protocol. Existing HERMES request methods remain
-/// untouched so this drop-in can be applied without replacing the current HermesApiClient.
+/// Client facade for the small server-revision, prepared-feed, and invalidation protocol.
 /// </summary>
 internal static class HermesRevisionApiClient
 {
@@ -19,25 +18,6 @@ internal static class HermesRevisionApiClient
         return GetAsync<HermesAssistantPrepareResponse>(
             route,
             TimeSpan.FromSeconds(Math.Max(30, Plugin.Settings.GetLongRequestTimeoutSeconds())));
-    }
-
-    /// <summary>
-    /// Opens one server-held change watch. The SPT server keeps the request open for 30 seconds
-    /// while HERMES is visible or 60 seconds while it is closed. It returns early only when a
-    /// real HERMES domain revision advances. An empty changed-domain list is only a quiet
-    /// keep-alive response and never causes a workspace refresh.
-    /// </summary>
-    public static Task<HermesChangesResponse> WatchChangesAsync(long knownRevision, bool hermesOpen)
-    {
-        var holdSeconds = hermesOpen ? 30 : 60;
-        var route = "/hermes/watch/"
-                    + Math.Max(0L, knownRevision)
-                    + "/"
-                    + (hermesOpen ? "open" : "closed");
-        var transportGraceSeconds = Math.Max(30, Plugin.Settings.GetRequestTimeoutSeconds());
-        return GetAsync<HermesChangesResponse>(
-            route,
-            TimeSpan.FromSeconds(holdSeconds + transportGraceSeconds));
     }
 
     public static Task<HermesAssistantAlertsResponse> GetAssistantAlertsAsync()
@@ -70,7 +50,7 @@ internal static class HermesRevisionApiClient
     }
 
     // Used by the one startup/post-raid full load and by explicit top-button refreshes.
-    // Opening a workspace in Alpha 14.0.7 reads its materialized server summary without a source scan.
+    // Opening a workspace in the materialized workspace pipeline reads its materialized server summary without a source scan.
     public static Task<HermesChangesResponse> GetChangesAsync(long knownRevision)
     {
         var route = "/hermes/changes/" + Math.Max(0L, knownRevision);
