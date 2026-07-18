@@ -2154,6 +2154,7 @@ internal sealed class HermesWindow
 
         var previousTab = _activeTab;
         _activeTab = tab;
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
         if (tab == HermesTab.RaidPlanner)
         {
             _loadoutPanel.OpenView("Raid Planner");

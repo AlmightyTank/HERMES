@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Threading;
 using SPT.Reflection.Patching;
 using UnityEngine;
 
@@ -6,7 +7,15 @@ namespace Hermes.Client;
 
 internal static class HermesNativeWorkspaceRuntime
 {
+    private static int _clientRefreshRevision;
+
     internal static bool Active { get; set; }
+
+    internal static int ClientRefreshRevision
+        => Volatile.Read(ref _clientRefreshRevision);
+
+    internal static void RequestClientRefresh()
+        => Interlocked.Increment(ref _clientRefreshRevision);
 }
 
 internal static class HermesNativeSearchBridge

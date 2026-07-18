@@ -35,6 +35,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
     private GameObject? _contentRoot;
     private string _lastFingerprint = string.Empty;
     private float _nextSyncAt;
+    private int _lastClientRefreshRevision;
     private bool _forceRebuild;
 
     private string _assistantDraft = string.Empty;
@@ -64,6 +65,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         image.raycastTarget = true;
 
         _forceRebuild = true;
+        _lastClientRefreshRevision = HermesNativeWorkspaceRuntime.ClientRefreshRevision;
         _lastFingerprint = _state.BuildFingerprint();
         Rebuild(force: true);
     }
@@ -76,9 +78,22 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
     private void Update()
     {
-        if (_state is null || !HermesNativeWorkspaceRuntime.Active || Time.unscaledTime < _nextSyncAt)
+        if (_state is null || !HermesNativeWorkspaceRuntime.Active)
         {
             return;
+        }
+
+        var clientRefreshRevision = HermesNativeWorkspaceRuntime.ClientRefreshRevision;
+        var clientRefreshRequested = clientRefreshRevision != _lastClientRefreshRevision;
+        if (!clientRefreshRequested && Time.unscaledTime < _nextSyncAt)
+        {
+            return;
+        }
+
+        if (clientRefreshRequested)
+        {
+            _lastClientRefreshRevision = clientRefreshRevision;
+            _forceRebuild = true;
         }
 
         _nextSyncAt = Time.unscaledTime + SyncInterval;

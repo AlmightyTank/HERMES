@@ -59,7 +59,7 @@ public sealed class Plugin : BaseUnityPlugin
         HermesRagfairNativeAssets.TryResolve();
 
         Logger.LogInfo(
-            $"HERMES 0.1.0-alpha14.0.8 request coalescing and lightweight craft valuation loaded. "
+            $"HERMES 0.1.0-alpha14.0.8.1 client tab refresh and map-match compile fix loaded. "
             + $"Native Ragfair templates ready: {HermesRagfairNativeAssets.Ready}. "
             + $"Inventory-only workspace: {Settings.UseNativeInventoryTabs.Value}. "
             + $"Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");

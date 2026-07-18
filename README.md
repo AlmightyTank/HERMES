@@ -1,6 +1,6 @@
-# HERMES 0.1.0-alpha14.0.8
+# HERMES 0.1.0-alpha14.0.8.1
 
-Alpha 14.0.8 is the next request and server-analysis performance pass for SPT 4.0.13. It is based on Alpha 14.0.7.3 and also includes the first-load native HERMES header correction.
+Alpha 14.0.8.1 is a client behavior and compile-fix follow-up for SPT 4.0.13. It keeps the Alpha 14.0.8 performance work and makes every HERMES tab transition rebuild the visible client presentation from the currently loaded models.
 
 ## Main changes
 
@@ -54,6 +54,20 @@ For the first few frames after the tab is attached, HERMES forces:
 
 This specifically addresses the case where the first Character-screen load looks wrong but becomes correct after selecting HERMES and then another native tab.
 
+
+### Client-side refresh on tab transitions
+
+HERMES now explicitly refreshes its native client presentation in both transition directions:
+
+- Switching between HERMES workspaces forces the newly selected workspace to rebuild from the currently loaded client models.
+- Leaving HERMES for Gear, Health, Skills, Map, Tasks, Achievements, Prestige, or Overall and then returning forces the active HERMES workspace to rebuild.
+- This local rebuild is separate from the prepared server-summary request. It does not invalidate server caches or trigger a full source recheck.
+- Scroll positions are captured before the rebuild and restored afterward where the workspace supports them.
+
+### Pre-raid map comparison compile fix
+
+The map-normalization helper now uses an explicit `new string(char[])` constructor. This resolves compiler error `CS8754` while preserving strict quest-map matching.
+
 ## Request lifecycle
 
 ### Startup and post-raid
@@ -84,13 +98,13 @@ The selected workspace reads its prepared server response. Duplicate lifecycle c
 5. Build the solution or `Hermes.Build`.
 6. Restart both SPT Server and Escape from Tarkov.
 
-The build project packages `HERMES-0.1.0-alpha14.0.8.zip`.
+The build project packages `HERMES-0.1.0-alpha14.0.8.1.zip`.
 
 ## Expected logs
 
 ```text
-HERMES 0.1.0-alpha14.0.8 request coalescing and lightweight craft valuation loaded.
-HERMES Alpha14.0.8 request-coalescing performance workspace built.
+HERMES 0.1.0-alpha14.0.8.1 client tab refresh and map-match compile fix loaded.
+HERMES Alpha14.0.8.1 client tab-refresh workspace built.
 ```
 
 With detailed logging enabled, suppressed duplicate openings may show:

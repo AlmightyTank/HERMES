@@ -77,6 +77,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
             Build();
         }
 
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
         gameObject.SetActive(true);
         HermesNativeWorkspaceRuntime.Active = true;
         SyncAll(true);
@@ -122,7 +123,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
 
         ApplyResponsiveLayout(true);
         _built = true;
-        Plugin.Log?.LogInfo($"HERMES Alpha14.0.8 request-coalescing performance workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
+        Plugin.Log?.LogInfo($"HERMES Alpha14.0.8.1 client tab-refresh workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
     }
 
     private void BuildHeader()
