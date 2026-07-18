@@ -100,14 +100,40 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     /// Starts or joins one full shared loadout refresh. Pre-raid uses this after painting the
     /// existing HERMES findings so stale equipment or quest warnings cannot remain hidden.
     /// </summary>
-    internal Task<HermesLoadoutSummaryResponse> RefreshSharedLoadoutAsync()
-        => GetSharedLoadoutAsync(forceRefresh: true);
+    internal async Task<HermesLoadoutSummaryResponse> RefreshSharedLoadoutAsync()
+    {
+        try
+        {
+            await HermesRevisionApiClient.InvalidatePreparedWorkspaceAsync("Loadout");
+        }
+        catch (Exception ex)
+        {
+            if (Plugin.Settings.DetailedLogging.Value)
+            {
+                Plugin.Log.LogWarning(
+                    $"HERMES readiness refresh continued after Loadout invalidation failed: {ex.Message}");
+            }
+        }
+
+        return await GetSharedLoadoutAsync(forceRefresh: true);
+    }
 
     /// <summary>
     /// Starts the expensive readiness/loadout refresh while the player is still on EFT's map
     /// selection screen. Every later pre-raid consumer joins this task or reads its completed
     /// result, so Insurance never launches a duplicate full analysis.
     /// </summary>
+    internal void ResetPreRaidReadinessPrefetch()
+    {
+        lock (_preRaidPrefetchSync)
+        {
+            _preRaidPrefetchGeneration++;
+            _preRaidPrefetchTask = null;
+            _preRaidPreparedLoadout = null;
+            _preRaidPreparedUnixTime = 0;
+        }
+    }
+
     internal Task<HermesLoadoutSummaryResponse> BeginPreRaidReadinessPrefetch()
     {
         TaskCompletionSource<HermesLoadoutSummaryResponse> completion;
@@ -136,11 +162,13 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         try
         {
             // Map selection is the one pre-raid point where accuracy matters more than merely
-            // reopening a prepared workspace. Recheck the profile sources first so equipment,
-            // vitals, insurance, and quest changes invalidate the server-held loadout response
-            // before readiness joins the shared loadout request.
+            // reopening a prepared workspace. Explicitly drop the materialized Loadout response
+            // before the semantic source scan. This guarantees that food, drink, medicine, and
+            // equipment moved after the startup snapshot are re-read even when no prior HERMES
+            // route observed the intermediate inventory state.
             try
             {
+                await HermesRevisionApiClient.InvalidatePreparedWorkspaceAsync("Loadout");
                 var recheck = await HermesRevisionApiClient.RequestRecheckAsync();
                 if (recheck.Accepted)
                 {

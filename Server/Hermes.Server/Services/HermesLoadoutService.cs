@@ -17,6 +17,7 @@ public sealed class HermesLoadoutService(
     HermesLoadoutValueService loadoutValueService,
     HermesStashService stashService,
     HermesProfileScopeService profileScopeService,
+    HermesQuestKeyKnowledgeService questKeyKnowledgeService,
     JsonUtil jsonUtil)
 {
     private const string Ms2000MarkerTemplateId = "5991b51486f77447b112d44f";
@@ -723,12 +724,13 @@ public sealed class HermesLoadoutService(
                     BuildMedicalCoverageText(template)));
             }
 
-            if (template.ProvidesHydration)
+            var hasUsableProvision = HasUsableConsumableResource(item, template);
+            if (hasUsableProvision && template.ProvidesHydration)
             {
                 hydrationProvisions++;
             }
 
-            if (template.ProvidesEnergy)
+            if (hasUsableProvision && template.ProvidesEnergy)
             {
                 energyProvisions++;
             }
@@ -760,6 +762,11 @@ public sealed class HermesLoadoutService(
         if (settings.RequirePainTreatment && !pain)
         {
             warnings.Add(new HermesLoadoutWarning("Warning", "Medical", "No pain treatment is carried."));
+        }
+
+        if (!surgery)
+        {
+            warnings.Add(new HermesLoadoutWarning("Critical", "Medical", "No surgery kit is carried."));
         }
 
         if (settings.RequireHydrationProvision && hydrationProvisions <= 0)
@@ -1010,6 +1017,7 @@ public sealed class HermesLoadoutService(
             var carried = carriedItems
                 .Where(item => item.TemplateId.Equals(candidate.Key.TemplateId, StringComparison.OrdinalIgnoreCase))
                 .Sum(GetStackCount);
+            var curated = !candidate.Source.Equals("quest text/key match", StringComparison.OrdinalIgnoreCase);
             AddTextRequirement(
                 output,
                 warnings,
@@ -1018,8 +1026,16 @@ public sealed class HermesLoadoutService(
                 questName,
                 traderName,
                 candidate.MapName,
-                candidate.AcquireInRaid ? "Acquire route key in raid" : "Inferred route key",
-                candidate.AcquireInRaid ? "In-raid access requirement" : "Inferred access requirement",
+                candidate.AcquireInRaid
+                    ? "Acquire route key in raid"
+                    : curated
+                        ? "Quest route key"
+                        : "Inferred route key",
+                candidate.AcquireInRaid
+                    ? "In-raid access requirement"
+                    : curated
+                        ? "Curated quest access requirement"
+                        : "Inferred access requirement",
                 candidate.Key.Name,
                 1d,
                 carried,
@@ -1027,7 +1043,9 @@ public sealed class HermesLoadoutService(
                 isRaidCritical: true,
                 satisfiedNote: candidate.AcquireInRaid
                     ? "Quest route key has been acquired and is currently carried."
-                    : "Inferred route key is currently carried.",
+                    : curated
+                        ? "Quest route key is currently carried."
+                        : "Inferred route key is currently carried.",
                 missingNote: candidate.AcquireInRaid
                     ? $"Acquire 1 × {candidate.Key.Name} during the raid. {candidate.Reason}"
                     : $"Bring 1 × {candidate.Key.Name}. {candidate.Reason}",
@@ -1043,6 +1061,41 @@ public sealed class HermesLoadoutService(
         ActiveQuestState state)
     {
         var output = new Dictionary<string, InferredRouteKey>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in questKeyKnowledgeService.FindForQuest(questId, questName))
+        {
+            if (string.IsNullOrWhiteSpace(entry.MapName)
+                || entry.MapName.Equals("Any map", StringComparison.OrdinalIgnoreCase)
+                || IsKnowledgeRouteKeyStageComplete(questId, questMapName, quest, state, entry))
+            {
+                continue;
+            }
+
+            TemplateInfo? key = null;
+            if (!string.IsNullOrWhiteSpace(entry.KeyTemplateId))
+            {
+                var byTemplate = GetTemplate(entry.KeyTemplateId);
+                if (byTemplate.Exists && byTemplate.IsKey)
+                {
+                    key = byTemplate;
+                }
+            }
+
+            key ??= FindKeyTemplate(entry.KeyNames);
+            if (key is null)
+            {
+                continue;
+            }
+
+            output.TryAdd(
+                key.TemplateId,
+                new InferredRouteKey(
+                    key,
+                    entry.MapName,
+                    BuildKnowledgeRouteKeyReason(entry),
+                    "TarkovForge quest-key knowledge",
+                    entry.AcquireInRaid));
+        }
 
         foreach (var rule in QuestInRaidRouteKeyRules.Where(rule =>
                      NormalizeSearchText(questName).Equals(
@@ -1126,6 +1179,94 @@ public sealed class HermesLoadoutService(
             .OrderBy(value => value.MapName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(value => value.Key.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private bool IsKnowledgeRouteKeyStageComplete(
+        string questId,
+        string questMapName,
+        JsonObject quest,
+        ActiveQuestState state,
+        HermesQuestKeyKnowledgeEntry entry)
+    {
+        // Status 3 means all finish requirements are satisfied and the quest can be turned in.
+        if (state.Status == 3)
+        {
+            return true;
+        }
+
+        var conditions = GetProperty(quest, "conditions", "Conditions");
+        var mappedConditions = new List<(string Id, string Description)>();
+        foreach (var group in new[] { "AvailableForFinish", "Success" })
+        {
+            foreach (var node in GetArray(GetProperty(conditions, group)))
+            {
+                if (node is not JsonObject condition)
+                {
+                    continue;
+                }
+
+                var conditionType = ReadString(condition, "conditionType", "ConditionType", "type", "Type") ?? string.Empty;
+                var conditionId = ReadString(condition, "id", "Id") ?? string.Empty;
+                var mapName = ResolveObjectiveMap(questId, questMapName, conditionId, conditionType, condition);
+                if (!mapName.Equals(entry.MapName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                mappedConditions.Add((
+                    conditionId,
+                    NormalizeSearchText(ResolveQuestObjectiveText(questId, conditionId, condition, conditionType))));
+            }
+        }
+
+        if (entry.ObjectiveHints.Count > 0)
+        {
+            var normalizedHints = entry.ObjectiveHints
+                .Select(NormalizeSearchText)
+                .Where(hint => hint.Length > 0)
+                .ToList();
+            var hintMatches = mappedConditions
+                .Where(condition => normalizedHints.Any(hint =>
+                    condition.Description.Contains(hint, StringComparison.Ordinal)))
+                .ToList();
+            if (hintMatches.Count > 0)
+            {
+                return hintMatches.All(condition =>
+                    !string.IsNullOrWhiteSpace(condition.Id)
+                    && state.CompletedConditions.Contains(condition.Id));
+            }
+        }
+
+        // A curated map association is considered complete only when all mapped quest
+        // objectives on that map are complete. When the local quest data cannot map
+        // an objective confidently, keep the association available to the Raid Planner
+        // but never move it to another map.
+        return mappedConditions.Count > 0
+               && mappedConditions.All(condition =>
+                   !string.IsNullOrWhiteSpace(condition.Id)
+                   && state.CompletedConditions.Contains(condition.Id));
+    }
+
+    private static string BuildKnowledgeRouteKeyReason(HermesQuestKeyKnowledgeEntry entry)
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(entry.Opens))
+        {
+            parts.Add($"Opens: {entry.Opens.Trim()}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.Purpose))
+        {
+            parts.Add(entry.Purpose.Trim());
+        }
+
+        if (entry.Acquisition.Count > 0)
+        {
+            parts.Add($"Acquisition: {string.Join(", ", entry.Acquisition)}.");
+        }
+
+        parts.Add("Quest-key association: TarkovForge; key identity and quest progress: installed SPT database.");
+        return string.Join(" ", parts);
     }
 
     private TemplateInfo? FindKeyTemplate(IReadOnlyList<string> aliases)
@@ -1819,23 +1960,91 @@ public sealed class HermesLoadoutService(
                            || lowerName.Contains("surv12", StringComparison.Ordinal)
                            || lowerName.Contains("surgical", StringComparison.Ordinal)
                            || serializedProps.Contains("Surgery", StringComparison.OrdinalIgnoreCase);
+        var isGeneralBleedMedkit = ContainsAny(
+            lowerName,
+            "ifak",
+            "afak",
+            "salewa",
+            "car first aid",
+            "car kit",
+            "grizzly");
         var treatsLightBleed = ContainsAny(serializedProps, "LightBleeding", "Light bleed")
-                               || ContainsAny(lowerName, "bandage", "army bandage");
+                               || ContainsAny(lowerName, "bandage", "army bandage")
+                               || isGeneralBleedMedkit;
         var treatsHeavyBleed = ContainsAny(serializedProps, "HeavyBleeding", "Heavy bleed")
-                               || ContainsAny(lowerName, "esmarch", "hemostat", "cat tourniquet", "calok");
+                               || ContainsAny(lowerName, "esmarch", "hemostat", "cat tourniquet", "calok")
+                               || isGeneralBleedMedkit;
         var treatsFracture = ContainsAny(serializedProps, "Fracture")
                              || ContainsAny(lowerName, "splint", "surv12");
         var treatsPain = ContainsAny(serializedProps, "Pain")
                          || ContainsAny(lowerName, "painkiller", "analgin", "ibuprofen", "golden star", "vaseline");
-        var isFoodDrink = ReadDouble(props, 0d, "FoodUseTime", "foodUseTime") > 0d
-                          || serializedProps.Contains("FoodDrink", StringComparison.OrdinalIgnoreCase)
-                          || ContainsAny(lowerName, "water", "juice", "milk", "drink", "cola", "tea", "coffee", "ration", "iskra", "crackers", "sausage", "tushonka", "sugar", "chocolate");
+        var hydrationEffect = FindNamedEffectValue(props, "Hydration");
+        var energyEffect = FindNamedEffectValue(props, "Energy");
+        var foodUseTime = ReadDouble(props, 0d, "FoodUseTime", "foodUseTime");
+        var isFoodDrink = foodUseTime > 0d
+                          || maximumResource > 0d
+                             && (hydrationEffect.HasValue
+                                 || energyEffect.HasValue
+                                 || serializedProps.Contains("FoodDrink", StringComparison.OrdinalIgnoreCase))
+                          || ContainsAny(
+                              lowerName,
+                              "water",
+                              "juice",
+                              "milk",
+                              "drink",
+                              "cola",
+                              "tea",
+                              "coffee",
+                              "kvass",
+                              "aquamari",
+                              "ration",
+                              "mre",
+                              "iskra",
+                              "crackers",
+                              "sausage",
+                              "tushonka",
+                              "stew",
+                              "sugar",
+                              "chocolate");
         var providesHydration = isFoodDrink
-                                && serializedProps.Contains("Hydration", StringComparison.OrdinalIgnoreCase)
-                                && maximumResource > 0d;
+                                && (hydrationEffect is > 0d
+                                    || !hydrationEffect.HasValue
+                                    && ContainsAny(
+                                        lowerName,
+                                        "water",
+                                        "juice",
+                                        "milk",
+                                        "drink",
+                                        "cola",
+                                        "tea",
+                                        "coffee",
+                                        "kvass",
+                                        "aquamari",
+                                        "thermos"));
         var providesEnergy = isFoodDrink
-                             && serializedProps.Contains("Energy", StringComparison.OrdinalIgnoreCase)
-                             && maximumResource > 0d;
+                             && (energyEffect is > 0d
+                                 || !energyEffect.HasValue
+                                 && ContainsAny(
+                                     lowerName,
+                                     "ration",
+                                     "mre",
+                                     "iskra",
+                                     "crackers",
+                                     "sausage",
+                                     "tushonka",
+                                     "stew",
+                                     "sugar",
+                                     "chocolate",
+                                     "oat",
+                                     "peas",
+                                     "squash",
+                                     "herring",
+                                     "sprats",
+                                     "mayo",
+                                     "condensed milk",
+                                     "energy drink",
+                                     "hot rod",
+                                     "max energy"));
         var isArmor = armorClass > 0 || serializedProps.Contains("ArmorType", StringComparison.OrdinalIgnoreCase);
         var keyId = ReadString(props, "KeyId", "keyId") ?? string.Empty;
         var isKey = ReadDouble(props, 0d, "MaximumNumberOfUsage", "maximumNumberOfUsage") > 0d
@@ -1871,6 +2080,7 @@ public sealed class HermesLoadoutService(
             treatsFracture,
             treatsPain,
             isSurgeryKit,
+            maximumResource,
             providesHydration,
             providesEnergy,
             armorSlots);
@@ -2190,6 +2400,143 @@ public sealed class HermesLoadoutService(
         }
 
         return new ConditionInfo(100, "Full condition", false);
+    }
+
+    private static bool HasUsableConsumableResource(
+        InventoryNode item,
+        TemplateInfo template)
+    {
+        if (!template.ProvidesHydration && !template.ProvidesEnergy)
+        {
+            return false;
+        }
+
+        var foodDrink = GetProperty(item.Upd, "FoodDrink", "foodDrink");
+        if (foodDrink is null)
+        {
+            return true;
+        }
+
+        var fallback = template.MaximumConsumableResource > 0d
+            ? template.MaximumConsumableResource
+            : 1d;
+        var remaining = ReadDouble(
+            foodDrink,
+            fallback,
+            "HpPercent",
+            "hpPercent",
+            "Resource",
+            "resource",
+            "Value",
+            "value");
+        return remaining > 0d;
+    }
+
+    private static double? FindNamedEffectValue(JsonNode? node, string effectName)
+    {
+        if (node is JsonObject obj)
+        {
+            var effectType = ReadString(
+                obj,
+                "BuffType",
+                "buffType",
+                "EffectType",
+                "effectType",
+                "Type",
+                "type");
+            if (!string.IsNullOrWhiteSpace(effectType)
+                && effectType.Equals(effectName, StringComparison.OrdinalIgnoreCase))
+            {
+                var typedValue = ReadNullableDouble(
+                    GetProperty(obj, "Value", "value", "Amount", "amount"));
+                if (typedValue.HasValue)
+                {
+                    return typedValue;
+                }
+            }
+
+            foreach (var pair in obj)
+            {
+                if (pair.Key.Equals(effectName, StringComparison.OrdinalIgnoreCase))
+                {
+                    var directValue = ReadEffectValue(pair.Value);
+                    if (directValue.HasValue)
+                    {
+                        return directValue;
+                    }
+                }
+
+                var nestedValue = FindNamedEffectValue(pair.Value, effectName);
+                if (nestedValue.HasValue)
+                {
+                    return nestedValue;
+                }
+            }
+        }
+        else if (node is JsonArray array)
+        {
+            foreach (var child in array)
+            {
+                var nestedValue = FindNamedEffectValue(child, effectName);
+                if (nestedValue.HasValue)
+                {
+                    return nestedValue;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static double? ReadEffectValue(JsonNode? node)
+    {
+        var direct = ReadNullableDouble(node);
+        if (direct.HasValue)
+        {
+            return direct;
+        }
+
+        if (node is JsonObject obj)
+        {
+            var named = ReadNullableDouble(
+                GetProperty(obj, "Value", "value", "Amount", "amount"));
+            if (named.HasValue)
+            {
+                return named;
+            }
+        }
+
+        return null;
+    }
+
+    private static double? ReadNullableDouble(JsonNode? node)
+    {
+        if (node is not JsonValue jsonValue)
+        {
+            return null;
+        }
+
+        if (jsonValue.TryGetValue<double>(out var number))
+        {
+            return number;
+        }
+
+        if (jsonValue.TryGetValue<long>(out var integer))
+        {
+            return integer;
+        }
+
+        if (jsonValue.TryGetValue<string>(out var text)
+            && double.TryParse(
+                text,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var parsed))
+        {
+            return parsed;
+        }
+
+        return null;
     }
 
     private static string BuildMedicalCoverageText(TemplateInfo template)
@@ -2513,7 +2860,7 @@ public sealed class HermesLoadoutService(
             notes.Add("All currently detectable raid-critical gear requirements are covered.");
         }
 
-        notes.Add("Route keys labeled as inferred come from local quest/key text matching and HERMES vanilla quest-route rules.");
+        notes.Add("Quest route keys come from the embedded TarkovForge quest-key catalog, exact HERMES vanilla rules, and local quest/key text inference. The installed SPT database remains authoritative for key identity, quest state, and map matching.");
         return notes;
     }
 
@@ -3474,36 +3821,38 @@ public sealed class HermesLoadoutService(
         bool TreatsFracture,
         bool TreatsPain,
         bool IsSurgeryKit,
+        double MaximumConsumableResource,
         bool ProvidesHydration,
         bool ProvidesEnergy,
         IReadOnlyList<ArmorSlotDefinition> ArmorSlots)
     {
         public static TemplateInfo Missing(string templateId) => new(
-            false,
-            templateId,
-            "Unknown item",
-            null,
-            string.Empty,
-            string.Empty,
-            false,
-            false,
-            false,
-            false,
-            false,
-            string.Empty,
-            0,
-            0,
-            false,
-            false,
-            0d,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-            []);
+            Exists: false,
+            TemplateId: templateId,
+            Name: "Unknown item",
+            Properties: null,
+            SerializedProperties: string.Empty,
+            Caliber: string.Empty,
+            IsWeapon: false,
+            IsMagazine: false,
+            IsAmmo: false,
+            IsArmor: false,
+            IsKey: false,
+            KeyId: string.Empty,
+            ArmorClass: 0,
+            MagazineCapacity: 0,
+            IsInternalMagazineWeapon: false,
+            IsMedical: false,
+            MaximumMedicalResource: 0d,
+            TreatsLightBleed: false,
+            TreatsHeavyBleed: false,
+            TreatsFracture: false,
+            TreatsPain: false,
+            IsSurgeryKit: false,
+            MaximumConsumableResource: 0d,
+            ProvidesHydration: false,
+            ProvidesEnergy: false,
+            ArmorSlots: []);
     }
 
     private sealed record ArmorSlotDefinition(string Name, bool Required);

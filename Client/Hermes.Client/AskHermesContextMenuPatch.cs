@@ -3,6 +3,7 @@ using System.Reflection;
 using EFT.InventoryLogic;
 using EFT.UI;
 using SPT.Reflection.Patching;
+using UnityEngine;
 
 namespace Hermes.Client;
 
@@ -38,9 +39,11 @@ internal sealed class AskHermesContextMenuPatch : ModulePatch
             var viewTypeName = itemContext.ViewType.ToString();
             var isOwnedInventoryItem = IsOwnedPmcItemView(viewTypeName);
             var previewSource = GetPreviewSource(viewTypeName);
+            var isHideoutContext = IsHideoutContext(itemContext, viewTypeName);
 
-            // Keep raid/world-loot and unrelated context menus untouched.
-            if (!isOwnedInventoryItem && previewSource is null)
+            // Keep raid/world-loot and unrelated context menus untouched. Hideout item
+            // rows are an additional source, but every Ask HERMES item action opens Items & Market.
+            if (!isOwnedInventoryItem && previewSource is null && !isHideoutContext)
             {
                 return;
             }
@@ -56,7 +59,21 @@ internal sealed class AskHermesContextMenuPatch : ModulePatch
             }
 
             Action action;
-            if (isOwnedInventoryItem)
+            if (isHideoutContext)
+            {
+                Plugin.Log?.LogDebug(
+                    $"Ask HERMES classified item context as Hideout (view type: {viewTypeName}).");
+                var templateId = TryGetTemplateId(itemContext.Item);
+                if (string.IsNullOrWhiteSpace(templateId))
+                {
+                    Plugin.Log?.LogWarning(
+                        "Ask HERMES could not resolve the template id for a Hideout item.");
+                    return;
+                }
+
+                action = () => Plugin.Instance?.OpenForPreviewItem(templateId, "Hideout");
+            }
+            else if (isOwnedInventoryItem)
             {
                 var profileItemId = itemContext.Item.Id;
                 if (string.IsNullOrWhiteSpace(profileItemId))
@@ -105,6 +122,195 @@ internal sealed class AskHermesContextMenuPatch : ModulePatch
                || viewTypeName.Contains("profile", StringComparison.OrdinalIgnoreCase)
                || viewTypeName.Contains("modding", StringComparison.OrdinalIgnoreCase)
                || viewTypeName.Contains("weapon", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsHideoutContext(ItemContextClass itemContext, string viewTypeName)
+    {
+        if (ContainsHideoutMarker(viewTypeName))
+        {
+            return true;
+        }
+
+        // Hideout requirement and production rows commonly report EItemViewType.Inventory.
+        // Inspect the context owner before falling back to a global active-screen probe so
+        // the native Hideout origin wins over the generic owned-inventory classification.
+        if (ObjectGraphContainsHideoutMarker(itemContext))
+        {
+            return true;
+        }
+
+        // This runs only when EFT creates an item context menu, never from Update. EFT's
+        // obfuscated Hideout components are not guaranteed to use an EFT.Hideout namespace,
+        // so inspect both component identities and their active GameObject hierarchy.
+        return Resources.FindObjectsOfTypeAll<MonoBehaviour>().Any(IsActiveNativeHideoutUiComponent);
+    }
+
+    private static bool ObjectGraphContainsHideoutMarker(object source)
+    {
+        const BindingFlags flags = BindingFlags.Public
+                                   | BindingFlags.NonPublic
+                                   | BindingFlags.Instance
+                                   | BindingFlags.FlattenHierarchy;
+
+        try
+        {
+            foreach (var field in source.GetType().GetFields(flags))
+            {
+                if (ContainsHideoutMarker(field.Name)
+                    || ValueContainsHideoutMarker(field.GetValue(source)))
+                {
+                    return true;
+                }
+            }
+
+            foreach (var property in source.GetType().GetProperties(flags))
+            {
+                if (property.GetIndexParameters().Length != 0)
+                {
+                    continue;
+                }
+
+                if (ContainsHideoutMarker(property.Name))
+                {
+                    return true;
+                }
+
+                object? value;
+                try
+                {
+                    value = property.GetValue(source);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (ValueContainsHideoutMarker(value))
+                {
+                    return true;
+                }
+            }
+        }
+        catch
+        {
+            // Source classification must never prevent EFT from opening its context menu.
+        }
+
+        return false;
+    }
+
+    private static bool ValueContainsHideoutMarker(object? value)
+    {
+        if (value is null)
+        {
+            return false;
+        }
+
+        if (value is Component component)
+        {
+            return IsActiveNativeHideoutUiComponent(component, requireVisibleCanvas: false);
+        }
+
+        if (value is GameObject gameObject)
+        {
+            return IsActiveRuntimeObject(gameObject)
+                   && ContainsHideoutMarker(BuildHierarchyDescriptor(gameObject.transform));
+        }
+
+        if (value is Transform transform)
+        {
+            return transform != null
+                   && IsActiveRuntimeObject(transform.gameObject)
+                   && ContainsHideoutMarker(BuildHierarchyDescriptor(transform));
+        }
+
+        var type = value.GetType();
+        return ContainsHideoutMarker(type.FullName)
+               && !IsHermesType(type);
+    }
+
+    private static bool IsActiveNativeHideoutUiComponent(MonoBehaviour component)
+    {
+        return IsActiveNativeHideoutUiComponent(component, requireVisibleCanvas: true);
+    }
+
+    private static bool IsActiveNativeHideoutUiComponent(Component component, bool requireVisibleCanvas)
+    {
+        if (component == null
+            || component.gameObject == null
+            || !IsActiveRuntimeObject(component.gameObject))
+        {
+            return false;
+        }
+
+        var type = component.GetType();
+        if (IsHermesType(type))
+        {
+            return false;
+        }
+
+        if (requireVisibleCanvas && !IsVisibleNativeUi(component.transform))
+        {
+            return false;
+        }
+
+        var descriptor = string.Join(
+            "/",
+            type.Namespace ?? string.Empty,
+            type.Name,
+            component.gameObject.name,
+            BuildHierarchyDescriptor(component.transform));
+
+        return ContainsHideoutMarker(descriptor);
+    }
+
+    private static bool IsVisibleNativeUi(Transform transform)
+    {
+        var canvas = transform.GetComponentInParent<Canvas>(true);
+        if (canvas == null || !canvas.isActiveAndEnabled)
+        {
+            return false;
+        }
+
+        return transform.GetComponentsInParent<CanvasGroup>(true)
+            .All(group => group == null || group.alpha > 0.01f);
+    }
+
+    private static bool IsActiveRuntimeObject(GameObject gameObject)
+    {
+        return gameObject.activeInHierarchy
+               && gameObject.scene.IsValid()
+               && gameObject.scene.isLoaded;
+    }
+
+    private static bool IsHermesType(Type type)
+    {
+        return (type.Namespace ?? string.Empty).StartsWith("Hermes.Client", StringComparison.Ordinal);
+    }
+
+    private static string BuildHierarchyDescriptor(Transform transform)
+    {
+        var names = new List<string>(8);
+        var current = transform;
+        for (var depth = 0; current != null && depth < 8; depth++, current = current.parent)
+        {
+            names.Add(current.gameObject.name);
+        }
+
+        return string.Join("/", names);
+    }
+
+    private static bool ContainsHideoutMarker(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("hideout", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("production", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("recipe", StringComparison.OrdinalIgnoreCase)
+               || value.Contains("scheme", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? GetPreviewSource(string viewTypeName)

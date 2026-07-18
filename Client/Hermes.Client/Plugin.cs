@@ -89,9 +89,21 @@ public sealed class Plugin : BaseUnityPlugin
         HermesGlobalNavigation.RequestOpen();
     }
 
-    internal void OpenForStashItem(string profileItemId)
+    internal void OpenForStashItem(string selectionKey, string itemName)
     {
-        OpenForInventoryItem(profileItemId);
+        if (_window is null
+            || (string.IsNullOrWhiteSpace(selectionKey) && string.IsNullOrWhiteSpace(itemName)))
+        {
+            return;
+        }
+
+        _window.OpenForStashItem(selectionKey, itemName);
+        HermesGlobalNavigation.RequestOpen();
+    }
+
+    internal void OpenForStashItem(string selectionKey)
+    {
+        OpenForStashItem(selectionKey, string.Empty);
     }
 
     internal void OpenForPreviewItem(string templateId, string sourceLabel)

@@ -1002,7 +1002,11 @@ internal sealed class HermesAssistantPanel
                 }
                 else
                 {
-                    builder.AppendLine($"• Missing: {requirement.RequiredEquipment} × {FormatCount(requirement.MissingQuantity)} — {requirement.RequirementKind}");
+                    var keyDetail = requirement.RequirementKind.Contains("key", StringComparison.OrdinalIgnoreCase)
+                                    && !string.IsNullOrWhiteSpace(requirement.Note)
+                        ? $" — {requirement.Note}"
+                        : string.Empty;
+                    builder.AppendLine($"• Missing: {requirement.RequiredEquipment} × {FormatCount(requirement.MissingQuantity)} — {requirement.RequirementKind}{keyDetail}");
                 }
             }
         }
@@ -1031,7 +1035,11 @@ internal sealed class HermesAssistantPanel
             builder.AppendLine("Before deployment:");
             foreach (var requirement in missing)
             {
-                builder.AppendLine($"• {requirement.RequiredEquipment} × {FormatCount(requirement.MissingQuantity)} — {requirement.RequirementKind}");
+                var keyDetail = requirement.RequirementKind.Contains("key", StringComparison.OrdinalIgnoreCase)
+                                && !string.IsNullOrWhiteSpace(requirement.Note)
+                    ? $" — {requirement.Note}"
+                    : string.Empty;
+                builder.AppendLine($"• {requirement.RequiredEquipment} × {FormatCount(requirement.MissingQuantity)} — {requirement.RequirementKind}{keyDetail}");
             }
         }
 

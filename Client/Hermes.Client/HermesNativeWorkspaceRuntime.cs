@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using SPT.Reflection.Patching;
@@ -16,6 +17,45 @@ internal static class HermesNativeWorkspaceRuntime
 
     internal static void RequestClientRefresh()
         => Interlocked.Increment(ref _clientRefreshRevision);
+}
+
+
+internal sealed record HermesNativeCraftFocusSnapshot(
+    int Revision,
+    string DisplayName,
+    IReadOnlyCollection<string> CraftKeys);
+
+internal static class HermesNativeCraftFocus
+{
+    private static readonly object Sync = new();
+    private static int _revision;
+    private static string _displayName = string.Empty;
+    private static HashSet<string> _craftKeys = new(StringComparer.OrdinalIgnoreCase);
+
+    internal static void Set(string displayName, IEnumerable<string> craftKeys)
+    {
+        lock (Sync)
+        {
+            _displayName = displayName?.Trim() ?? string.Empty;
+            _craftKeys = new HashSet<string>(
+                craftKeys.Where(key => !string.IsNullOrWhiteSpace(key)),
+                StringComparer.OrdinalIgnoreCase);
+            _revision++;
+        }
+
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+    }
+
+    internal static HermesNativeCraftFocusSnapshot Read()
+    {
+        lock (Sync)
+        {
+            return new HermesNativeCraftFocusSnapshot(
+                _revision,
+                _displayName,
+                new HashSet<string>(_craftKeys, StringComparer.OrdinalIgnoreCase));
+        }
+    }
 }
 
 internal static class HermesNativeSearchBridge

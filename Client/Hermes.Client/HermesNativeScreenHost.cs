@@ -336,6 +336,8 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
             HermesNativeScreenRegistry.NotifyWindowHidden(this);
             _showingHermes = true;
             _hermesTab.Select(sendCallback: true, uiOnly: false);
+            _hermesTabObject?.GetComponent<HermesNativeTabHeaderStateController>()
+                ?.SetSelected(true);
             Plugin.Log?.LogDebug($"HERMES native tab selected on '{gameObject.name}'.");
         }
         catch (Exception ex)
@@ -771,18 +773,83 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         SetTabLabel(_hermesTab!);
     }
 
+    internal void SetHermesHeaderLayer(bool selected)
+    {
+        if (_hermesTabObject == null)
+        {
+            return;
+        }
+
+        var prestigeTab = ResolvePrestigeTab();
+        var parent = prestigeTab?.transform.parent;
+        if (prestigeTab == null
+            || parent == null
+            || _hermesTabObject.transform.parent != parent)
+        {
+            return;
+        }
+
+        var layoutGroup = parent.GetComponent<LayoutGroup>();
+        if (layoutGroup != null && layoutGroup.isActiveAndEnabled)
+        {
+            // Layout groups own geometry. The external tab must remain after Prestige.
+            return;
+        }
+
+        var hermesIndex = _hermesTabObject.transform.GetSiblingIndex();
+        var prestigeIndex = prestigeTab.transform.GetSiblingIndex();
+        if (selected)
+        {
+            if (hermesIndex == prestigeIndex + 1)
+            {
+                return;
+            }
+
+            // When HERMES is currently before Prestige, removing it shifts Prestige
+            // left by one, so the original Prestige index becomes the after position.
+            var targetIndex = hermesIndex < prestigeIndex
+                ? prestigeIndex
+                : Math.Min(prestigeIndex + 1, Math.Max(0, parent.childCount - 1));
+            _hermesTabObject.transform.SetSiblingIndex(targetIndex);
+            return;
+        }
+
+        if (hermesIndex + 1 == prestigeIndex)
+        {
+            return;
+        }
+
+        var inactiveTarget = hermesIndex < prestigeIndex
+            ? Math.Max(0, prestigeIndex - 1)
+            : prestigeIndex;
+        _hermesTabObject.transform.SetSiblingIndex(inactiveTarget);
+    }
+
     private static void PositionHermesAfterPrestige(
         Transform hermesTransform,
         Transform achievementsTransform,
         Transform prestigeTransform,
         Transform parent)
     {
-        // Sibling order matters when EFT uses a layout group. Always place HERMES
-        // immediately after Prestige, even when Prestige is currently disabled.
-        var siblingIndex = Math.Min(
-            prestigeTransform.GetSiblingIndex() + 1,
-            Math.Max(0, parent.childCount - 1));
-        hermesTransform.SetSiblingIndex(siblingIndex);
+        // Fixed-position EFT tab strips use sibling order only for the slanted overlap.
+        // Keep inactive HERMES immediately before Prestige in draw order so Prestige's
+        // right edge stays in front, while the anchored position remains after Prestige.
+        // A real LayoutGroup still requires HERMES after Prestige for geometry.
+        var layoutGroup = parent.GetComponent<LayoutGroup>();
+        var usesLayoutGroup = layoutGroup != null && layoutGroup.isActiveAndEnabled;
+        var hermesIndex = hermesTransform.GetSiblingIndex();
+        var prestigeIndex = prestigeTransform.GetSiblingIndex();
+        var siblingIndex = usesLayoutGroup
+            ? (hermesIndex < prestigeIndex
+                ? prestigeIndex
+                : Math.Min(prestigeIndex + 1, Math.Max(0, parent.childCount - 1)))
+            : (hermesIndex < prestigeIndex
+                ? Math.Max(0, prestigeIndex - 1)
+                : Math.Max(0, prestigeIndex));
+        if (hermesIndex != siblingIndex)
+        {
+            hermesTransform.SetSiblingIndex(siblingIndex);
+        }
 
         // Some EFT tab strips use fixed RectTransform positions instead of a layout
         // group. The clone inherits Achievements' coordinates, so explicitly advance

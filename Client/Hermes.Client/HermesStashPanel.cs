@@ -536,7 +536,7 @@ internal sealed class HermesStashPanel
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("Ask HERMES", GUILayout.Width(105f)))
             {
-                Plugin.Instance?.OpenForInventoryItem(item.InstanceKey);
+                Plugin.Instance?.OpenForStashItem(item.InstanceKey, item.Name);
             }
             GUILayout.Label($"{item.ConditionPercent:N0}%", GUILayout.Width(55f));
             GUILayout.EndHorizontal();
@@ -638,7 +638,7 @@ internal sealed class HermesStashPanel
         GUILayout.FlexibleSpace();
         if (GUILayout.Button("Ask HERMES", GUILayout.Width(105f)))
         {
-            Plugin.Instance?.OpenForInventoryItem(item.InstanceKey);
+            Plugin.Instance?.OpenForStashItem(item.InstanceKey, item.Name);
         }
         GUILayout.Label(item.BestSaleValue.HasValue
             ? $"Best {item.BestSaleDestination} • ₽{item.BestSaleValue.Value:N0}"
@@ -725,7 +725,7 @@ internal sealed class HermesStashPanel
             : $"Reference ₽{item.ConditionAdjustedHandbookValue:N0}", GUILayout.Width(230f));
         if (GUILayout.Button("Ask HERMES", GUILayout.Width(105f)))
         {
-            Plugin.Instance?.OpenForInventoryItem(item.InstanceKey);
+            Plugin.Instance?.OpenForStashItem(item.InstanceKey, item.Name);
         }
         GUILayout.EndHorizontal();
     }

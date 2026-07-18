@@ -14,6 +14,7 @@ public sealed class HermesStaticRouter(
     HermesCacheService cacheService,
     HermesStashAnalysisService stashAnalysisService,
     HermesLoadoutService loadoutService,
+    HermesQuestKeyKnowledgeService questKeyKnowledgeService,
     HermesChangeTrackingService changeTrackingService)
     : StaticRouter(
         jsonUtil,
@@ -26,6 +27,10 @@ public sealed class HermesStaticRouter(
                 "/hermes/assistant/alerts",
                 (_, _, sessionId, _) => ValueTask.FromResult<object>(
                     httpResponseUtil.GetBody(changeTrackingService.GetAssistantAlerts(sessionId)))),
+            new RouteAction(
+                "/hermes/quest-keys/status",
+                (_, _, _, _) => ValueTask.FromResult<object>(
+                    httpResponseUtil.GetBody(questKeyKnowledgeService.GetStatus()))),
             new RouteAction(
                 "/hermes/cache/status",
                 (_, _, _, _) => ValueTask.FromResult<object>(

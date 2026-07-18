@@ -1,6 +1,6 @@
 # HERMES 0.1.0 release checklist
 
-Build and test against a clean SPT 4.0.13 installation before changing `Version.props` from `0.1.0-rc.1` to `0.1.0`.
+Build and test against a clean SPT 4.0.13 installation before changing `Version.props` from `0.1.0-rc.2.2.1` to `0.1.0`.
 
 ## Build and package
 
@@ -27,6 +27,7 @@ Build and test against a clean SPT 4.0.13 installation before changing `Version.
 - [ ] Confirm scroll state is restored and no old workspace blocks input.
 - [ ] Confirm the top Refresh button performs a source recheck and completes.
 - [ ] Confirm Items & Market search, stash-copy selection, and the sale-estimate card display correctly.
+- [ ] Click items from every Stash view and confirm Items & Market opens with the exact clicked copy already selected.
 
 ## Data and performance
 
@@ -64,3 +65,31 @@ Build and test against a clean SPT 4.0.13 installation before changing `Version.
 - [ ] No reproducible crash, profile mix-up, incorrect-map quest warning, tab-selection defect, or request loop remains.
 - [ ] Any remaining slow first calculation is documented and completes within the configured long-request budget.
 - [ ] Change `Version.props` to `0.1.0`, rebuild Release, and repeat the package-content/version checks.
+
+### Pre-raid and Hideout RC.2.1 checks
+
+- [ ] Select two different maps and confirm readiness refreshes after each stable selection.
+- [ ] Confirm quest warnings appear only for the confidently selected objective map.
+- [ ] Confirm no surgery kit is a critical finding.
+- [ ] Confirm IFAK, AFAK, Salewa, Car first aid kit, and Grizzly satisfy applicable bleed coverage.
+- [ ] Enable **Require food and water** and verify missing hydration and energy provisions are reported.
+- [ ] Put a water provision and an energy provision inside a rig, pockets, backpack, and secure container; confirm each carried location is recognized after selecting a map.
+- [ ] Confirm an exhausted provision with zero remaining resource does not satisfy the requirement.
+- [ ] Confirm at least one custom consumable with positive Hydration or Energy template effects is recognized.
+- [ ] Use **Ask HERMES** from the Hideout and confirm Items & Market opens with the selected item already looked up.
+- [ ] With Gear and Prestige selected, confirm inactive HERMES stays behind Prestige's right edge; select HERMES and confirm it comes forward.
+
+## RC.2.2 additions
+
+- [ ] Confirm all text-choice settings render as dropdowns in F12.
+- [ ] Confirm Ask HERMES from stash, equipment, trader, Flea, Crafts, and Hideout always opens Items & Market with the selected item.
+- [ ] Request `/hermes/quest-keys/status` and confirm the embedded catalog reports loaded with no error.
+- [ ] Open an active quest that requires a key and confirm Raid Planner shows the key only on the correct map.
+- [ ] Confirm completed key-access objectives no longer produce a missing-key requirement.
+
+## Items & Market quest-key knowledge
+
+- Search for a cataloged quest key in Items & Market.
+- Confirm at least one `QUEST KEY` card appears with the quest name and map.
+- Confirm active, completed, and future/locked quest statuses match the active PMC profile.
+- Confirm a normal non-key item does not receive an unrelated quest-key card.

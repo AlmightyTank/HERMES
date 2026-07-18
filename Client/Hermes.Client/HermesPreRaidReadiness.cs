@@ -25,6 +25,7 @@ internal static class HermesPreRaidReadinessSettings
     internal static ConfigEntry<int> HealthWarningPercent { get; private set; } = null!;
     internal static ConfigEntry<int> MaximumFindings { get; private set; } = null!;
     internal static ConfigEntry<bool> ShowReadyChecks { get; private set; } = null!;
+    internal static ConfigEntry<bool> RequireFoodAndWater { get; private set; } = null!;
 
     internal static void Bind(ConfigFile config)
     {
@@ -66,6 +67,11 @@ internal static class HermesPreRaidReadinessSettings
             "Show ready checks",
             true,
             "Show a compact Ready section for checks that passed.");
+        RequireFoodAndWater = config.Bind(
+            "Pre-Raid Readiness",
+            "Require food and water",
+            false,
+            "When enabled, the pre-raid review warns unless the carried loadout contains both hydration and energy provisions.");
     }
 }
 
@@ -88,9 +94,217 @@ internal sealed class HermesPreRaidMapSelectionPrefetchPatch : ModulePatch
     }
 
     [PatchPostfix]
-    private static void Postfix()
+    private static void Postfix(MatchMakerSelectionLocationScreen __instance)
     {
         HermesPreRaidReadinessController.BeginMapSelectionPreparation();
+
+        if (__instance == null || __instance.gameObject == null)
+        {
+            return;
+        }
+
+        var bridge = __instance.GetComponent<HermesPreRaidMapSelectionBridge>()
+                     ?? __instance.gameObject.AddComponent<HermesPreRaidMapSelectionBridge>();
+        bridge.Initialize(__instance);
+    }
+}
+
+/// <summary>
+/// Watches EFT's selected location while the native map-selection screen is visible.
+/// The screen exposes different selected-location members across builds, so the bridge
+/// combines selected-member reflection with the active Toggle label and refreshes only
+/// after a confidently recognized map changes.
+/// </summary>
+internal sealed class HermesPreRaidMapSelectionBridge : MonoBehaviour
+{
+    private static readonly IReadOnlyDictionary<string, string> LocationAliases =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["sandbox"] = "Ground Zero",
+            ["sandbox_high"] = "Ground Zero",
+            ["groundzero"] = "Ground Zero",
+            ["tarkovstreets"] = "Streets of Tarkov",
+            ["streets"] = "Streets of Tarkov",
+            ["bigmap"] = "Customs",
+            ["customs"] = "Customs",
+            ["factory4_day"] = "Factory",
+            ["factory4_night"] = "Factory",
+            ["factory"] = "Factory",
+            ["woods"] = "Woods",
+            ["shoreline"] = "Shoreline",
+            ["interchange"] = "Interchange",
+            ["rezervbase"] = "Reserve",
+            ["reserve"] = "Reserve",
+            ["lighthouse"] = "Lighthouse",
+            ["laboratory"] = "The Lab",
+            ["thelab"] = "The Lab",
+            ["labs"] = "The Lab"
+        };
+
+    private MatchMakerSelectionLocationScreen? _screen;
+    private string? _lastMap;
+    private string? _candidateMap;
+    private int _candidateHits;
+    private float _nextProbeTime;
+
+    internal void Initialize(MatchMakerSelectionLocationScreen screen)
+    {
+        _screen = screen;
+        _lastMap = null;
+        _candidateMap = null;
+        _candidateHits = 0;
+        _nextProbeTime = 0f;
+    }
+
+    private void Update()
+    {
+        if (_screen == null
+            || !_screen.gameObject.activeInHierarchy
+            || Time.unscaledTime < _nextProbeTime)
+        {
+            return;
+        }
+
+        _nextProbeTime = Time.unscaledTime + 0.20f;
+        var selectedMap = ResolveSelectedMap(_screen);
+        if (string.IsNullOrWhiteSpace(selectedMap))
+        {
+            _candidateMap = null;
+            _candidateHits = 0;
+            return;
+        }
+
+        if (!string.Equals(_candidateMap, selectedMap, StringComparison.OrdinalIgnoreCase))
+        {
+            _candidateMap = selectedMap;
+            _candidateHits = 1;
+            return;
+        }
+
+        _candidateHits++;
+        if (_candidateHits < 2
+            || string.Equals(_lastMap, selectedMap, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _lastMap = selectedMap;
+        HermesPreRaidReadinessController.HandleSelectedMapChanged(selectedMap);
+    }
+
+    private static string? ResolveSelectedMap(MatchMakerSelectionLocationScreen screen)
+    {
+        var reflected = ResolveFromSelectedMembers(screen);
+        if (!string.IsNullOrWhiteSpace(reflected))
+        {
+            return reflected;
+        }
+
+        foreach (var toggle in screen.GetComponentsInChildren<Toggle>(true))
+        {
+            if (toggle == null || !toggle.isOn || !toggle.gameObject.activeInHierarchy)
+            {
+                continue;
+            }
+
+            var text = string.Join(" ",
+                toggle.GetComponentsInChildren<TMP_Text>(true).Select(value => value.text)
+                    .Concat(toggle.GetComponentsInChildren<Text>(true).Select(value => value.text)));
+            var map = NormalizeMap(text);
+            if (!string.IsNullOrWhiteSpace(map))
+            {
+                return map;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ResolveFromSelectedMembers(object owner)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var type = owner.GetType();
+        var members = type.GetFields(flags).Cast<MemberInfo>()
+            .Concat(type.GetProperties(flags).Where(property => property.GetIndexParameters().Length == 0))
+            .Where(member => member.Name.Contains("selected", StringComparison.OrdinalIgnoreCase)
+                             || member.Name.Contains("current", StringComparison.OrdinalIgnoreCase)
+                             || member.Name.Contains("location", StringComparison.OrdinalIgnoreCase)
+                             || member.Name.Contains("map", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(member => member.Name.Contains("selected", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(member => member.Name.Contains("location", StringComparison.OrdinalIgnoreCase));
+
+        foreach (var member in members)
+        {
+            object? value;
+            try
+            {
+                value = member switch
+                {
+                    FieldInfo field => field.GetValue(owner),
+                    PropertyInfo property => property.GetValue(owner),
+                    _ => null
+                };
+            }
+            catch
+            {
+                continue;
+            }
+
+            var direct = NormalizeMap(value?.ToString());
+            if (!string.IsNullOrWhiteSpace(direct))
+            {
+                return direct;
+            }
+
+            if (value == null || value is UnityEngine.Object unityObject && unityObject == null)
+            {
+                continue;
+            }
+
+            var nestedType = value.GetType();
+            foreach (var nestedName in new[] { "Id", "ID", "LocationId", "LocationID", "Name", "DisplayName" })
+            {
+                object? nestedValue = null;
+                try
+                {
+                    nestedValue = nestedType.GetProperty(nestedName, flags)?.GetValue(value)
+                                  ?? nestedType.GetField(nestedName, flags)?.GetValue(value);
+                }
+                catch
+                {
+                    // Ignore unstable obfuscated getters and continue probing.
+                }
+
+                var nestedMap = NormalizeMap(nestedValue?.ToString());
+                if (!string.IsNullOrWhiteSpace(nestedMap))
+                {
+                    return nestedMap;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string? NormalizeMap(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var compact = new string(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+        foreach (var pair in LocationAliases)
+        {
+            var alias = new string(pair.Key.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+            if (compact.Equals(alias, StringComparison.Ordinal)
+                || compact.Contains(alias, StringComparison.Ordinal))
+            {
+                return pair.Value;
+            }
+        }
+
+        return null;
     }
 }
 
@@ -139,6 +353,9 @@ internal static class HermesPreRaidReadinessController
     private static MatchmakerInsuranceScreen? _nativeNextBypassScreen;
     private static MatchmakerInsuranceScreen? _confirmationReturnInsuranceScreen;
     private static HermesPreRaidInsuranceBridge? _confirmationReturnBridge;
+    private static string? _selectedMapName;
+
+    internal static string? SelectedMapName => _selectedMapName;
 
     internal static void BeginMapSelectionPreparation()
     {
@@ -155,12 +372,37 @@ internal static class HermesPreRaidReadinessController
             return;
         }
 
-        _ = coordinator.BeginPreRaidReadinessPrefetch();
+        _selectedMapName = null;
+        coordinator.ResetPreRaidReadinessPrefetch();
         if (Plugin.Settings.DetailedLogging.Value)
         {
             Plugin.Log.LogInfo(
-                "HERMES started pre-raid readiness preparation from the map selection screen.");
+                "HERMES reset pre-raid readiness while waiting for a confirmed map selection.");
         }
+    }
+
+    internal static void HandleSelectedMapChanged(string mapName)
+    {
+        if (string.IsNullOrWhiteSpace(mapName)
+            || string.Equals(_selectedMapName, mapName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _selectedMapName = mapName;
+        var coordinator = HermesWorkspaceSnapshotCoordinator.Current;
+        if (coordinator == null)
+        {
+            Plugin.Log.LogWarning(
+                $"HERMES selected {mapName}, but the shared workspace coordinator is unavailable.");
+            return;
+        }
+
+        coordinator.ResetPreRaidReadinessPrefetch();
+        _ = coordinator.BeginPreRaidReadinessPrefetch();
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        Plugin.Log.LogInfo(
+            $"HERMES refreshed client pre-raid readiness after selecting {mapName}.");
     }
 
     internal static bool TryOpen(MatchmakerInsuranceScreen insuranceScreen)
@@ -961,6 +1203,53 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
                 "Medical",
                 "No light-bleed treatment detected in carried equipment."));
         }
+
+        if (!summary.Medical.HasSurgeryKit
+            && !ContainsFinding(output, "Medical", "surgery"))
+        {
+            AddUnique(output, seen, new ReadinessFinding(
+                ReadinessSeverity.Critical,
+                "Medical",
+                "No surgery kit detected in carried equipment."));
+        }
+        else if (summary.Medical.HasSurgeryKit)
+        {
+            AddUnique(output, seen, new ReadinessFinding(
+                ReadinessSeverity.Ready,
+                "Medical",
+                "Surgery kit detected."));
+        }
+
+        if (HermesPreRaidReadinessSettings.RequireFoodAndWater.Value)
+        {
+            if (summary.Medical.HydrationProvisionCount <= 0
+                && !ContainsFinding(output, "Sustainment", "hydration"))
+            {
+                AddUnique(output, seen, new ReadinessFinding(
+                    ReadinessSeverity.Warning,
+                    "Sustainment",
+                    "Food and water are required, but no carried provision provides hydration."));
+            }
+
+            if (summary.Medical.EnergyProvisionCount <= 0
+                && !ContainsFinding(output, "Sustainment", "energy"))
+            {
+                AddUnique(output, seen, new ReadinessFinding(
+                    ReadinessSeverity.Warning,
+                    "Sustainment",
+                    "Food and water are required, but no carried provision provides energy."));
+            }
+
+            if (summary.Medical.HydrationProvisionCount > 0
+                && summary.Medical.EnergyProvisionCount > 0)
+            {
+                AddUnique(output, seen, new ReadinessFinding(
+                    ReadinessSeverity.Ready,
+                    "Sustainment",
+                    "Carried food and water cover both hydration and energy."));
+            }
+        }
+
         if (!summary.Medical.HasFractureTreatment
             && !ContainsFinding(output, "Medical", "fracture"))
         {
@@ -1129,6 +1418,11 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
 
     private string ResolveSelectedMap()
     {
+        if (!string.IsNullOrWhiteSpace(HermesPreRaidReadinessController.SelectedMapName))
+        {
+            return HermesPreRaidReadinessController.SelectedMapName!;
+        }
+
         if (_insuranceScreen is null)
         {
             return "Current raid";

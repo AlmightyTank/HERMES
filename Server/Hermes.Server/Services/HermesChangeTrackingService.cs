@@ -702,6 +702,11 @@ public sealed class HermesChangeTrackingService(
             ? $"Manual {workspace} workspace refresh"
             : reason.Trim();
 
+        // A manual workspace invalidation must also discard the short-lived shared profile
+        // snapshot. Otherwise the immediately following summary can rebuild from the profile
+        // image captured just before the player moved medicine, food, drink, or equipment.
+        profileScopeService.InvalidatePrepared(sessionId);
+
         switch (normalized)
         {
             case "craft":

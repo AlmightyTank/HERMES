@@ -39,6 +39,8 @@ internal sealed class HermesCraftPanel
     private int _refreshVersion;
     private int _detailVersion;
     private string _search = string.Empty;
+    private readonly HashSet<string> _focusedCraftKeys = new(StringComparer.OrdinalIgnoreCase);
+    private int _focusVersion;
     private string _status = "Loading hideout recipes...";
     private CraftFilter _filter;
     private CraftSort _sort;
@@ -95,6 +97,8 @@ internal sealed class HermesCraftPanel
         _listScroll = Vector2.zero;
         _detailScroll = Vector2.zero;
         _search = string.Empty;
+        _focusedCraftKeys.Clear();
+        _focusVersion++;
         _filter = ParseFilter(Plugin.Settings.DefaultCraftFilter.Value);
         _sort = ParseSort(Plugin.Settings.DefaultCraftSorting.Value);
         _loadRequested = false;
@@ -118,6 +122,87 @@ internal sealed class HermesCraftPanel
         return RefreshAsync(invalidateMarketCache);
     }
 
+    internal void OpenForTemplate(string templateId, string sourceLabel)
+    {
+        if (string.IsNullOrWhiteSpace(templateId))
+        {
+            return;
+        }
+
+        _filter = CraftFilter.All;
+        _listScroll = Vector2.zero;
+        _focusedCraftKeys.Clear();
+        _status = $"Finding recipes related to the selected {sourceLabel} item...";
+        _loadRequested = true;
+        _ = FocusTemplateAsync(templateId, ++_focusVersion);
+    }
+
+    private async Task FocusTemplateAsync(string templateId, int focusVersion)
+    {
+        try
+        {
+            var selection = await HermesApiClient.GetPreviewItemSelectionAsync(templateId);
+            if (focusVersion != _focusVersion || !selection.Found || selection.Item is null)
+            {
+                return;
+            }
+
+            var usage = await HermesApiClient.GetItemHideoutUsageAsync(selection.Item.ItemKey);
+            if (focusVersion != _focusVersion)
+            {
+                return;
+            }
+
+            _search = selection.Item.Name;
+            _focusedCraftKeys.Clear();
+            foreach (var key in usage.ProducedBy.Select(craft => craft.CraftKey)
+                         .Concat(usage.UsedBy.Select(craft => craft.CraftKey)))
+            {
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    _focusedCraftKeys.Add(key);
+                }
+            }
+
+            HermesNativeCraftFocus.Set(selection.Item.Name, _focusedCraftKeys);
+
+            if (_response is null)
+            {
+                await RefreshAsync(false);
+            }
+
+            if (focusVersion != _focusVersion || _response is null)
+            {
+                return;
+            }
+
+            var firstMatch = _response.Crafts.FirstOrDefault(craft =>
+                _focusedCraftKeys.Contains(craft.CraftKey)
+                || string.Equals(craft.OutputTemplateId, templateId, StringComparison.OrdinalIgnoreCase));
+            if (firstMatch is not null)
+            {
+                _status = $"Showing recipes that produce or consume {selection.Item.Name}.";
+                await SelectCraftAsync(firstMatch);
+            }
+            else
+            {
+                _status = $"No installed-station recipe currently produces or consumes {selection.Item.Name}.";
+            }
+
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        }
+        catch (Exception ex)
+        {
+            if (focusVersion == _focusVersion)
+            {
+                _status = HermesApiClient.DescribeFailure(ex, "Hideout craft lookup");
+                HermesNativeWorkspaceRuntime.RequestClientRefresh();
+            }
+
+            Plugin.Log.LogError(ex);
+        }
+    }
+
     private void DrawFiltersToolbar()
     {
         GUILayout.BeginHorizontal();
@@ -130,6 +215,8 @@ internal sealed class HermesCraftPanel
         if (GUILayout.Button("Clear", GUILayout.Width(70f), GUILayout.Height(HermesUi.ToolbarHeight)))
         {
             _search = string.Empty;
+            _focusedCraftKeys.Clear();
+            _focusVersion++;
             _listScroll = Vector2.zero;
         }
         GUILayout.EndHorizontal();
@@ -165,6 +252,10 @@ internal sealed class HermesCraftPanel
                 GUILayout.Height(HermesUi.ToolbarHeight)))
         {
             _filter = filter;
+            if (filter == CraftFilter.Profitable)
+            {
+                _sort = CraftSort.Profit;
+            }
             _listScroll = Vector2.zero;
         }
     }
@@ -199,7 +290,7 @@ internal sealed class HermesCraftPanel
         var percent = GetProfitPercent(craft);
         var badge = craft.IsComplete ? "COMPLETE" : craft.IsActive ? "ACTIVE" : craft.CanStartNow ? "READY" : craft.IsAvailable ? "AVAILABLE" : craft.Status.ToUpperInvariant();
         var label = $"{(selected ? "▶ " : string.Empty)}{craft.OutputQuantity:N0} × {craft.OutputName}\n" +
-                    $"{craft.StationName} L{craft.RequiredStationLevel} • {FormatDuration(craft.DurationSeconds)} • [{badge}]\n" +
+                    $"{craft.StationName} • your L{craft.CurrentStationLevel} / required L{craft.RequiredStationLevel} • {FormatDuration(craft.DurationSeconds)} • [{badge}]\n" +
                     $"Cash {cashProfit} • Economic {economicProfit} ({percent:N1}%) • ₽{craft.EstimatedEconomicProfitPerHour:N0}/h";
 
         GUILayout.BeginHorizontal();
@@ -257,7 +348,7 @@ internal sealed class HermesCraftPanel
         }
         GUILayout.Label(craft.CanStartNow ? "READY NOW" : craft.IsAvailable ? "AVAILABLE" : craft.Status.ToUpperInvariant());
         GUILayout.EndHorizontal();
-        GUILayout.Label($"Station: {craft.StationName} Level {craft.RequiredStationLevel} • Base duration: {FormatDuration(craft.DurationSeconds)}");
+        GUILayout.Label($"Station: {craft.StationName} • your level {craft.CurrentStationLevel} / required {craft.RequiredStationLevel} • Base duration: {FormatDuration(craft.DurationSeconds)}");
         GUILayout.Label($"Status: {craft.Status} • Can start now: {(craft.CanStartNow ? "Yes" : "No")}");
         if (craft.IsActive || craft.IsComplete)
         {
@@ -382,7 +473,13 @@ internal sealed class HermesCraftPanel
 
         var filtered = source.Where(craft =>
         {
-            if (query.Length > 0
+            if (_focusedCraftKeys.Count > 0 && !_focusedCraftKeys.Contains(craft.CraftKey))
+            {
+                return false;
+            }
+
+            if (_focusedCraftKeys.Count == 0
+                && query.Length > 0
                 && !craft.OutputName.Contains(query, StringComparison.OrdinalIgnoreCase)
                 && !craft.StationName.Contains(query, StringComparison.OrdinalIgnoreCase)
                 && !craft.Status.Contains(query, StringComparison.OrdinalIgnoreCase)) return false;
@@ -392,22 +489,32 @@ internal sealed class HermesCraftPanel
 
             return _filter switch
             {
-                CraftFilter.Available => craft.IsAvailable,
+                CraftFilter.Available => craft.StationLevelMet,
                 CraftFilter.Ready => craft.CanStartNow,
-                CraftFilter.Profitable => craft.EstimatedEconomicProfit >= minProfit && GetProfitPercent(craft) >= minPercent,
+                CraftFilter.Profitable => craft.EstimatedBestSaleProfit >= minProfit && GetProfitPercent(craft) >= minPercent,
                 CraftFilter.Overnight => craft.DurationSeconds >= overnightMin && craft.DurationSeconds <= overnightMax,
                 CraftFilter.Active => craft.IsActive || craft.IsComplete,
                 _ => true
             };
         });
 
+        // PROFITABLE always ranks the best actual sale path from most to least profit.
+        // This prevents a saved Name/Station sort from making the profitability view look random.
+        if (_filter == CraftFilter.Profitable)
+        {
+            return filtered
+                .OrderByDescending(craft => craft.EstimatedBestSaleProfit)
+                .ThenByDescending(craft => craft.EstimatedBestSaleProfitPerHour)
+                .ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase);
+        }
+
         return _sort switch
         {
             CraftSort.Station => filtered.OrderBy(craft => craft.StationName, StringComparer.OrdinalIgnoreCase).ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase),
             CraftSort.Duration => filtered.OrderBy(craft => craft.DurationSeconds).ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase),
-            CraftSort.Profit => filtered.OrderByDescending(craft => craft.EstimatedEconomicProfit).ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase),
+            CraftSort.Profit => filtered.OrderByDescending(craft => craft.EstimatedBestSaleProfit).ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase),
             CraftSort.ProfitPercent => filtered.OrderByDescending(GetProfitPercent).ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase),
-            CraftSort.ProfitPerHour => filtered.OrderByDescending(craft => craft.EstimatedEconomicProfitPerHour).ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase),
+            CraftSort.ProfitPerHour => filtered.OrderByDescending(craft => craft.EstimatedBestSaleProfitPerHour).ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase),
             CraftSort.MissingIngredients => filtered.OrderBy(craft => HasMissingIngredients(craft)).ThenBy(craft => craft.Status, StringComparer.OrdinalIgnoreCase).ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase),
             _ => filtered.OrderBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase)
         };
@@ -423,9 +530,9 @@ internal sealed class HermesCraftPanel
     {
         if (craft.EstimatedEconomicInputValue <= 0L)
         {
-            return craft.EstimatedEconomicProfit > 0L ? 100d : 0d;
+            return craft.EstimatedBestSaleProfit > 0L ? 100d : 0d;
         }
-        return craft.EstimatedEconomicProfit * 100d / craft.EstimatedEconomicInputValue;
+        return craft.EstimatedBestSaleProfit * 100d / craft.EstimatedEconomicInputValue;
     }
 
     private async Task RefreshAsync(bool invalidateMarketCache)
@@ -551,7 +658,7 @@ internal sealed class HermesCraftPanel
         CraftSort.Name => "Name",
         CraftSort.Station => "Station",
         CraftSort.Duration => "Duration",
-        CraftSort.Profit => "Economic profit",
+        CraftSort.Profit => "Best sale profit",
         CraftSort.ProfitPercent => "Profit percentage",
         CraftSort.ProfitPerHour => "Profit per hour",
         CraftSort.MissingIngredients => "Missing ingredients",

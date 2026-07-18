@@ -1,0 +1,1120 @@
+{
+  "source": "TarkovForge",
+  "sourceUrl": "https://tarkovforge.com/keys",
+  "retrievedOn": "2026-07-18",
+  "entries": [
+    {
+      "questIds": [],
+      "questNames": [
+        "Developer's Secrets - Part 1"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "\"Negotiation\" room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with \"Negotiation\" room key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Developer's Secrets - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/negotiation-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Broadcast - Part 4"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Abandoned factory marked key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Abandoned factory marked key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Broadcast - Part 4.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/abandoned-factory-marked-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Missing Informant"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Backup hideout key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Backup hideout key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Missing Informant.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/backup-hideout-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Beyond the Red Meat - Part 1"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Beluga restaurant director key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Beluga restaurant director key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Beyond the Red Meat - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/beluga-restaurant-director-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Your Car Needs a Service"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Car dealership closed section key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Car dealership closed section key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Your Car Needs a Service.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/car-dealership-closed-section-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Your Car Needs a Service"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Car dealership director's office room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Car dealership director's office room key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Your Car Needs a Service.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/car-dealership-directors-office-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "House Arrest - Part 2"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Chekannaya 15 apartment key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Chekannaya 15 apartment key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by House Arrest - Part 2.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/chekannaya-15-apartment-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Surveillance"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Concordia security room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Concordia security room key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Surveillance.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/concordia-security-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "House Arrest - Part 1"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Iron gate key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Iron gate key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by House Arrest - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/iron-gate-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Broadcast - Part 5"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Mysterious room marked key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Mysterious room marked key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Broadcast - Part 5.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/mysterious-room-marked-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Watching You"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Pinewood hotel room 215 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Pinewood hotel room 215 key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Watching You.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/pinewood-hotel-room-215-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Ballet Lover",
+        "Audiophile",
+        "Spotter"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Primorsky 46-48 skybridge key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Primorsky 46-48 skybridge key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Ballet Lover, Audiophile, Spotter.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/primorsky-46-48-skybridge-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Properties All Around"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Real estate agency office room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Real estate agency office room key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Properties All Around.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/real-estate-agency-office-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Developer's Secrets - Part 2"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Relaxation room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Relaxation room key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Developer's Secrets - Part 2.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/relaxation-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "The Door"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Rusted bloody key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Rusted bloody key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by The Door.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/rusted-bloody-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Beyond the Red Meat - Part 2"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "TerraGroup meeting room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with TerraGroup meeting room key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Beyond the Red Meat - Part 2.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/terragroup-meeting-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Pets Won't Need It - Part 1"
+      ],
+      "mapName": "Streets of Tarkov",
+      "keyTemplateId": null,
+      "keyNames": [
+        "X-ray room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with X-ray room key on Streets of Tarkov.",
+      "purpose": "TarkovForge lists this key as required by Pets Won't Need It - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/x-ray-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Shipment Tracking"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Company director's room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Company director's room key on Customs.",
+      "purpose": "TarkovForge lists this key as required by Shipment Tracking.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/company-directors-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Decisions, Decisions [PVP ZONE]",
+        "Against the Conscience - Part 1 [PVP ZONE]",
+        "Surprise Gift [PVP ZONE]"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Dorm overseer key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Dorm overseer key on Customs.",
+      "purpose": "TarkovForge lists this key as required by Decisions, Decisions [PVP ZONE], Against the Conscience - Part 1 [PVP ZONE], Surprise Gift [PVP ZONE].",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/dorm-overseer-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Pharmacist"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Dorm room 114 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Dorm room 114 key on Customs.",
+      "purpose": "TarkovForge lists this key as required by Pharmacist.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/dorm-room-114-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Shaking Up the Teller"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Dorm room 203 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Dorm room 203 key on Customs.",
+      "purpose": "TarkovForge lists this key as required by Shaking Up the Teller.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/dorm-room-203-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Operation Aquarius - Part 1"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Dorm room 206 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Dorm room 206 key on Customs.",
+      "purpose": "TarkovForge lists this key as required by Operation Aquarius - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/dorm-room-206-key"
+    },
+    {
+      "questIds": [
+        "5967725e86f774601a446662"
+      ],
+      "questNames": [
+        "Shaking Up the Teller"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": "5938504186f7740991483f30",
+      "keyNames": [
+        "Dorm room 214 key"
+      ],
+      "objectiveHints": [
+        "bank case"
+      ],
+      "opens": "Dorm room 214 in the three-story dormitory on Customs.",
+      "purpose": "Required to reach the bank case objective for Shaking Up the Teller.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/dorm-room-214-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Chemical - Part 1",
+        "Chemical - Part 2"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Dorm room 220 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Dorm room 220 key on Customs.",
+      "purpose": "TarkovForge lists this key as required by Chemical - Part 1, Chemical - Part 2.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/dorm-room-220-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Golden Swag"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Dorm room 303 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Dorm room 303 key on Customs.",
+      "purpose": "TarkovForge lists this key as required by Golden Swag.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/dorm-room-303-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "The Cult - Part 2"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Dorm room 314 marked key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Dorm room 314 marked key on Customs.",
+      "purpose": "TarkovForge lists this key as required by The Cult - Part 2.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/dorm-room-314-marked-key"
+    },
+    {
+      "questIds": [
+        "5936da9e86f7742d65037edf"
+      ],
+      "questNames": [
+        "Background Check",
+        "Checking"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": "5937ee6486f77408994ba448",
+      "keyNames": [
+        "Machinery key"
+      ],
+      "objectiveHints": [
+        "bronze pocket watch",
+        "pocket watch"
+      ],
+      "opens": "The driver-side door of the fuel tanker truck at the Customs construction site.",
+      "purpose": "Required to retrieve the bronze pocket watch.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/machinery-key"
+    },
+    {
+      "questIds": [
+        "5967530a86f77462ba22226b"
+      ],
+      "questNames": [
+        "Bad Rep Evidence"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": "5938144586f77473c2087145",
+      "keyNames": [
+        "Portable bunkhouse key"
+      ],
+      "objectiveHints": [
+        "secure case for documents 0031",
+        "documents 0031"
+      ],
+      "opens": "The portable bunkhouse at the Customs construction area.",
+      "purpose": "Required to reach Secure Folder 0031 for Bad Rep Evidence.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/portable-bunkhouse-key"
+    },
+    {
+      "questIds": [
+        "59674eb386f774539f14813a"
+      ],
+      "questNames": [
+        "Delivery From the Past",
+        "Farming - Part 3"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": "5780d0532459777a5108b9a2",
+      "keyNames": [
+        "Tarcone Director's office key"
+      ],
+      "objectiveHints": [
+        "secure folder 0022",
+        "secure case for documents 0022",
+        "folder 0022"
+      ],
+      "opens": "The Tarcone director's office at the top of the stairs inside the red Paradigm warehouse (Big Red) on Customs.",
+      "purpose": "Required to enter the office for Delivery From the Past and Farming - Part 3.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/tarcone-directors-office-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Golden Swag"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Trailer park portable cabin key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Trailer park portable cabin key on Customs.",
+      "purpose": "TarkovForge lists this key as required by Golden Swag.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/trailer-park-portable-cabin-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "The Extortionist"
+      ],
+      "mapName": "Customs",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Unknown key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked cabin at the Customs construction area used by The Extortionist.",
+      "purpose": "Required to retrieve the quest documents after obtaining the key from the dead scav.",
+      "acquisition": [
+        "Guaranteed quest-route spawn on the dead scav during the raid"
+      ],
+      "acquireInRaid": true,
+      "sourcePath": "/keys/unknown-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Colleagues - Part 2"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Cottage back door key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Cottage back door key on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Colleagues - Part 2.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/cottage-back-door-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Cargo X - Part 1",
+        "Lend-Lease - Part 1"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Health Resort east wing room 306 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Health Resort east wing room 306 key on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Cargo X - Part 1, Lend-Lease - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/health-resort-east-wing-room-306-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Cargo X - Part 1",
+        "Lend-Lease - Part 1"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Health Resort east wing room 308 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Health Resort east wing room 308 key on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Cargo X - Part 1, Lend-Lease - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/health-resort-east-wing-room-308-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Wet Job - Part 5"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Health Resort east wing room 328 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Health Resort east wing room 328 key on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Wet Job - Part 5.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/health-resort-east-wing-room-328-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Chemistry Closet"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Health Resort office key with a blue tape"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Health Resort office key with a blue tape on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Chemistry Closet.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/health-resort-office-key-with-a-blue-tape"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Vitamins - Part 1"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Health Resort west wing office room 112 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Health Resort west wing office room 112 key on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Vitamins - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/health-resort-west-wing-office-room-112-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Lend-Lease - Part 1"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Health Resort west wing room 216 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Health Resort west wing room 216 key on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Lend-Lease - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/health-resort-west-wing-room-216-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Spa Tour - Part 4"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Health Resort west wing room 219 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Health Resort west wing room 219 key on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Spa Tour - Part 4.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/health-resort-west-wing-room-219-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Spa Tour - Part 4"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Health Resort west wing room 220 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Health Resort west wing room 220 key on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Spa Tour - Part 4.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/health-resort-west-wing-room-220-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Health Care Privacy - Part 2"
+      ],
+      "mapName": "Shoreline",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Health Resort west wing room 306 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Health Resort west wing room 306 key on Shoreline.",
+      "purpose": "TarkovForge lists this key as required by Health Care Privacy - Part 2.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/health-resort-west-wing-room-306-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Disease History"
+      ],
+      "mapName": "Reserve",
+      "keyTemplateId": null,
+      "keyNames": [
+        "RB-KSM key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with RB-KSM key on Reserve.",
+      "purpose": "TarkovForge lists this key as required by Disease History.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/rb-ksm-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Inventory Check"
+      ],
+      "mapName": "Reserve",
+      "keyTemplateId": null,
+      "keyNames": [
+        "RB-OB key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with RB-OB key on Reserve.",
+      "purpose": "TarkovForge lists this key as required by Inventory Check.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/rb-ob-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Inventory Check"
+      ],
+      "mapName": "Reserve",
+      "keyTemplateId": null,
+      "keyNames": [
+        "RB-ORB1 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with RB-ORB1 key on Reserve.",
+      "purpose": "TarkovForge lists this key as required by Inventory Check.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/rb-orb1-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Inventory Check"
+      ],
+      "mapName": "Reserve",
+      "keyTemplateId": null,
+      "keyNames": [
+        "RB-ORB2 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with RB-ORB2 key on Reserve.",
+      "purpose": "TarkovForge lists this key as required by Inventory Check.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/rb-orb2-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Inventory Check"
+      ],
+      "mapName": "Reserve",
+      "keyTemplateId": null,
+      "keyNames": [
+        "RB-ORB3 key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with RB-ORB3 key on Reserve.",
+      "purpose": "TarkovForge lists this key as required by Inventory Check.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/rb-orb3-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Disease History"
+      ],
+      "mapName": "Reserve",
+      "keyTemplateId": null,
+      "keyNames": [
+        "RB-SMP key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with RB-SMP key on Reserve.",
+      "purpose": "TarkovForge lists this key as required by Disease History.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/rb-smp-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Revision - Reserve",
+        "Surplus Goods",
+        "Snatch"
+      ],
+      "mapName": "Reserve",
+      "keyTemplateId": null,
+      "keyNames": [
+        "RB-ST key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with RB-ST key on Reserve.",
+      "purpose": "TarkovForge lists this key as required by Revision - Reserve, Surplus Goods, Snatch.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/rb-st-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Vitamins - Part 1"
+      ],
+      "mapName": "Interchange",
+      "keyTemplateId": null,
+      "keyNames": [
+        "EMERCOM medical unit key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with EMERCOM medical unit key on Interchange.",
+      "purpose": "TarkovForge lists this key as required by Vitamins - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/emercom-medical-unit-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Provocation"
+      ],
+      "mapName": "Interchange",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Kiba Arms inner grate door key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Kiba Arms inner grate door key on Interchange.",
+      "purpose": "TarkovForge lists this key as required by Provocation.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/kiba-arms-inner-grate-door-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Provocation"
+      ],
+      "mapName": "Interchange",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Kiba Arms outer door key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Kiba Arms outer door key on Interchange.",
+      "purpose": "TarkovForge lists this key as required by Provocation.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/kiba-arms-outer-door-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Provocation"
+      ],
+      "mapName": "Interchange",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Object #11SR keycard"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Object #11SR keycard on Interchange.",
+      "purpose": "TarkovForge lists this key as required by Provocation.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/object-11sr-keycard"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Provocation",
+        "Irresistible"
+      ],
+      "mapName": "Interchange",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Object #21WS keycard"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Object #21WS keycard on Interchange.",
+      "purpose": "TarkovForge lists this key as required by Provocation, Irresistible.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/object-21ws-keycard"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Database - Part 2"
+      ],
+      "mapName": "Interchange",
+      "keyTemplateId": null,
+      "keyNames": [
+        "OLI logistics department office key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with OLI logistics department office key on Interchange.",
+      "purpose": "TarkovForge lists this key as required by Database - Part 2.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/oli-logistics-department-office-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "TerraGroup Employee"
+      ],
+      "mapName": "The Lab",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Keycard with a blue marking"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Keycard with a blue marking on The Lab.",
+      "purpose": "TarkovForge lists this key as required by TerraGroup Employee.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/keycard-with-a-blue-marking"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Following the Bread Crumbs",
+        "Make Amends - Quarantine"
+      ],
+      "mapName": "The Lab",
+      "keyTemplateId": null,
+      "keyNames": [
+        "TerraGroup Labs keycard (Black)"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with TerraGroup Labs keycard (Black) on The Lab.",
+      "purpose": "TarkovForge lists this key as required by Following the Bread Crumbs, Make Amends - Quarantine.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/terragroup-labs-keycard-black"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Following the Bread Crumbs"
+      ],
+      "mapName": "The Lab",
+      "keyTemplateId": null,
+      "keyNames": [
+        "TerraGroup Labs weapon testing area key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with TerraGroup Labs weapon testing area key on The Lab.",
+      "purpose": "TarkovForge lists this key as required by Following the Bread Crumbs.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/terragroup-labs-weapon-testing-area-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Broadcast - Part 1"
+      ],
+      "mapName": "Lighthouse",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Operating room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Operating room key on Lighthouse.",
+      "purpose": "TarkovForge lists this key as required by Broadcast - Part 1.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/operating-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Top Secret"
+      ],
+      "mapName": "Lighthouse",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Radar station commandant room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Radar station commandant room key on Lighthouse.",
+      "purpose": "TarkovForge lists this key as required by Top Secret.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/radar-station-commandant-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Health Care Privacy - Part 6",
+        "Is This a Reference?"
+      ],
+      "mapName": "Factory",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Factory emergency exit key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Factory emergency exit key on Factory.",
+      "purpose": "TarkovForge lists this key as required by Health Care Privacy - Part 6, Is This a Reference?.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/factory-emergency-exit-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Dragnet"
+      ],
+      "mapName": "Factory",
+      "keyTemplateId": null,
+      "keyNames": [
+        "TerraGroup storage room keycard"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with TerraGroup storage room keycard on Factory.",
+      "purpose": "TarkovForge lists this key as required by Dragnet.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/terragroup-storage-room-keycard"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Keeper's Word"
+      ],
+      "mapName": "The Labyrinth",
+      "keyTemplateId": null,
+      "keyNames": [
+        "Corpse room key"
+      ],
+      "objectiveHints": [],
+      "opens": "The locked quest location associated with Corpse room key on The Labyrinth.",
+      "purpose": "TarkovForge lists this key as required by Keeper's Word.",
+      "acquisition": [],
+      "acquireInRaid": false,
+      "sourcePath": "/keys/corpse-room-key"
+    },
+    {
+      "questIds": [],
+      "questNames": [
+        "Saving the Mole"
+      ],
+      "mapName": "Ground Zero",
+      "keyTemplateId": null,
+      "keyNames": [
+        "TerraGroup science office key",
+        "science office key"
+      ],
+      "objectiveHints": [
+        "access the lab scientist's office",
+        "scientist's office"
+      ],
+      "opens": "Office no. 4 in the TerraGroup building on Ground Zero.",
+      "purpose": "Loot the key from the lab scientist's body and use it to open the office during the same raid.",
+      "acquisition": [
+        "Looted from the lab scientist during the raid"
+      ],
+      "acquireInRaid": true,
+      "sourcePath": "/keys/terragroup-science-office-key"
+    }
+  ]
+}

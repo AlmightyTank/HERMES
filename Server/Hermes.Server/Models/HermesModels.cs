@@ -316,7 +316,9 @@ public sealed record HermesCraftsResponse(
 public sealed record HermesCraftSummary(
     string CraftKey,
     string StationName,
+    int CurrentStationLevel,
     int RequiredStationLevel,
+    bool StationLevelMet,
     string OutputName,
     string? OutputTemplateId,
     int OutputQuantity,
@@ -392,9 +394,21 @@ public sealed record HermesItemHideoutUsageResponse(
     double OwnedQuantity,
     double OwnedFoundInRaidQuantity,
     IReadOnlyList<HermesQuestItemUse> QuestUses,
+    IReadOnlyList<HermesQuestKeyUse> QuestKeyUses,
     IReadOnlyList<HermesUpgradeUse> UpgradeUses,
     IReadOnlyList<HermesCraftUse> ProducedBy,
     IReadOnlyList<HermesCraftUse> UsedBy);
+
+public sealed record HermesQuestKeyUse(
+    string QuestName,
+    string MapName,
+    string Opens,
+    string Purpose,
+    string Acquisition,
+    bool AcquireInRaid,
+    string QuestStatus,
+    bool IsActive,
+    bool QuestCompleted);
 
 public sealed record HermesQuestItemUse(
     string QuestName,
@@ -777,6 +791,15 @@ public sealed record HermesLoadoutWarning(
     string Severity,
     string Category,
     string Message);
+
+public sealed record HermesQuestKeyKnowledgeStatusResponse(
+    bool Loaded,
+    int EntryCount,
+    int QuestAssociationCount,
+    string Source,
+    string SourceUrl,
+    string RetrievedOn,
+    string? Error);
 
 public sealed record HermesAssistantAlertsResponse(
     bool Found,

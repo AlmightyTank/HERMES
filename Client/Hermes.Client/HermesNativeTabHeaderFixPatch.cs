@@ -145,6 +145,10 @@ internal sealed class HermesNativeTabHeaderStateController : MonoBehaviour
 
     private void ApplyVisualState(bool selected, bool force)
     {
+        // EFT may reorder the cloned header without changing its normal/selected children.
+        // Repair overlap order every LateUpdate while leaving anchored placement untouched.
+        _host?.SetHermesHeaderLayer(selected);
+
         if (!force && _lastAppliedSelection == selected)
         {
             // EFT can toggle a cloned state later in the same frame. Repair only

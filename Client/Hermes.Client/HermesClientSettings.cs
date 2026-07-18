@@ -151,9 +151,17 @@ internal sealed class HermesClientSettings
             "Keyboard shortcut used to open HERMES inside the current Character or in-raid inventory screen, or return to the previous EFT inventory tab.");
         DefaultOpeningTab = config.Bind(
             "General",
-            "Default opening tab",
+            "Default opening workspace",
             "Assistant",
-            "Workspace shown when HERMES opens and remembered-tab behavior is disabled. Options: Assistant, Item Search, Hideout, Crafts, Stash, Loadout, Raid Planner.");
+            Choice(
+                "Workspace shown when HERMES opens and remembered-workspace behavior is disabled.",
+                "Assistant",
+                "Items & Market",
+                "Hideout",
+                "Crafts",
+                "Stash",
+                "Loadout",
+                "Raid Planner"));
         RememberLastSelectedTab = config.Bind(
             "General",
             "Remember last selected tab",
@@ -434,7 +442,15 @@ internal sealed class HermesClientSettings
             "Hideout",
             "Default area filter",
             "Actionable",
-            "Initial Hideout view. Options: All, Actionable, Ready, Missing Materials, Progression Blocked, In Progress, Completed.");
+            Choice(
+                "Initial Hideout area filter.",
+                "All",
+                "Actionable",
+                "Ready",
+                "Missing Materials",
+                "Progression Blocked",
+                "In Progress",
+                "Completed"));
         ShowCompletedHideoutAreas = config.Bind(
             "Hideout",
             "Show completed areas",
@@ -460,12 +476,27 @@ internal sealed class HermesClientSettings
             "Crafts",
             "Default craft filter",
             "Available Crafts",
-            "Initial craft filter. Options: All, Available Crafts, Ready Now, Profitable, Overnight, Active.");
+            Choice(
+                "Initial recipe filter.",
+                "All",
+                "Available Crafts",
+                "Ready Now",
+                "Profitable",
+                "Overnight",
+                "Active"));
         DefaultCraftSorting = config.Bind(
             "Crafts",
             "Default craft sorting",
             "Profit per hour",
-            "Initial recipe sorting. Options: Name, Station, Duration, Profit, Profit percentage, Profit per hour, Missing ingredients.");
+            Choice(
+                "Initial recipe ordering. Selecting the Profitable filter always orders highest profit first.",
+                "Name",
+                "Station",
+                "Duration",
+                "Profit",
+                "Profit percentage",
+                "Profit per hour",
+                "Missing ingredients"));
         MinimumCraftProfit = config.Bind(
             "Crafts",
             "Minimum economic profit",
@@ -506,12 +537,30 @@ internal sealed class HermesClientSettings
             "Stash",
             "Default stash view",
             "Overview",
-            "View selected when the Stash tab is reset. Options: Overview, Safe to Sell, Cleanup, Keep, Review, Duplicates, Damaged.");
+            Choice(
+                "View selected when the Stash workspace is reset.",
+                "Overview",
+                "Safe to Sell",
+                "Cleanup",
+                "Keep",
+                "Review",
+                "Duplicates",
+                "Damaged"));
         DefaultStashSorting = config.Bind(
             "Stash",
             "Default stash sorting",
             "Recommendation",
-            "Initial recommendation ordering. Options: Recommendation, Name, Sell value, Sellable quantity, Value per cell, Occupied cells, Condition, Destination, Reserved quantity.");
+            Choice(
+                "Initial recommendation ordering.",
+                "Recommendation",
+                "Name",
+                "Sell value",
+                "Sellable quantity",
+                "Value per cell",
+                "Occupied cells",
+                "Condition",
+                "Destination",
+                "Reserved quantity"));
         IncludeActiveQuestReservations = config.Bind(
             "Stash Reservations",
             "Include active quest reservations",
@@ -693,7 +742,15 @@ internal sealed class HermesClientSettings
             "Loadout Display",
             "Default loadout view",
             "Overview",
-            "Initial Loadout sub-tab. Options: Overview, Weapons & Ammo, Armor, Medical, Quest Gear, Raid Planner, Value & Insurance.");
+            Choice(
+                "Initial Loadout sub-view.",
+                "Overview",
+                "Weapons & Ammo",
+                "Armor",
+                "Medical",
+                "Quest Gear",
+                "Raid Planner",
+                "Value & Insurance"));
         ShowReadinessScoreBar = config.Bind(
             "Loadout Display",
             "Show readiness score bar",
@@ -719,7 +776,13 @@ internal sealed class HermesClientSettings
             "Raid Planner",
             "Default map sorting",
             "Best prepared",
-            "Map order. Options: Best prepared, Most active quests, Most incomplete objectives, Fewest missing requirements, Alphabetical.");
+            Choice(
+                "Initial Raid Planner map ordering.",
+                "Best prepared",
+                "Most active quests",
+                "Most incomplete objectives",
+                "Fewest missing requirements",
+                "Alphabetical"));
         RaidPlannerShowInferredRouteKeys = config.Bind(
             "Raid Planner",
             "Show inferred route keys",
@@ -766,6 +829,13 @@ internal sealed class HermesClientSettings
             true,
             "Shows HERMES notes about equipment conflicts, inferred keys, and acquire-in-raid requirements.");
 
+    }
+
+    private static ConfigDescription Choice(string description, params string[] values)
+    {
+        return new ConfigDescription(
+            description,
+            new AcceptableValueList<string>(values));
     }
 
     public HermesStashRequestSettings CreateStashRequestSettings()
@@ -896,6 +966,7 @@ internal sealed class HermesClientSettings
         return normalized switch
         {
             "assistant" or "chat" => "Assistant",
+            "items & market" or "items and market" or "item search" or "market" => "Item Search",
             "hideout" => "Hideout",
             "craft" or "crafts" => "Crafts",
             "stash" => "Stash",

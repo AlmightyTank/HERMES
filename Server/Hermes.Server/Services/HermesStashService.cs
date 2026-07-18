@@ -95,7 +95,8 @@ public sealed class HermesStashService(
                 null);
         }
 
-        if (!snapshot.ById.TryGetValue(profileItemId, out var item))
+        var item = ResolveInventoryItemSelection(snapshot, sessionId, profileItemId);
+        if (item is null)
         {
             return new HermesStashInstanceSelectionResponse(
                 false,
@@ -961,6 +962,26 @@ public sealed class HermesStashService(
         }
 
         return gridNames.Contains(childSlotId);
+    }
+
+    private static InventoryItemNode? ResolveInventoryItemSelection(
+        InventorySnapshot snapshot,
+        MongoId sessionId,
+        string selectionKey)
+    {
+        // Native EFT context actions provide the real profile item id. HERMES stash rows use a
+        // session-scoped public instance key so raw profile ids are not exposed in workspace
+        // responses. Accept both representations at this boundary so clicking a Stash row opens
+        // Items & Market with the exact item already selected.
+        if (snapshot.ById.TryGetValue(selectionKey, out var directItem))
+        {
+            return directItem;
+        }
+
+        return snapshot.Items.FirstOrDefault(item =>
+            CreateInstanceKey(sessionId, item.Id).Equals(
+                selectionKey,
+                StringComparison.OrdinalIgnoreCase));
     }
 
     private static string CreateInstanceKey(MongoId sessionId, string itemId)

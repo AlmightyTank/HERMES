@@ -1,42 +1,107 @@
-# Static validation summary
+# HERMES 0.1.0-rc.2.2.1 validation
 
-This source was reviewed as the `0.1.0-rc.1` baseline.
+- Checks passed: 100
+- Checks failed: 0
 
-## Result
+- PASS: XML Hermes.Build.csproj
+- PASS: XML Server/Hermes.Server/Hermes.Server.csproj
+- PASS: XML Client/Hermes.Client/Hermes.Client.csproj
+- PASS: XML Version.props
+- PASS: Quest-key JSON — 63
+- PASS: C# delimiters Client/Hermes.Client/AskHermesContextMenuPatch.cs
+- PASS: C# delimiters Client/Hermes.Client/Compatibility/IsExternalInit.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesApiClient.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesAssistantConversationContext.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesAssistantIntentEngine.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesAssistantNoticeService.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesAssistantPanel.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesAssistantReasoningEngine.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesClientSettings.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesCraftPanel.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesEftThemePatch.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesEmbeddedGuiHost.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesGlobalNavigation.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesHideoutPanel.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesIconService.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesLoadoutPanel.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeBodyGuiHost.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeContentView.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeInventoryScreenClosePatch.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeInventoryScreenPatch.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeNotificationBridge.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeNotificationClickPatch.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeScreenHost.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeScreenRegistry.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeTabController.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeTabHeaderFixPatch.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeTabIconFixPatch.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeUiFramework.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeWorkspaceBody.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeWorkspaceRuntime.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeWorkspaceState.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesNativeWorkspaceView.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesPreRaidReadiness.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesRagfairNativeAssets.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesRagfairUiDumpPatch.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesRaidPlannerPanel.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesRequestBroker.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesRequestDiagnostics.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesRevisionApiClient.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesStashPanel.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesUi.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesVersionInfo.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesWindow.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesWorkspaceSeparationPatch.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesWorkspaceSnapshotCoordinator.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesWorkspaceSummaryApiClient.cs
+- PASS: C# delimiters Client/Hermes.Client/Models/HermesChangeTrackingModels.cs
+- PASS: C# delimiters Client/Hermes.Client/Models/HermesModels.cs
+- PASS: C# delimiters Client/Hermes.Client/Plugin.cs
+- PASS: C# delimiters Server/Hermes.Server/HermesVersionInfo.cs
+- PASS: C# delimiters Server/Hermes.Server/ModMetadata.cs
+- PASS: C# delimiters Server/Hermes.Server/Models/HermesChangeTrackingModels.cs
+- PASS: C# delimiters Server/Hermes.Server/Models/HermesModels.cs
+- PASS: C# delimiters Server/Hermes.Server/Routers/HermesDynamicRouter.cs
+- PASS: C# delimiters Server/Hermes.Server/Routers/HermesStaticRouter.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesCacheService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesCatalogService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesChangeTrackingService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesHideoutService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesLoadoutAnalysisSettings.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesLoadoutService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesLoadoutValueService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesMarketPriceService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesMarketService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesPreparedProfileSnapshotService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesProfileScopeService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesQuestKeyKnowledgeService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesReservationService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesStashAnalysisService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesStashAnalysisSettings.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesStashService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesTraderService.cs
+- PASS: Server item response includes QuestKeyUses
+- PASS: Client item response includes QuestKeyUses
+- PASS: Quest-key model parity QuestName
+- PASS: Quest-key model parity MapName
+- PASS: Quest-key model parity Opens
+- PASS: Quest-key model parity Purpose
+- PASS: Quest-key model parity Acquisition
+- PASS: Quest-key model parity AcquireInRaid
+- PASS: Quest-key model parity QuestStatus
+- PASS: Quest-key model parity IsActive
+- PASS: Quest-key model parity QuestCompleted
+- PASS: Key lookup method exists
+- PASS: Key lookup template-id match
+- PASS: Key lookup normalized alias match
+- PASS: Item usage builds key knowledge
+- PASS: Item response returns key knowledge
+- PASS: Profile quest status is resolved
+- PASS: Native Items & Market key cards
+- PASS: Legacy Items & Market key section
+- PASS: Item fingerprint tracks key uses
+- PASS: Quest-key aliases are unambiguous — 64
+- PASS: Current version
+- PASS: No build artifacts
 
-- 84 release-source files
-- 71 C# files and 43,643 C# lines
-- 29 registered server routes
-- 61 shared client/server response models
-- 33 static checks passed and 0 failed
-
-## Confirmed
-
-- All project and props XML parses successfully.
-- C# delimiters are balanced after ignoring comments and string literals.
-- Client and server response models expose matching property sets for every shared model.
-- Every client HTTP request enters through `HermesRequestBroker`.
-- No continuous client watch entry point remains.
-- Every client route has a registered server route or matching route prefix.
-- Route registration order protects specific summary routes from broader prefixes.
-- The HERMES server dependency graph has no detected DI cycle.
-- Every explicit client assembly reference has a pre-build existence check and no reference is duplicated.
-- Every `HermesClientSettings` configuration entry is declared and bound exactly once.
-- No source TODO, FIXME, `NotImplementedException`, stale Alpha release label, or generated build directory remains.
-- The first-load HERMES header repair spans the full settling window and exits when a real HERMES transition begins.
-- Readiness string normalization uses explicit `new string(...)` construction.
-- The embedded Ask HERMES icon is a valid 128×128 RGBA PNG.
-
-## Release-candidate cleanup
-
-- One shared `Version.props` controls project and package versions.
-- Runtime logs, server status, server metadata, and diagnostics resolve the assembly informational version.
-- Automatic deployment is opt-in, and Debug packages cannot overwrite the Release package name.
-- `SPT_ROOT` and `SptRoot` can override the development installation path.
-- Release builds exclude the unused Ragfair UI dump implementation.
-- Release-source packaging excludes `bin`, `obj`, and `dist`.
-- README, changelog, MIT license, release audit, and runtime checklist are included.
-
-## Not proven in this environment
-
-The container does not contain the .NET SDK or the local SPT 4.0.13 managed assemblies. The RC was not rebuilt or run here. Final `0.1.0` approval requires the local Visual Studio Release build and every applicable check in `RELEASE_CHECKLIST.md`.
+Compilation and runtime testing require Visual Studio and the local SPT 4.0.13 assemblies.

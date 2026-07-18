@@ -37,6 +37,7 @@ public sealed class HermesHideoutService(
     HermesTraderService traderService,
     HermesMarketService marketService,
     HermesMarketPriceService marketPriceService,
+    HermesQuestKeyKnowledgeService questKeyKnowledgeService,
     SeasonalEventService seasonalEventService)
 {
     private readonly object _sync = new();
@@ -55,6 +56,7 @@ public sealed class HermesHideoutService(
     private Dictionary<string, CraftDefinition>? _craftsByKey;
     private Dictionary<string, CraftDefinition>? _craftsById;
     private Dictionary<string, string>? _traderNames;
+    private Dictionary<string, string>? _questIdsByNormalizedName;
     private Dictionary<string, List<QuestItemUseDefinition>>? _questUsesByTemplate;
     private double _generatorFuelFlowRate;
 
@@ -339,6 +341,7 @@ public sealed class HermesHideoutService(
                 [],
                 [],
                 [],
+                [],
                 []);
         }
 
@@ -355,6 +358,7 @@ public sealed class HermesHideoutService(
                 [],
                 [],
                 [],
+                [],
                 []);
         }
 
@@ -362,6 +366,7 @@ public sealed class HermesHideoutService(
         var ownedTotal = snapshot.Inventory.GetValueOrDefault(templateText);
         var ownedFir = snapshot.FoundInRaidInventory.GetValueOrDefault(templateText);
         var questUses = BuildQuestItemUses(templateText, snapshot);
+        var questKeyUses = BuildQuestKeyUses(templateText, item.Name, snapshot);
         var upgradeUses = BuildPlayerAwareUpgradeUses(item, templateText, snapshot, sessionId);
         var producedBy = new List<HermesCraftUse>();
         var usedBy = new List<HermesCraftUse>();
@@ -438,6 +443,7 @@ public sealed class HermesHideoutService(
             ownedTotal,
             ownedFir,
             questUses,
+            questKeyUses,
             upgradeUses,
             producedBy
                 .OrderByDescending(use => use.CanStartNow)
@@ -704,6 +710,65 @@ public sealed class HermesHideoutService(
             .OrderByDescending(use => use.IsActive)
             .ThenBy(use => QuestStatusRank(use.QuestStatus))
             .ThenBy(use => use.QuestName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private IReadOnlyList<HermesQuestKeyUse> BuildQuestKeyUses(
+        string templateId,
+        string itemName,
+        ProfileSnapshot snapshot)
+    {
+        var entries = questKeyKnowledgeService.FindForKey(templateId, itemName);
+        if (entries.Count == 0)
+        {
+            return [];
+        }
+
+        var output = new List<HermesQuestKeyUse>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
+        {
+            foreach (var questName in entry.QuestNames.Where(value => !string.IsNullOrWhiteSpace(value)))
+            {
+                var fingerprint = $"{questName}|{entry.MapName}|{entry.Opens}";
+                if (!seen.Add(fingerprint))
+                {
+                    continue;
+                }
+
+                var normalizedQuestName = NormalizeKnowledgeText(questName);
+                var questId = _questIdsByNormalizedName is not null
+                              && _questIdsByNormalizedName.TryGetValue(normalizedQuestName, out var resolvedQuestId)
+                    ? resolvedQuestId
+                    : null;
+                var statusCode = 0;
+                if (!string.IsNullOrWhiteSpace(questId)
+                    && snapshot.QuestStates.TryGetValue(questId, out var questState))
+                {
+                    statusCode = questState.StatusCode;
+                }
+
+                var acquisition = entry.Acquisition.Count == 0
+                    ? string.Empty
+                    : string.Join(" • ", entry.Acquisition.Where(value => !string.IsNullOrWhiteSpace(value)).Take(3));
+                output.Add(new HermesQuestKeyUse(
+                    questName,
+                    entry.MapName,
+                    entry.Opens,
+                    entry.Purpose,
+                    acquisition,
+                    entry.AcquireInRaid,
+                    QuestStatusDisplay(statusCode),
+                    statusCode is 2 or 3,
+                    statusCode == 4));
+            }
+        }
+
+        return output
+            .OrderByDescending(use => use.IsActive)
+            .ThenBy(use => QuestStatusRank(use.QuestStatus))
+            .ThenBy(use => use.QuestName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(use => use.MapName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
 
@@ -1162,9 +1227,10 @@ public sealed class HermesHideoutService(
             && activeCraft.AreaType == craft.AreaType
             && !string.Equals(activeCraft.Id, craft.Id, StringComparison.OrdinalIgnoreCase));
 
-        // "Available Crafts" means the recipe is unlocked, the station level is met,
-        // and the player currently owns every required ingredient. Station occupancy
-        // remains separate so "Ready" can mean the craft can be started immediately.
+        // IsAvailable remains the full recipe-readiness state used by status badges and
+        // Ready Now. StationLevelMet is sent separately because the native AVAILABLE
+        // checkbox is profile-progression filtering: it follows the player's current
+        // station level even when ingredients are still missing.
         var isAvailable = stationReady && questReady && unlocked && ingredientsReady;
         var canStart = isAvailable && !stationBusy && activeProduction is null;
         string status;
@@ -1290,7 +1356,9 @@ public sealed class HermesHideoutService(
         return new HermesCraftSummary(
             CraftKey: craft.Key,
             StationName: craft.StationName,
+            CurrentStationLevel: stationLevel,
             RequiredStationLevel: craft.RequiredStationLevel,
+            StationLevelMet: stationReady,
             OutputName: craft.OutputName,
             OutputTemplateId: craft.OutputTemplateId,
             OutputQuantity: craft.OutputQuantity,
@@ -2327,6 +2395,7 @@ public sealed class HermesHideoutService(
         IReadOnlyDictionary<string, string> traderNames)
     {
         var output = new Dictionary<string, List<QuestItemUseDefinition>>(StringComparer.OrdinalIgnoreCase);
+        var questIdsByName = new Dictionary<string, string>(StringComparer.Ordinal);
         JsonNode? root;
         try
         {
@@ -2354,6 +2423,12 @@ public sealed class HermesHideoutService(
                 ? catalogService.GetQuestName(new MongoId(questId))
                 : null;
             questName ??= ReadString(quest, "QuestName", "questName", "name", "Name") ?? "Quest";
+            var normalizedQuestName = NormalizeKnowledgeText(questName);
+            if (normalizedQuestName.Length > 0)
+            {
+                questIdsByName.TryAdd(normalizedQuestName, questId);
+            }
+
             var traderId = ReadString(quest, "traderId", "TraderId") ?? string.Empty;
             var traderName = traderNames.GetValueOrDefault(traderId, "Trader");
             var conditions = GetProperty(quest, "conditions", "Conditions");
@@ -2414,7 +2489,21 @@ public sealed class HermesHideoutService(
             }
         }
 
+        _questIdsByNormalizedName = questIdsByName;
         return output;
+    }
+
+    private static string NormalizeKnowledgeText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return new string(value
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToLowerInvariant)
+                .ToArray());
     }
 
     private static IReadOnlyList<string> ReadMongoIdList(JsonNode? node)

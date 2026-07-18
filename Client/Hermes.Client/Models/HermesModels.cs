@@ -354,7 +354,9 @@ public sealed class HermesCraftSummary
 {
     public string CraftKey { get; set; } = string.Empty;
     public string StationName { get; set; } = string.Empty;
+    public int CurrentStationLevel { get; set; }
     public int RequiredStationLevel { get; set; }
+    public bool StationLevelMet { get; set; }
     public string OutputName { get; set; } = string.Empty;
     public string? OutputTemplateId { get; set; }
     public int OutputQuantity { get; set; }
@@ -438,9 +440,23 @@ public sealed class HermesItemHideoutUsageResponse
     public double OwnedQuantity { get; set; }
     public double OwnedFoundInRaidQuantity { get; set; }
     public List<HermesQuestItemUse> QuestUses { get; set; } = [];
+    public List<HermesQuestKeyUse> QuestKeyUses { get; set; } = [];
     public List<HermesUpgradeUse> UpgradeUses { get; set; } = [];
     public List<HermesCraftUse> ProducedBy { get; set; } = [];
     public List<HermesCraftUse> UsedBy { get; set; } = [];
+}
+
+public sealed class HermesQuestKeyUse
+{
+    public string QuestName { get; set; } = string.Empty;
+    public string MapName { get; set; } = string.Empty;
+    public string Opens { get; set; } = string.Empty;
+    public string Purpose { get; set; } = string.Empty;
+    public string Acquisition { get; set; } = string.Empty;
+    public bool AcquireInRaid { get; set; }
+    public string QuestStatus { get; set; } = string.Empty;
+    public bool IsActive { get; set; }
+    public bool QuestCompleted { get; set; }
 }
 
 public sealed class HermesQuestItemUse

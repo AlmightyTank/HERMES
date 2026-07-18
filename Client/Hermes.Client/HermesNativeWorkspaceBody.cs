@@ -44,6 +44,8 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
     private string _craftSearch = string.Empty;
     private string _craftFilter = "ALL";
     private bool _craftAvailableOnly;
+    private int _craftFocusRevision;
+    private readonly HashSet<string> _craftFocusKeys = new(StringComparer.OrdinalIgnoreCase);
     private string _stashSearch = string.Empty;
     private string _stashView = "OVERVIEW";
     private string _loadoutView = "OVERVIEW";
@@ -115,6 +117,11 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         }
 
         var activeTab = _state.ActiveTab;
+        if (activeTab == "Crafts")
+        {
+            ApplyPendingCraftFocus();
+        }
+
         var itemResultSetKey = activeTab == "ItemSearch"
             ? BuildItemResultSetKey()
             : _lastItemResultSetKey;
@@ -802,7 +809,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
     private void RenderItemUsage(Transform parent, HermesItemHideoutUsageResponse? usage)
     {
-        AddSectionHeader(parent, "QUEST, HIDEOUT & CRAFT USES");
+        AddSectionHeader(parent, "QUEST, KEY, HIDEOUT & CRAFT USES");
         if (usage is null)
         {
             AddEmptyState(parent, _state!.DetailLoading ? "Loading profile uses..." : "Profile usage unavailable.", string.Empty);
@@ -818,9 +825,26 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             ("OWNED", FormatCount(usage.OwnedQuantity)),
             ("OWNED FIR", FormatCount(usage.OwnedFoundInRaidQuantity)),
             ("QUEST USES", usage.QuestUses.Count.ToString("N0")),
+            ("KEY QUESTS", usage.QuestKeyUses.Count.ToString("N0")),
             ("UPGRADES", usage.UpgradeUses.Count.ToString("N0")),
             ("PRODUCED BY", usage.ProducedBy.Count.ToString("N0")),
             ("USED BY", usage.UsedBy.Count.ToString("N0")));
+
+        foreach (var keyUse in usage.QuestKeyUses.Take(30))
+        {
+            var status = keyUse.QuestCompleted
+                ? "COMPLETED"
+                : keyUse.IsActive
+                    ? "ACTIVE QUEST"
+                    : keyUse.QuestStatus.ToUpperInvariant();
+            var acquisition = string.IsNullOrWhiteSpace(keyUse.Acquisition)
+                ? string.Empty
+                : $" • {keyUse.Acquisition}";
+            AddCard(parent,
+                $"QUEST KEY • {keyUse.QuestName}",
+                $"{keyUse.MapName} • {keyUse.Opens}",
+                $"{status}{(keyUse.AcquireInRaid ? " • ACQUIRE IN RAID" : string.Empty)}{acquisition}");
+        }
 
         foreach (var quest in usage.QuestUses.Take(30))
         {
@@ -1036,6 +1060,32 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
     #region Crafts
 
+    private void ApplyPendingCraftFocus()
+    {
+        var focus = HermesNativeCraftFocus.Read();
+        if (focus.Revision == _craftFocusRevision)
+        {
+            return;
+        }
+
+        _craftFocusRevision = focus.Revision;
+        _craftSearch = focus.DisplayName;
+        _craftFilter = "ALL";
+        _craftAvailableOnly = false;
+        _craftFocusKeys.Clear();
+        foreach (var key in focus.CraftKeys)
+        {
+            if (!string.IsNullOrWhiteSpace(key))
+            {
+                _craftFocusKeys.Add(key);
+            }
+        }
+
+        _savedScrollPositions["craft-list"] = 1f;
+        _scrollsToForceTop.Add("craft-list");
+        _forceRebuild = true;
+    }
+
     private void RenderCrafts(RectTransform parent)
     {
         var root = CreateVerticalRoot(parent);
@@ -1054,7 +1104,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
         AddMetricGrid(root,
             ("TOTAL", response.Crafts.Count.ToString("N0")),
-            ("AVAILABLE", response.Crafts.Count(craft => craft.IsAvailable).ToString("N0")),
+            ("AVAILABLE", response.Crafts.Count(craft => craft.StationLevelMet).ToString("N0")),
             ("READY NOW", response.Crafts.Count(craft => craft.CanStartNow).ToString("N0")),
             ("PROFITABLE", response.Crafts.Count(IsCraftProfitable).ToString("N0")),
             ("ACTIVE", response.Crafts.Count(craft => craft.IsActive).ToString("N0")),
@@ -1067,6 +1117,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         search.onEndEdit.AddListener(value =>
         {
             _craftSearch = value.Trim();
+            _craftFocusKeys.Clear();
             Invalidate();
         });
         AddButton(toolbar, "READY", () => SetCraftFilter("READY"), 82f, selected: _craftFilter == "READY");
@@ -1096,7 +1147,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             AddCard(
                 list.Content,
                 $"{craft.OutputQuantity:N0}× {craft.OutputName}",
-                $"{craft.StationName} L{craft.RequiredStationLevel} • {FormatDuration(craft.DurationSeconds)} • input {Money(craft.EstimatedEconomicInputValue)} • best sale {Money(craft.EstimatedBestSaleValue)}",
+                $"{craft.StationName} • YOUR L{craft.CurrentStationLevel} / REQ L{craft.RequiredStationLevel} • {FormatDuration(craft.DurationSeconds)} • input {Money(craft.EstimatedEconomicInputValue)} • best sale {Money(craft.EstimatedBestSaleValue)}",
                 $"{craft.Status} • BEST PROFIT {Money(BestCraftProfit(craft))} • {CraftProfitSource(craft)}",
                 () =>
                 {
@@ -1116,8 +1167,10 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
     private IEnumerable<HermesCraftSummary> FilterCrafts(IEnumerable<HermesCraftSummary> crafts)
     {
         var query = _craftSearch.Trim();
-        return crafts
-            .Where(craft => query.Length == 0
+        var filtered = crafts
+            .Where(craft => _craftFocusKeys.Count == 0 || _craftFocusKeys.Contains(craft.CraftKey))
+            .Where(craft => _craftFocusKeys.Count > 0
+                            || query.Length == 0
                             || craft.OutputName.Contains(query, StringComparison.OrdinalIgnoreCase)
                             || craft.StationName.Contains(query, StringComparison.OrdinalIgnoreCase)
                             || craft.Status.Contains(query, StringComparison.OrdinalIgnoreCase))
@@ -1130,7 +1183,17 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 "ACTIVE" => craft.IsActive,
                 _ => true
             })
-            .Where(MatchesCraftAvailabilityFilter)
+            .Where(MatchesCraftAvailabilityFilter);
+
+        if (_craftFilter == "PROFITABLE")
+        {
+            return filtered
+                .OrderByDescending(BestCraftProfit)
+                .ThenByDescending(BestCraftProfitPerHour)
+                .ThenBy(craft => craft.OutputName, StringComparer.OrdinalIgnoreCase);
+        }
+
+        return filtered
             .OrderByDescending(craft => craft.CanStartNow)
             .ThenByDescending(craft => craft.IsActive || craft.IsComplete)
             .ThenByDescending(BestCraftProfitPerHour)
@@ -1144,13 +1207,21 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             return true;
         }
 
-        // A running or completed production is already available to this profile.
-        // Its consumed ingredients should not make it disappear when Available is checked.
-        return craft.IsAvailable || craft.IsActive || craft.IsComplete;
+        // AVAILABLE follows the current profile's station level. Ingredients, station
+        // occupancy, and start readiness belong to READY/status and must not hide a recipe
+        // that the player's current station level can access.
+        return craft.StationLevelMet || craft.IsActive || craft.IsComplete;
     }
 
     private static bool IsCraftProfitable(HermesCraftSummary craft)
-        => craft.EstimatedBestSaleProfit > 0;
+    {
+        var minimumProfit = Plugin.Settings.GetMinimumCraftProfit();
+        var minimumPercent = Plugin.Settings.GetMinimumCraftProfitPercent();
+        var percent = craft.EstimatedEconomicInputValue <= 0L
+            ? (craft.EstimatedBestSaleProfit > 0L ? 100d : 0d)
+            : craft.EstimatedBestSaleProfit * 100d / craft.EstimatedEconomicInputValue;
+        return craft.EstimatedBestSaleProfit >= minimumProfit && percent >= minimumPercent;
+    }
 
     private static long BestCraftProfit(HermesCraftSummary craft)
         => craft.EstimatedBestSaleProfit;
@@ -1218,7 +1289,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
         AddSectionHeader(parent, craft.OutputName);
         AddMetricGrid(parent,
-            ("STATION", $"{craft.StationName} L{craft.RequiredStationLevel}"),
+            ("STATION", $"{craft.StationName} • your L{craft.CurrentStationLevel} / required L{craft.RequiredStationLevel}"),
             ("OUTPUT", craft.OutputQuantity.ToString("N0")),
             ("DURATION", FormatDuration(craft.DurationSeconds)),
             ("STATUS", craft.Status),
@@ -1385,7 +1456,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                         item.Name,
                         $"{item.InstanceLabel} • {item.ConditionPercent}% • {item.ConditionCurrent:0.##}/{item.ConditionMaximum:0.##} • threshold {item.ThresholdPercent}%",
                         $"{item.Status} • {item.BestSaleDestination} {Money(item.BestSaleValue)}",
-                        () => _state!.Window.OpenForInventoryItem(item.InstanceKey));
+                        () => _state!.Window.OpenForStashItem(item.InstanceKey, item.Name));
                 }
                 break;
             default:
@@ -1421,7 +1492,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 item.Name,
                 $"{item.InstanceLabel} • qty {FormatCount(item.Quantity)} • {item.ConditionPercent}% • {item.OccupiedCells:N0} cell(s) • reserve {FormatCount(item.RecommendedKeepQuantity)} • sell {FormatCount(item.PotentiallySellQuantity)}",
                 $"{item.Recommendation} • {item.BestSaleDestination} {Money(item.BestSaleValue)}",
-                () => _state!.Window.OpenForInventoryItem(item.InstanceKey));
+                () => _state!.Window.OpenForStashItem(item.InstanceKey, item.Name));
         }
     }
 

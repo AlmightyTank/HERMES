@@ -166,9 +166,29 @@ internal sealed class HermesWindow
         _ = RunSearchAsync();
     }
 
-    internal void OpenForStashItem(string profileItemId)
+    internal void OpenForStashItem(string selectionKey, string itemName)
     {
-        OpenForInventoryItem(profileItemId);
+        if (string.IsNullOrWhiteSpace(selectionKey) && string.IsNullOrWhiteSpace(itemName))
+        {
+            return;
+        }
+
+        EnsurePresentationVisible();
+        SetActiveTab(HermesTab.ItemSearch);
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+
+        if (string.IsNullOrWhiteSpace(selectionKey))
+        {
+            OpenForNamedItem(itemName, "stash");
+            return;
+        }
+
+        _ = OpenForInventoryItemAsync(selectionKey, itemName);
+    }
+
+    internal void OpenForStashItem(string selectionKey)
+    {
+        OpenForStashItem(selectionKey, string.Empty);
     }
 
     internal void OpenForPreviewItem(string templateId, string sourceLabel)
@@ -1510,7 +1530,7 @@ internal sealed class HermesWindow
 
         GUILayout.BeginVertical(GUI.skin.box);
         var arrow = _hideoutUsageExpanded ? "▼" : "▶";
-        var totalUses = usage.QuestUses.Count + usage.UpgradeUses.Count + usage.ProducedBy.Count + usage.UsedBy.Count;
+        var totalUses = usage.QuestUses.Count + usage.QuestKeyUses.Count + usage.UpgradeUses.Count + usage.ProducedBy.Count + usage.UsedBy.Count;
         if (GUILayout.Button(
                 $"{arrow}  QUEST, HIDEOUT AND CRAFTING USAGE — {totalUses:N0}",
                 GUILayout.Height(30f),
@@ -1523,6 +1543,32 @@ internal sealed class HermesWindow
         {
             GUILayout.Space(6f);
             GUILayout.Label($"Owned in PMC inventory: {usage.OwnedQuantity:N0} total • {usage.OwnedFoundInRaidQuantity:N0} FIR");
+
+            if (usage.QuestKeyUses.Count > 0)
+            {
+                GUILayout.Space(8f);
+                GUILayout.Label("QUEST KEY KNOWLEDGE");
+                foreach (var keyUse in usage.QuestKeyUses)
+                {
+                    var marker = keyUse.QuestCompleted ? "✓" : keyUse.IsActive ? "▶" : "•";
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"{marker} {keyUse.QuestName} — {keyUse.MapName}");
+                    GUILayout.Label($"Status: {keyUse.QuestStatus}{(keyUse.AcquireInRaid ? " • Acquire during raid" : string.Empty)}");
+                    if (!string.IsNullOrWhiteSpace(keyUse.Opens))
+                    {
+                        GUILayout.Label($"Opens: {keyUse.Opens}");
+                    }
+                    if (!string.IsNullOrWhiteSpace(keyUse.Purpose))
+                    {
+                        GUILayout.Label(keyUse.Purpose);
+                    }
+                    if (!string.IsNullOrWhiteSpace(keyUse.Acquisition))
+                    {
+                        GUILayout.Label($"Acquisition: {keyUse.Acquisition}");
+                    }
+                    GUILayout.EndVertical();
+                }
+            }
 
             GUILayout.Space(8f);
             GUILayout.Label("QUEST REQUIREMENTS");

@@ -282,6 +282,7 @@ internal sealed class HermesNativeWorkspaceState
                 MarketSummary?.MedianPrice,
                 Identity(ItemUsage),
                 ItemUsage?.QuestUses.Count,
+                ItemUsage?.QuestKeyUses.Count,
                 ItemUsage?.UpgradeUses.Count,
                 ItemUsage?.ProducedBy.Count,
                 ItemUsage?.UsedBy.Count),
