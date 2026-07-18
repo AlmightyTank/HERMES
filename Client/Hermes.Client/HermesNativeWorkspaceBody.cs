@@ -702,26 +702,45 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             ("STASH COPIES", _state.StashInstances.Count.ToString("N0")),
             ("PROFILE", _state.StashInstances.Count > 0 ? "OWNED" : "NOT OWNED"));
 
-        AddSectionHeader(parent, "STASH INSTANCE PRICING");
-        AddCard(parent, "BASE ITEM", "Full-condition base-item estimate.", _state.SelectedStashInstanceKey is null ? "SELECTED" : "PREVIEW", () =>
+        var selectedStashInstance = _state.StashInstances.FirstOrDefault(instance =>
+            string.Equals(_state.SelectedStashInstanceKey, instance.InstanceKey, StringComparison.OrdinalIgnoreCase));
+        var stashSummary = _state.StashInstances.Count == 0
+            ? "No matching stash copy is owned. Trader pricing uses the full-condition base-item estimate."
+            : selectedStashInstance is not null
+                ? $"Selected: {selectedStashInstance.Label} • {selectedStashInstance.ConditionPercent}% {selectedStashInstance.ConditionDescription}"
+                : $"{_state.StashInstances.Count:N0} matching stash copy/copies available • base-item estimate selected";
+        var stashMeta = _state.StashInstances.Count == 0
+            ? "NOT OWNED"
+            : $"{_state.StashInstances.Count:N0} COPY/COPIES";
+        var stashExpanded = AddItemDetailCollapsibleSection(
+            parent,
+            "stash-pricing",
+            "STASH INSTANCE PRICING",
+            stashSummary,
+            stashMeta,
+            _state.StashInstances.Count > 0 && !Plugin.Settings.CollapseSectionsByDefault.Value);
+        if (stashExpanded)
         {
-            _state.SelectStashInstance(null);
-            Invalidate(0.20f);
-        }, _state.SelectedStashInstanceKey is null ? new Color(0.20f, 0.22f, 0.20f, 0.78f) : null);
-        foreach (var instance in _state.StashInstances.Take(30))
-        {
-            var selected = string.Equals(_state.SelectedStashInstanceKey, instance.InstanceKey, StringComparison.OrdinalIgnoreCase);
-            AddCard(
-                parent,
-                instance.Label,
-                $"{FormatCount(instance.Quantity)} unit(s) • {instance.ConditionPercent}% {instance.ConditionDescription} • {instance.ChildItemCount} installed/contained",
-                $"REFERENCE {Money(instance.ConditionAdjustedReferenceValue)}{(instance.FoundInRaid ? " • FIR" : string.Empty)}",
-                () =>
-                {
-                    _state.SelectStashInstance(instance.InstanceKey);
-                    Invalidate(0.20f);
-                },
-                selected ? new Color(0.20f, 0.22f, 0.20f, 0.78f) : null);
+            AddCard(parent, "BASE ITEM", "Full-condition base-item estimate.", _state.SelectedStashInstanceKey is null ? "SELECTED" : "PREVIEW", () =>
+            {
+                _state.SelectStashInstance(null);
+                Invalidate(0.20f);
+            }, _state.SelectedStashInstanceKey is null ? new Color(0.20f, 0.22f, 0.20f, 0.78f) : null);
+            foreach (var instance in _state.StashInstances.Take(30))
+            {
+                var selected = string.Equals(_state.SelectedStashInstanceKey, instance.InstanceKey, StringComparison.OrdinalIgnoreCase);
+                AddCard(
+                    parent,
+                    instance.Label,
+                    $"{FormatCount(instance.Quantity)} unit(s) • {instance.ConditionPercent}% {instance.ConditionDescription} • {instance.ChildItemCount} installed/contained",
+                    $"REFERENCE {Money(instance.ConditionAdjustedReferenceValue)}{(instance.FoundInRaid ? " • FIR" : string.Empty)}",
+                    () =>
+                    {
+                        _state.SelectStashInstance(instance.InstanceKey);
+                        Invalidate(0.20f);
+                    },
+                    selected ? new Color(0.20f, 0.22f, 0.20f, 0.78f) : null);
+            }
         }
 
         RenderTraderSummary(parent, _state.TraderSummary);
@@ -764,7 +783,9 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         var purchaseSummary = bestPurchase is null
             ? "Buy: no currently available trader offer"
             : $"Buy: {bestPurchase.TraderName} for {bestPurchase.DisplayPrice} (about {Money(bestPurchase.EstimatedRoubleValue)})";
-        var traderMeta = $"{summary.SellOffers.Count:N0} sale option(s) • {summary.PurchaseOffers.Count:N0} purchase offer(s)"
+        var traderMeta = (HasUsefulTraderInfo(summary)
+                ? $"{summary.SellOffers.Count:N0} sale option(s) • {summary.PurchaseOffers.Count:N0} purchase offer(s)"
+                : "NO CURRENT TRADER OFFER")
                          + (summary.UsesSelectedStashInstance ? " • SELECTED STASH COPY" : " • BASE ITEM");
 
         var expanded = AddItemDetailCollapsibleSection(
@@ -773,7 +794,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             "TRADERS",
             $"{saleSummary}\n{purchaseSummary}",
             traderMeta,
-            Plugin.Settings.ExpandTraderComparisonByDefault.Value);
+            Plugin.Settings.ExpandTraderComparisonByDefault.Value && HasUsefulTraderInfo(summary));
         if (!expanded)
         {
             return;
@@ -854,7 +875,9 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         var buySummary = market.LowestPrice.HasValue
             ? $"Lowest comparable offer {Money(market.LowestPrice)} • median {Money(market.MedianPrice)}"
             : "No comparable Flea offer is currently available.";
-        var marketMeta = $"{market.ComparableOfferCount:N0} comparable offer(s) • {reliability} • {market.MarketPriceSource}";
+        var marketMeta = HasUsefulMarketInfo(market)
+            ? $"{market.ComparableOfferCount:N0} comparable offer(s) • {reliability} • {market.MarketPriceSource}"
+            : "NO USABLE MARKET VALUE";
 
         var expanded = AddItemDetailCollapsibleSection(
             parent,
@@ -862,7 +885,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             "FLEA MARKET",
             $"{saleSummary}\n{buySummary}",
             marketMeta,
-            Plugin.Settings.ExpandMarketByDefault.Value);
+            Plugin.Settings.ExpandMarketByDefault.Value && HasUsefulMarketInfo(market));
         if (!expanded)
         {
             return;
@@ -929,7 +952,9 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             : first.ConditionCompleted || first.QuestCompleted
                 ? $"Completed use: {first.QuestName}."
                 : $"{(first.IsActive ? "ACTIVE" : "FUTURE")}: {first.QuestName} • {first.ProgressText}";
-        var meta = $"{active.Count:N0} active • {remaining:N0} remaining • {completed:N0} completed • owned {FormatCount(usage.OwnedQuantity)} ({FormatCount(usage.OwnedFoundInRaidQuantity)} FIR)";
+        var meta = HasUsefulQuestRequirements(usage)
+            ? $"{active.Count:N0} active • {remaining:N0} remaining • {completed:N0} completed • owned {FormatCount(usage.OwnedQuantity)} ({FormatCount(usage.OwnedFoundInRaidQuantity)} FIR)"
+            : $"NO CURRENT QUEST REQUIREMENT • {completed:N0} completed use(s)";
 
         var expanded = AddItemDetailCollapsibleSection(
             parent,
@@ -937,7 +962,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             "QUEST REQUIREMENTS",
             summary,
             meta,
-            !Plugin.Settings.CollapseSectionsByDefault.Value);
+            !Plugin.Settings.CollapseSectionsByDefault.Value && HasUsefulQuestRequirements(usage));
         if (!expanded)
         {
             return;
@@ -977,7 +1002,9 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         var summary = first is null
             ? "This item is not linked to a known quest-key requirement."
             : $"{(first.IsActive && !first.QuestCompleted ? "ACTIVE" : first.QuestCompleted ? "COMPLETED" : "KNOWN")}: {first.QuestName} • {first.MapName} • {first.Opens}";
-        var meta = $"{active.Count:N0} active • {remaining:N0} remaining • {completed:N0} completed";
+        var meta = HasUsefulQuestKeyKnowledge(usage)
+            ? $"{active.Count:N0} active • {remaining:N0} remaining • {completed:N0} completed"
+            : $"NO REMAINING QUEST-KEY USE • {completed:N0} completed";
 
         var expanded = AddItemDetailCollapsibleSection(
             parent,
@@ -985,7 +1012,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             "QUEST KEY KNOWLEDGE",
             summary,
             meta,
-            !Plugin.Settings.CollapseSectionsByDefault.Value);
+            !Plugin.Settings.CollapseSectionsByDefault.Value && HasUsefulQuestKeyKnowledge(usage));
         if (!expanded)
         {
             return;
@@ -1040,7 +1067,9 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             : readyCraft is not null
                 ? $"Craft use: {readyCraft.StationName} L{readyCraft.RequiredStationLevel} • {readyCraft.Status}"
                 : "No Hideout upgrade or player-facing recipe currently uses this item.";
-        var meta = $"{usage.UpgradeUses.Count:N0} upgrade(s) • {usage.ProducedBy.Count:N0} produced-by recipe(s) • {usage.UsedBy.Count:N0} ingredient recipe(s)";
+        var meta = HasUsefulHideoutOrCraftInfo(usage)
+            ? $"{usage.UpgradeUses.Count:N0} upgrade(s) • {usage.ProducedBy.Count:N0} produced-by recipe(s) • {usage.UsedBy.Count:N0} ingredient recipe(s)"
+            : "NO CURRENT HIDEOUT OR CRAFT USE";
 
         var expanded = AddItemDetailCollapsibleSection(
             parent,
@@ -1048,7 +1077,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             "HIDEOUT & CRAFT USES",
             summary,
             meta,
-            !Plugin.Settings.CollapseSectionsByDefault.Value);
+            !Plugin.Settings.CollapseSectionsByDefault.Value && HasUsefulHideoutOrCraftInfo(usage));
         if (!expanded)
         {
             return;
@@ -1100,6 +1129,41 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 craft.Status,
                 () => _state!.Navigate("Crafts"));
         }
+    }
+
+    private static bool HasUsefulTraderInfo(HermesTraderSummaryResponse? summary)
+    {
+        return summary is { Found: true }
+               && (summary.BestSellOffer is not null
+                   || summary.SellOffers.Count > 0
+                   || summary.PurchaseOffers.Any(offer => offer.IsAvailable));
+    }
+
+    private static bool HasUsefulMarketInfo(HermesMarketSummaryResponse? market)
+    {
+        return market is { Found: true }
+               && (market.LowestPrice.HasValue
+                   || market.MedianPrice.HasValue
+                   || market.SuggestedListPrice.HasValue
+                   || market.EstimatedNetSale.HasValue
+                   || market.ComparableOfferCount > 0);
+    }
+
+    private static bool HasUsefulQuestRequirements(HermesItemHideoutUsageResponse usage)
+    {
+        return usage.QuestUses.Any(quest => !quest.ConditionCompleted && !quest.QuestCompleted);
+    }
+
+    private static bool HasUsefulQuestKeyKnowledge(HermesItemHideoutUsageResponse usage)
+    {
+        return usage.QuestKeyUses.Any(key => !key.QuestCompleted);
+    }
+
+    private static bool HasUsefulHideoutOrCraftInfo(HermesItemHideoutUsageResponse usage)
+    {
+        return usage.UpgradeUses.Any(upgrade => !upgrade.IsMet && upgrade.TargetLevel > upgrade.CurrentLevel)
+               || usage.ProducedBy.Count > 0
+               || usage.UsedBy.Count > 0;
     }
 
     private bool AddItemDetailCollapsibleSection(

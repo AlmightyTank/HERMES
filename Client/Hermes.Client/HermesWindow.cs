@@ -2231,6 +2231,7 @@ internal sealed class HermesWindow
 
             if (IsCurrent())
             {
+                ApplySmartItemSectionCollapse();
                 _detailStatus = !selectFirstMatchingStashInstance
                     ? _stashInstances.Count > 0
                         ? "Preview analysis uses the full-condition base item. Matching stash copies are available in the selector below."
@@ -2418,6 +2419,56 @@ internal sealed class HermesWindow
             HermesTab.RaidPlanner => "Raid Planner",
             _ => "Item Search"
         };
+    }
+
+    private void ApplySmartItemSectionCollapse()
+    {
+        // Preserve the player's configured defaults for useful sections, but never leave
+        // a detail section expanded when it only contains empty, completed, or unavailable data.
+        _stashInstancesExpanded &= _stashInstances.Count > 0;
+        _saleComparisonExpanded &= HasUsefulTraderInfo(_traderSummary);
+        _marketExpanded &= HasUsefulMarketInfo(_marketSummary);
+        _questRequirementsExpanded &= HasUsefulQuestRequirements(_hideoutUsage);
+        _questKeysExpanded &= HasUsefulQuestKeyKnowledge(_hideoutUsage);
+        _hideoutCraftUsesExpanded &= HasUsefulHideoutOrCraftInfo(_hideoutUsage);
+    }
+
+    private static bool HasUsefulTraderInfo(HermesTraderSummaryResponse? summary)
+    {
+        return summary is { Found: true }
+               && (summary.BestSellOffer is not null
+                   || summary.SellOffers.Count > 0
+                   || summary.PurchaseOffers.Any(offer => offer.IsAvailable));
+    }
+
+    private static bool HasUsefulMarketInfo(HermesMarketSummaryResponse? market)
+    {
+        return market is { Found: true }
+               && (market.LowestPrice.HasValue
+                   || market.MedianPrice.HasValue
+                   || market.SuggestedListPrice.HasValue
+                   || market.EstimatedNetSale.HasValue
+                   || market.ComparableOfferCount > 0);
+    }
+
+    private static bool HasUsefulQuestRequirements(HermesItemHideoutUsageResponse? usage)
+    {
+        return usage is { Found: true }
+               && usage.QuestUses.Any(quest => !quest.ConditionCompleted && !quest.QuestCompleted);
+    }
+
+    private static bool HasUsefulQuestKeyKnowledge(HermesItemHideoutUsageResponse? usage)
+    {
+        return usage is { Found: true }
+               && usage.QuestKeyUses.Any(key => !key.QuestCompleted);
+    }
+
+    private static bool HasUsefulHideoutOrCraftInfo(HermesItemHideoutUsageResponse? usage)
+    {
+        return usage is { Found: true }
+               && (usage.UpgradeUses.Any(upgrade => !upgrade.IsMet && upgrade.TargetLevel > upgrade.CurrentLevel)
+                   || usage.ProducedBy.Count > 0
+                   || usage.UsedBy.Count > 0);
     }
 
     private void ResetSectionExpansionDefaults()

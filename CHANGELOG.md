@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0-rc.2.4.1
+
+- Added smart Items & Market section defaults so low-value or empty detail groups stay collapsed initially.
+- Stash Instance Pricing is now collapsible and stays closed when the profile owns no matching copy.
+- Traders stays closed when there is no supported sale or currently available purchase offer.
+- Flea Market stays closed when no usable price, comparable offer, or net-sale estimate exists.
+- Quest Requirements and Quest Key Knowledge stay closed when every known use is completed or no use exists.
+- Hideout & Craft Uses stays closed when there is no remaining upgrade requirement and no recipe association.
+- Compact headers still show the useful conclusion, and every section can still be expanded for completed or unavailable details.
+
 ## 0.1.0-rc.2.4
 
 Final whole-mod polish and performance pass before the 0.1.0 release decision.

@@ -1,20 +1,42 @@
-# HERMES 0.1.0-rc.2.4 validation
+# HERMES 0.1.0-rc.2.4.1 validation
 
-- Checks passed: 119
+- Checks passed: 93
 - Checks failed: 0
 
 - PASS: XML Hermes.Build.csproj
 - PASS: XML Client/Hermes.Client/Hermes.Client.csproj
 - PASS: XML Server/Hermes.Server/Hermes.Server.csproj
 - PASS: XML Version.props
-- PASS: Quest-key JSON parses — 63 entries
+- PASS: Quest-key JSON parses — object
+- PASS: C# delimiters Server/Hermes.Server/ModMetadata.cs
+- PASS: C# delimiters Server/Hermes.Server/HermesVersionInfo.cs
+- PASS: C# delimiters Server/Hermes.Server/Models/HermesChangeTrackingModels.cs
+- PASS: C# delimiters Server/Hermes.Server/Models/HermesModels.cs
+- PASS: C# delimiters Server/Hermes.Server/Routers/HermesDynamicRouter.cs
+- PASS: C# delimiters Server/Hermes.Server/Routers/HermesStaticRouter.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesCacheService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesCatalogService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesChangeTrackingService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesHideoutService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesLoadoutAnalysisSettings.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesLoadoutValueService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesMarketPriceService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesMarketService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesPreparedProfileSnapshotService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesProfileScopeService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesReservationService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesStashAnalysisService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesStashAnalysisSettings.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesStashService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesTraderService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesLoadoutService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesQuestKeyKnowledgeService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesStaticDataSnapshotService.cs
 - PASS: C# delimiters Client/Hermes.Client/AskHermesContextMenuPatch.cs
-- PASS: C# delimiters Client/Hermes.Client/Compatibility/IsExternalInit.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesApiClient.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesAssistantConversationContext.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesAssistantIntentEngine.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesAssistantNoticeService.cs
-- PASS: C# delimiters Client/Hermes.Client/HermesAssistantPanel.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesAssistantReasoningEngine.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesClientSettings.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesCraftPanel.cs
@@ -49,78 +71,30 @@
 - PASS: C# delimiters Client/Hermes.Client/HermesRevisionApiClient.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesStashPanel.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesUi.cs
-- PASS: C# delimiters Client/Hermes.Client/HermesVersionInfo.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesWindow.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesWorkspaceSeparationPatch.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesWorkspaceSnapshotCoordinator.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesWorkspaceSummaryApiClient.cs
+- PASS: C# delimiters Client/Hermes.Client/Plugin.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesVersionInfo.cs
+- PASS: C# delimiters Client/Hermes.Client/HermesAssistantPanel.cs
+- PASS: C# delimiters Client/Hermes.Client/Compatibility/IsExternalInit.cs
 - PASS: C# delimiters Client/Hermes.Client/Models/HermesChangeTrackingModels.cs
 - PASS: C# delimiters Client/Hermes.Client/Models/HermesModels.cs
-- PASS: C# delimiters Client/Hermes.Client/Plugin.cs
-- PASS: C# delimiters Server/Hermes.Server/HermesVersionInfo.cs
-- PASS: C# delimiters Server/Hermes.Server/ModMetadata.cs
-- PASS: C# delimiters Server/Hermes.Server/Models/HermesChangeTrackingModels.cs
-- PASS: C# delimiters Server/Hermes.Server/Models/HermesModels.cs
-- PASS: C# delimiters Server/Hermes.Server/Routers/HermesDynamicRouter.cs
-- PASS: C# delimiters Server/Hermes.Server/Routers/HermesStaticRouter.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesCacheService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesCatalogService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesChangeTrackingService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesHideoutService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesLoadoutAnalysisSettings.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesLoadoutService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesLoadoutValueService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesMarketPriceService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesMarketService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesPreparedProfileSnapshotService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesProfileScopeService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesQuestKeyKnowledgeService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesReservationService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesStashAnalysisService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesStashAnalysisSettings.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesStashService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesStaticDataSnapshotService.cs
-- PASS: C# delimiters Server/Hermes.Server/Services/HermesTraderService.cs
-- PASS: Shared response-model coverage — 35 shared response types
-- PASS: Client response contracts unchanged from RC.2.3
-- PASS: Server response contracts unchanged from RC.2.3
-- PASS: Current version is rc.2.4
+- PASS: Current version is rc.2.4.1
 - PASS: README current version
-- PASS: Release package is clean
-- PASS: Required documentation
+- PASS: Changelog current version
+- PASS: Native stash pricing collapsible
+- PASS: Native low-value trader collapse
+- PASS: Native low-value flea collapse
+- PASS: Native completed quest collapse
+- PASS: Native completed key collapse
+- PASS: Native no-use Hideout/craft collapse
+- PASS: Legacy smart section collapse
+- PASS: Useful sections retain F12 defaults
+- PASS: Manual expansion remains available
+- PASS: No generated build folders
 - PASS: MIT license present
-- PASS: Single client HTTP owner — ['Client/Hermes.Client/HermesRequestBroker.cs']
-- PASS: Server-held watch route removed
-- PASS: Watch wait machinery removed
-- PASS: Obsolete presentation patch removed
-- PASS: Presentation open calls coordinator
-- PASS: Static-data snapshot singleton
-- PASS: Static Hideout data cached
-- PASS: Static quest data cached
-- PASS: Static locale data cached
-- PASS: Static trader names cached
-- PASS: Catalog pre-indexes template references
-- PASS: Catalog removed per-item occurrence scans
-- PASS: Static database fingerprint materialized once
-- PASS: Quest-key lookup indexed
-- PASS: Prepared profile sharing is two seconds
-- PASS: Immediate response reuse bounded
-- PASS: Mutation clears recent responses
-- PASS: Read-only response cache allowlist
-- PASS: Active host discovery throttled
-- PASS: Native view synchronization throttled
-- PASS: Row cap uses F12 setting
-- PASS: Row cap release default
-- PASS: Expansion-state cache bounded
-- PASS: Collapsed details release defaults
-- PASS: Loadout provision precedes medical
-- PASS: MRE excluded from medical readiness
-- PASS: Medical capabilities gated by medical identity
-- PASS: Loadout value classifies MRE as provision
-- PASS: Stash classifies provision before medical
 - PASS: No target-typed new char array
-- PASS: Readiness uses explicit string constructor
-- PASS: TemplateInfo missing factory uses named args
-- PASS: Comfort reference present
 
 Compilation and runtime testing require Visual Studio and the local SPT 4.0.13 assemblies.

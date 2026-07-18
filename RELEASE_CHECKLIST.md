@@ -1,6 +1,6 @@
 # HERMES 0.1.0 release checklist
 
-Build and test against a clean SPT 4.0.13 installation before changing `Version.props` from `0.1.0-rc.2.4` to `0.1.0`.
+Build and test against a clean SPT 4.0.13 installation before changing `Version.props` from `0.1.0-rc.2.4.1` to `0.1.0`.
 
 ## Build and package
 
@@ -27,6 +27,7 @@ Build and test against a clean SPT 4.0.13 installation before changing `Version.
 - [ ] Confirm scroll state is restored and no old workspace blocks input.
 - [ ] Confirm the top Refresh button performs a source recheck and completes.
 - [ ] Confirm Items & Market search, stash-copy selection, and the sale-estimate card display correctly.
+- [ ] Confirm empty, completed-only, and unavailable Items & Market sections start collapsed while their summary remains visible and manual expansion still works.
 - [ ] Click items from every Stash view and confirm Items & Market opens with the exact clicked copy already selected.
 
 ## Data and performance

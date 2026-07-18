@@ -2,16 +2,16 @@
 
 ## Decision
 
-The project is ready to enter **0.1.0-rc.2.4 runtime validation**. It is not yet approved for the final `0.1.0` label because the latest performance, initial-tab settling, and tab-transition presentation changes have not been rebuilt and exercised in a clean SPT 4.0.13 runtime.
+The project is ready to enter **0.1.0-rc.2.4.1 runtime validation**. It is not yet approved for the final `0.1.0` label because the latest performance, initial-tab settling, and tab-transition presentation changes have not been rebuilt and exercised in a clean SPT 4.0.13 runtime.
 
 ## Static audit result
 
 - 87 release-source files
 - 73 C# files
-- 46,043 C# lines
+- 46,158 C# lines
 - 29 server routes
 - 61 shared client/server response models
-- 119 automated static checks passed
+- 93 automated static checks passed
 - 0 automated static checks failed
 
 The audit checked project XML, source delimiter structure, unfinished markers, stale version labels, shared versioning, request-pipeline ownership, route registration and ordering, client/server model parity, server DI cycles, client assembly references, configuration bindings, first-load tab settling, map-normalization compilation safety, build/deployment defaults, required documentation, and the embedded icon.
@@ -54,6 +54,13 @@ The audit checked project XML, source delimiter structure, unfinished markers, s
 - Bounded native item-section state and reduced the default shared row cap.
 - Confirmed MRE/ration provisions take precedence over generic `Buffs` medical detection in Loadout readiness, Loadout value categorization, and Stash categorization.
 
+## RC.2.4.1 Items & Market information-density review
+
+- Confirmed Stash Instance Pricing is collapsible in both native and legacy presentations.
+- Confirmed no-owned-copy, no-offer, no-market-value, completed-only quest/key, and no-current-use sections start collapsed.
+- Confirmed compact headers preserve the most useful conclusion while expanded content remains available on demand.
+- Confirmed useful sections continue to respect the existing F12 expansion defaults.
+
 ## Runtime gates still required
 
 1. Clean and build `Hermes.Build` in Release with zero errors.
@@ -63,7 +70,7 @@ The audit checked project XML, source delimiter structure, unfinished markers, s
 5. Verify all HERMES and native tab transitions refresh only the client presentation.
 6. Capture startup and post-raid client/server logs to confirm one preparation batch, complete Assistant preparation, cache hits on later opens, and no request loop.
 7. Exercise pre-raid map matching, context actions, notifications, profile switching, and a full PMC raid lifecycle.
-8. Change `Version.props` from `0.1.0-rc.2.4` to `0.1.0` only after `RELEASE_CHECKLIST.md` passes.
+8. Change `Version.props` from `0.1.0-rc.2.4.1` to `0.1.0` only after `RELEASE_CHECKLIST.md` passes.
 
 ## Environment limitation
 

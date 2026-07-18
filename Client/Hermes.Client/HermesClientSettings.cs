@@ -365,7 +365,7 @@ internal sealed class HermesClientSettings
             "Interface",
             "Collapse sections by default",
             true,
-            "Starts collapsible detail sections closed until opened, including quest, key, Hideout, and craft uses in Items & Market.");
+            "Starts useful collapsible detail sections closed until opened. Items & Market sections with no current value, requirement, or owned copy are always collapsed initially.");
         MaximumRowsPerSection = config.Bind(
             "Interface",
             "Maximum rows per section",
