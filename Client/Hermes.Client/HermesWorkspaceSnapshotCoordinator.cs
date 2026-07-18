@@ -1,6 +1,5 @@
 using System.Reflection;
 using Hermes.Client.Models;
-using SPT.Reflection.Patching;
 using UnityEngine;
 
 namespace Hermes.Client;
@@ -1597,23 +1596,5 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         public HermesStashSummaryResponse? Stash { get; }
         public HermesLoadoutSummaryResponse? Loadout { get; }
         public bool Manual { get; }
-    }
-}
-
-/// <summary>
-/// Presentation-open accelerates the one startup full load. After that load finishes, reopening
-/// HERMES refreshes only the currently visible workspace from the server's prepared summary.
-/// </summary>
-internal sealed class HermesSnapshotPresentationOpenPatch : ModulePatch
-{
-    protected override MethodBase GetTargetMethod()
-        => typeof(HermesWindow).GetMethod("OnPresentationOpened", BindingFlags.Instance | BindingFlags.NonPublic)
-           ?? throw new MissingMethodException(typeof(HermesWindow).FullName, "OnPresentationOpened");
-
-    [PatchPrefix]
-    private static bool Prefix()
-    {
-        HermesWorkspaceSnapshotCoordinator.Current?.OnPresentationOpened();
-        return false;
     }
 }

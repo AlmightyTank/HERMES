@@ -32,7 +32,7 @@ public sealed class HermesHideoutService(
     DatabaseService databaseService,
     HermesPreparedProfileSnapshotService preparedProfiles,
     HermesProfileScopeService profileScopeService,
-    JsonUtil jsonUtil,
+    HermesStaticDataSnapshotService staticData,
     HermesCatalogService catalogService,
     HermesTraderService traderService,
     HermesMarketService marketService,
@@ -2184,7 +2184,7 @@ public sealed class HermesHideoutService(
                 return;
             }
 
-            var root = JsonNode.Parse(jsonUtil.Serialize(databaseService.GetHideout()) ?? "{}");
+            var root = staticData.GetHideoutRoot();
             var areasByKey = new Dictionary<string, AreaDefinition>(StringComparer.OrdinalIgnoreCase);
             var areasByType = new Dictionary<int, AreaDefinition>();
 
@@ -2303,17 +2303,10 @@ public sealed class HermesHideoutService(
                 craftsById[definition.Id] = definition;
             }
 
-            var traderNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var (id, trader) in databaseService.GetTraders())
-            {
-                var name = trader.Base.Nickname;
-                if (string.IsNullOrWhiteSpace(name))
-                {
-                    name = trader.Base.Name;
-                }
-
-                traderNames[id.ToString()] = string.IsNullOrWhiteSpace(name) ? "Trader" : name;
-            }
+            var traderNames = staticData.GetTraderNames().ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value,
+                StringComparer.OrdinalIgnoreCase);
 
             var questUsesByTemplate = BuildQuestUsageIndex(traderNames);
 
@@ -2337,7 +2330,7 @@ public sealed class HermesHideoutService(
         JsonNode? root;
         try
         {
-            root = JsonNode.Parse(jsonUtil.Serialize(databaseService.GetQuests()) ?? "{}");
+            root = staticData.GetQuestsRoot();
         }
         catch
         {
@@ -2399,7 +2392,7 @@ public sealed class HermesHideoutService(
         JsonNode? root;
         try
         {
-            root = JsonNode.Parse(jsonUtil.Serialize(databaseService.GetQuests()) ?? "{}");
+            root = staticData.GetQuestsRoot();
         }
         catch
         {

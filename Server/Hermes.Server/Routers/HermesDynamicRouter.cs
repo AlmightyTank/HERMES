@@ -69,13 +69,6 @@ public sealed class HermesDynamicRouter(
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(
-                "/hermes/watch/",
-                (url, _, sessionId, _) => WatchForChangesAsync(
-                    url,
-                    sessionId,
-                    changeTrackingService,
-                    httpResponseUtil)),
-            new RouteAction(
                 "/hermes/changes/",
                 (url, _, sessionId, _) =>
                 {
@@ -211,28 +204,6 @@ public sealed class HermesDynamicRouter(
                 })
         ])
 {
-    private static async ValueTask<object> WatchForChangesAsync(
-        string url,
-        MongoId sessionId,
-        HermesChangeTrackingService changeTrackingService,
-        HttpResponseUtil httpResponseUtil)
-    {
-        var tail = GetTail(url, "/hermes/watch/");
-        var segments = tail.Split(
-            '/',
-            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        _ = long.TryParse(segments.ElementAtOrDefault(0), out var knownRevision);
-        var mode = segments.ElementAtOrDefault(1) ?? "closed";
-        var hermesOpen = mode.Equals("open", StringComparison.OrdinalIgnoreCase)
-                         || mode.Equals("1", StringComparison.OrdinalIgnoreCase)
-                         || mode.Equals("true", StringComparison.OrdinalIgnoreCase);
-        var response = await changeTrackingService.WaitForChangesAsync(
-            sessionId,
-            Math.Max(0L, knownRevision),
-            hermesOpen);
-        return httpResponseUtil.GetBody(response);
-    }
-
     private static string GetTail(string url, string prefix)
     {
         var index = url.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);

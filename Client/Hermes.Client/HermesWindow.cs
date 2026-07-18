@@ -36,7 +36,9 @@ internal sealed class HermesWindow
     private bool _loadingDetails;
     private bool _saleComparisonExpanded;
     private bool _marketExpanded;
-    private bool _hideoutUsageExpanded;
+    private bool _questRequirementsExpanded;
+    private bool _questKeysExpanded;
+    private bool _hideoutCraftUsesExpanded;
     private bool _stashInstancesExpanded = true;
     private bool _loadingInstancePrice;
     private HermesTab _activeTab;
@@ -113,9 +115,13 @@ internal sealed class HermesWindow
 
     private void OnPresentationOpened()
     {
+        // Rebuild the visible native presentation immediately. Server data is refreshed only
+        // through the prepared-workspace coordinator; opening HERMES must never behave like the
+        // top Refresh button or clear/invalidate server caches.
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
         if (Plugin.Settings.AutomaticallyRefreshWhenOpened.Value)
         {
-            _ = RefreshCurrentDataAsync(false);
+            HermesWorkspaceSnapshotCoordinator.Current?.OnPresentationOpened();
         }
     }
 
@@ -378,7 +384,8 @@ internal sealed class HermesWindow
             return;
         }
 
-        if (!_cacheStatusLoading
+        if (Plugin.Settings.ShowDiagnosticsFooter.Value
+            && !_cacheStatusLoading
             && (!_cacheStatusRequested || Time.realtimeSinceStartup >= _nextCacheStatusRefresh))
         {
             _cacheStatusRequested = true;
@@ -847,10 +854,6 @@ internal sealed class HermesWindow
                     DrawMarketSection(_marketSummary);
                 }
 
-                if (_traderSummary is not null)
-                {
-                    DrawTraderPurchaseSection(_traderSummary);
-                }
 
                 if (_hideoutUsage is not null)
                 {
@@ -967,20 +970,9 @@ internal sealed class HermesWindow
 
         GUILayout.BeginVertical(GUI.skin.box);
 
-        if (!string.IsNullOrWhiteSpace(summary.Message))
-        {
-            GUILayout.Label(summary.Message);
-        }
-
-        if (!string.IsNullOrWhiteSpace(summary.SalePriceBasis))
-        {
-            GUILayout.Label(summary.SalePriceBasis);
-            GUILayout.Space(4f);
-        }
-
         var arrow = _saleComparisonExpanded ? "▼" : "▶";
         if (GUILayout.Button(
-                $"{arrow}  BEST ESTIMATED TRADER SALE PRICE",
+                $"{arrow}  TRADERS — {summary.SellOffers.Count:N0} SELL • {summary.PurchaseOffers.Count:N0} BUY",
                 GUILayout.Height(30f),
                 GUILayout.ExpandWidth(true)))
         {
@@ -988,9 +980,21 @@ internal sealed class HermesWindow
         }
 
         DrawBestSale(summary);
+        DrawBestTraderPurchase(summary);
 
         if (_saleComparisonExpanded)
         {
+            if (!string.IsNullOrWhiteSpace(summary.Message))
+            {
+                GUILayout.Label(summary.Message);
+            }
+
+            if (!string.IsNullOrWhiteSpace(summary.SalePriceBasis))
+            {
+                GUILayout.Label(summary.SalePriceBasis);
+                GUILayout.Space(4f);
+            }
+
             GUILayout.Space(6f);
             GUILayout.Label("SALE COMPARISON ACROSS VANILLA TRADERS");
 
@@ -1012,6 +1016,8 @@ internal sealed class HermesWindow
                     DrawSellOffer(offer);
                 }
             }
+
+            DrawTraderPurchaseSection(summary);
         }
 
         GUILayout.EndVertical();
@@ -1021,8 +1027,8 @@ internal sealed class HermesWindow
     {
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.Label(summary.UsesSelectedStashInstance
-            ? "BEST ESTIMATED SALE FOR SELECTED STASH COPY"
-            : "BEST ESTIMATED SALE FOR BASE ITEM");
+            ? "BEST SALE — SELECTED STASH COPY"
+            : "BEST SALE — BASE ITEM");
 
         var best = summary.BestSellOffer;
         if (best is null)
@@ -1055,6 +1061,35 @@ internal sealed class HermesWindow
             }
         }
 
+        GUILayout.EndVertical();
+    }
+
+    private static void DrawBestTraderPurchase(HermesTraderSummaryResponse summary)
+    {
+        var best = summary.PurchaseOffers
+            .Where(offer => offer.IsAvailable)
+            .SelectMany(offer => offer.PaymentOptions
+                .Where(payment => payment.EstimateAvailable && payment.EstimatedRoubleValue > 0)
+                .Select(payment => new
+                {
+                    offer.TraderName,
+                    payment.DisplayPrice,
+                    payment.EstimatedRoubleValue
+                }))
+            .OrderBy(option => option.EstimatedRoubleValue)
+            .FirstOrDefault();
+
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.Label("CHEAPEST AVAILABLE TRADER PURCHASE");
+        if (best is null)
+        {
+            GUILayout.Label("No currently available vanilla-trader offer was found.");
+        }
+        else
+        {
+            GUILayout.Label($"{best.TraderName} — {best.DisplayPrice}");
+            GUILayout.Label($"Estimated value: ₽{best.EstimatedRoubleValue:N0}");
+        }
         GUILayout.EndVertical();
     }
 
@@ -1124,7 +1159,7 @@ internal sealed class HermesWindow
             return;
         }
 
-        GUILayout.Label(summary.SellRecommendation);
+        DrawMarketAtAGlance(summary);
         if (summary.MarketPriceFromActiveOffers
             && summary.ComparableOfferCount < Plugin.Settings.GetMinimumComparableFleaOffers())
         {
@@ -1145,6 +1180,38 @@ internal sealed class HermesWindow
             DrawLowestFleaOffers(summary);
         }
 
+        GUILayout.EndVertical();
+    }
+
+    private static void DrawMarketAtAGlance(HermesMarketSummaryResponse summary)
+    {
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.Label("FLEA AT A GLANCE");
+        if (!summary.FleaUnlocked)
+        {
+            GUILayout.Label($"Locked until level {summary.RequiredPlayerLevel}; current level {summary.PlayerLevel}.");
+        }
+        else if (!summary.CanSellOnFlea)
+        {
+            GUILayout.Label($"Cannot list: {summary.SellUnavailableReason ?? "Unavailable"}");
+        }
+        else
+        {
+            var suggested = summary.SuggestedListPrice.HasValue
+                ? $"₽{summary.SuggestedListPrice.Value:N0}"
+                : "unavailable";
+            var fee = summary.EstimatedListingFee.HasValue
+                ? $"₽{summary.EstimatedListingFee.Value:N0}"
+                : "unavailable";
+            var net = summary.EstimatedNetSale.HasValue
+                ? $"₽{summary.EstimatedNetSale.Value:N0}"
+                : "unavailable";
+            GUILayout.Label($"Suggested list: {suggested} • Fee: {fee} • Net: {net}");
+        }
+
+        GUILayout.Label(summary.LowestPrice.HasValue
+            ? $"Buy reference: lowest ₽{summary.LowestPrice.Value:N0} • median ₽{summary.MedianPrice.GetValueOrDefault():N0}"
+            : "Buy reference: no comparable offer available.");
         GUILayout.EndVertical();
     }
 
@@ -1524,54 +1591,53 @@ internal sealed class HermesWindow
         GUILayout.Space(8f);
         if (!usage.Found)
         {
-            GUILayout.Label(usage.Message ?? "Quest, hideout, and crafting usage is unavailable.");
+            GUILayout.Label(usage.Message ?? "Quest, key, Hideout, and crafting usage is unavailable.");
             return;
         }
 
         GUILayout.BeginVertical(GUI.skin.box);
-        var arrow = _hideoutUsageExpanded ? "▼" : "▶";
-        var totalUses = usage.QuestUses.Count + usage.QuestKeyUses.Count + usage.UpgradeUses.Count + usage.ProducedBy.Count + usage.UsedBy.Count;
+        GUILayout.Label($"PROFILE OWNERSHIP — {usage.OwnedQuantity:N0} total • {usage.OwnedFoundInRaidQuantity:N0} FIR");
+        GUILayout.EndVertical();
+
+        DrawQuestRequirementsSection(usage);
+        DrawQuestKeysSection(usage);
+        DrawHideoutCraftUsesSection(usage);
+    }
+
+    private void DrawQuestRequirementsSection(HermesItemHideoutUsageResponse usage)
+    {
+        var active = usage.QuestUses
+            .Where(quest => quest.IsActive && !quest.ConditionCompleted && !quest.QuestCompleted)
+            .OrderByDescending(quest => quest.Missing > 0d)
+            .ThenBy(quest => quest.QuestName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var remaining = usage.QuestUses.Count(quest => !quest.ConditionCompleted && !quest.QuestCompleted);
+        var completed = usage.QuestUses.Count - remaining;
+        var first = active.FirstOrDefault()
+                    ?? usage.QuestUses.FirstOrDefault(quest => !quest.ConditionCompleted && !quest.QuestCompleted)
+                    ?? usage.QuestUses.FirstOrDefault();
+
+        GUILayout.Space(8f);
+        GUILayout.BeginVertical(GUI.skin.box);
+        var arrow = _questRequirementsExpanded ? "▼" : "▶";
         if (GUILayout.Button(
-                $"{arrow}  QUEST, HIDEOUT AND CRAFTING USAGE — {totalUses:N0}",
+                $"{arrow}  QUEST REQUIREMENTS — {active.Count:N0} ACTIVE • {remaining:N0} REMAINING",
                 GUILayout.Height(30f),
                 GUILayout.ExpandWidth(true)))
         {
-            _hideoutUsageExpanded = !_hideoutUsageExpanded;
+            _questRequirementsExpanded = !_questRequirementsExpanded;
         }
 
-        if (_hideoutUsageExpanded)
+        GUILayout.Label(first is null
+            ? "No standard quest item requirement uses this item."
+            : first.ConditionCompleted || first.QuestCompleted
+                ? $"Completed use: {first.QuestName}."
+                : $"{(first.IsActive ? "ACTIVE" : "FUTURE")}: {first.QuestName} — {first.ProgressText}");
+        GUILayout.Label($"Owned: {usage.OwnedQuantity:N0} total • {usage.OwnedFoundInRaidQuantity:N0} FIR • Completed uses: {completed:N0}");
+
+        if (_questRequirementsExpanded)
         {
             GUILayout.Space(6f);
-            GUILayout.Label($"Owned in PMC inventory: {usage.OwnedQuantity:N0} total • {usage.OwnedFoundInRaidQuantity:N0} FIR");
-
-            if (usage.QuestKeyUses.Count > 0)
-            {
-                GUILayout.Space(8f);
-                GUILayout.Label("QUEST KEY KNOWLEDGE");
-                foreach (var keyUse in usage.QuestKeyUses)
-                {
-                    var marker = keyUse.QuestCompleted ? "✓" : keyUse.IsActive ? "▶" : "•";
-                    GUILayout.BeginVertical(GUI.skin.box);
-                    GUILayout.Label($"{marker} {keyUse.QuestName} — {keyUse.MapName}");
-                    GUILayout.Label($"Status: {keyUse.QuestStatus}{(keyUse.AcquireInRaid ? " • Acquire during raid" : string.Empty)}");
-                    if (!string.IsNullOrWhiteSpace(keyUse.Opens))
-                    {
-                        GUILayout.Label($"Opens: {keyUse.Opens}");
-                    }
-                    if (!string.IsNullOrWhiteSpace(keyUse.Purpose))
-                    {
-                        GUILayout.Label(keyUse.Purpose);
-                    }
-                    if (!string.IsNullOrWhiteSpace(keyUse.Acquisition))
-                    {
-                        GUILayout.Label($"Acquisition: {keyUse.Acquisition}");
-                    }
-                    GUILayout.EndVertical();
-                }
-            }
-
-            GUILayout.Space(8f);
-            GUILayout.Label("QUEST REQUIREMENTS");
             if (usage.QuestUses.Count == 0)
             {
                 GUILayout.Label("No player-facing item requirement was found in standard quest completion conditions.");
@@ -1593,12 +1659,114 @@ internal sealed class HermesWindow
                     GUILayout.EndVertical();
                 }
             }
+        }
 
+        GUILayout.EndVertical();
+    }
+
+    private void DrawQuestKeysSection(HermesItemHideoutUsageResponse usage)
+    {
+        var active = usage.QuestKeyUses
+            .Where(key => key.IsActive && !key.QuestCompleted)
+            .OrderBy(key => key.QuestName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var remaining = usage.QuestKeyUses.Count(key => !key.QuestCompleted);
+        var completed = usage.QuestKeyUses.Count - remaining;
+        var first = active.FirstOrDefault()
+                    ?? usage.QuestKeyUses.FirstOrDefault(key => !key.QuestCompleted)
+                    ?? usage.QuestKeyUses.FirstOrDefault();
+
+        GUILayout.Space(8f);
+        GUILayout.BeginVertical(GUI.skin.box);
+        var arrow = _questKeysExpanded ? "▼" : "▶";
+        if (GUILayout.Button(
+                $"{arrow}  QUEST KEY KNOWLEDGE — {active.Count:N0} ACTIVE • {remaining:N0} REMAINING",
+                GUILayout.Height(30f),
+                GUILayout.ExpandWidth(true)))
+        {
+            _questKeysExpanded = !_questKeysExpanded;
+        }
+
+        GUILayout.Label(first is null
+            ? "This item is not linked to a known quest-key requirement."
+            : $"{(first.IsActive && !first.QuestCompleted ? "ACTIVE" : first.QuestCompleted ? "COMPLETED" : "KNOWN")}: {first.QuestName} — {first.MapName} — opens {first.Opens}");
+        GUILayout.Label($"Completed key uses: {completed:N0}");
+
+        if (_questKeysExpanded)
+        {
+            GUILayout.Space(6f);
+            if (usage.QuestKeyUses.Count == 0)
+            {
+                GUILayout.Label("The installed key and quest databases do not associate this item with a known quest lock.");
+            }
+            else
+            {
+                foreach (var keyUse in usage.QuestKeyUses)
+                {
+                    var marker = keyUse.QuestCompleted ? "✓" : keyUse.IsActive ? "▶" : "•";
+                    GUILayout.BeginVertical(GUI.skin.box);
+                    GUILayout.Label($"{marker} {keyUse.QuestName} — {keyUse.MapName}");
+                    GUILayout.Label($"Status: {keyUse.QuestStatus}{(keyUse.AcquireInRaid ? " • Acquire during raid" : string.Empty)}");
+                    if (!string.IsNullOrWhiteSpace(keyUse.Opens))
+                    {
+                        GUILayout.Label($"Opens: {keyUse.Opens}");
+                    }
+                    if (!string.IsNullOrWhiteSpace(keyUse.Purpose))
+                    {
+                        GUILayout.Label(keyUse.Purpose);
+                    }
+                    if (!string.IsNullOrWhiteSpace(keyUse.Acquisition))
+                    {
+                        GUILayout.Label($"Acquisition: {keyUse.Acquisition}");
+                    }
+                    GUILayout.EndVertical();
+                }
+            }
+        }
+
+        GUILayout.EndVertical();
+    }
+
+    private void DrawHideoutCraftUsesSection(HermesItemHideoutUsageResponse usage)
+    {
+        var nextUpgrade = usage.UpgradeUses
+            .Where(upgrade => !upgrade.IsMet && upgrade.TargetLevel > upgrade.CurrentLevel)
+            .OrderByDescending(upgrade => upgrade.IsNextUpgrade)
+            .ThenBy(upgrade => upgrade.TargetLevel)
+            .ThenBy(upgrade => upgrade.AreaName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        var readyCraft = usage.UsedBy
+            .Concat(usage.ProducedBy)
+            .OrderByDescending(craft => craft.CanStartNow || craft.IsComplete)
+            .ThenBy(craft => craft.StationName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        var totalUses = usage.UpgradeUses.Count + usage.ProducedBy.Count + usage.UsedBy.Count;
+
+        GUILayout.Space(8f);
+        GUILayout.BeginVertical(GUI.skin.box);
+        var arrow = _hideoutCraftUsesExpanded ? "▼" : "▶";
+        if (GUILayout.Button(
+                $"{arrow}  HIDEOUT & CRAFT USES — {totalUses:N0}",
+                GUILayout.Height(30f),
+                GUILayout.ExpandWidth(true)))
+        {
+            _hideoutCraftUsesExpanded = !_hideoutCraftUsesExpanded;
+        }
+
+        GUILayout.Label(nextUpgrade is not null
+            ? $"Next upgrade: {nextUpgrade.AreaName} L{nextUpgrade.TargetLevel} • Owned {nextUpgrade.Owned:N0}/{nextUpgrade.Required:N0} • Missing {nextUpgrade.Missing:N0}"
+            : readyCraft is not null
+                ? $"Craft use: {readyCraft.StationName} L{readyCraft.RequiredStationLevel} • {readyCraft.Status}"
+                : "No Hideout upgrade or player-facing recipe currently uses this item.");
+        GUILayout.Label($"Upgrades: {usage.UpgradeUses.Count:N0} • Produced by: {usage.ProducedBy.Count:N0} • Ingredient for: {usage.UsedBy.Count:N0}");
+
+        if (_hideoutCraftUsesExpanded)
+        {
             GUILayout.Space(8f);
             GUILayout.Label("HIDEOUT UPGRADES");
             if (usage.UpgradeUses.Count == 0)
             {
-                GUILayout.Label("Not required by a player-facing hideout upgrade.");
+                GUILayout.Label("Not required by a player-facing Hideout upgrade.");
             }
             else
             {
@@ -1620,7 +1788,7 @@ internal sealed class HermesWindow
             GUILayout.Label("PRODUCED BY");
             if (usage.ProducedBy.Count == 0)
             {
-                GUILayout.Label("No player-facing hideout recipe produces this item.");
+                GUILayout.Label("No player-facing Hideout recipe produces this item.");
             }
             else
             {
@@ -1641,7 +1809,7 @@ internal sealed class HermesWindow
             GUILayout.Label("USED AS AN INGREDIENT");
             if (usage.UsedBy.Count == 0)
             {
-                GUILayout.Label("Not used by a player-facing hideout recipe.");
+                GUILayout.Label("Not used by a player-facing Hideout recipe.");
             }
             else
             {
@@ -1873,7 +2041,9 @@ internal sealed class HermesWindow
         _loadingInstancePrice = false;
         _saleComparisonExpanded = Plugin.Settings.ExpandTraderComparisonByDefault.Value;
         _marketExpanded = Plugin.Settings.ExpandMarketByDefault.Value;
-        _hideoutUsageExpanded = false;
+        _questRequirementsExpanded = false;
+        _questKeysExpanded = false;
+        _hideoutCraftUsesExpanded = false;
         _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
 
         try
@@ -2256,7 +2426,9 @@ internal sealed class HermesWindow
         _stashInstancesExpanded = expanded;
         _saleComparisonExpanded = Plugin.Settings.ExpandTraderComparisonByDefault.Value;
         _marketExpanded = Plugin.Settings.ExpandMarketByDefault.Value;
-        _hideoutUsageExpanded = expanded;
+        _questRequirementsExpanded = expanded;
+        _questKeysExpanded = expanded;
+        _hideoutCraftUsesExpanded = expanded;
     }
 
     private static string FormatCount(double count)

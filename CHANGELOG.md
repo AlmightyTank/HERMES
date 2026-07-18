@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.0-rc.2.4
+
+Final whole-mod polish and performance pass before the 0.1.0 release decision.
+
+- Added one shared static-data snapshot for Hideout definitions, quests, locales, and trader names instead of repeatedly serializing and parsing immutable SPT tables.
+- Pre-indexed trader, Hideout, quest, and quest-key references so item lookups avoid repeated full-database string scans.
+- Added one-second reuse for immediately repeated read-only client requests while clearing that reuse cache before manual rechecks, workspace invalidations, or Assistant preparation.
+- Removed the unused server-held `/hermes/watch/` route and wake-signal machinery.
+- Reduced native screen discovery and workspace synchronization frequency once a valid InventoryScreen host is active.
+- Bounded per-item collapsible-section state and made the shared row limit configurable with a release-safe default of 80.
+- Collapsed detailed Items & Market sections, Flea details, and barter calculations by default while preserving the useful summary information.
+- Increased prepared-profile sharing to two seconds so parallel workspace preparation reuses one parsed profile snapshot.
+- Corrected provision classification so an MRE ration pack or other buff-bearing food is classified as **Provisions**, never as **Medical**.
+- Updated F12 labels to distinguish reading prepared data from a strong source Refresh.
+
+## 0.1.0-rc.2.3
+
+- Added collapsible Items & Market sections for Traders, Flea Market, Quest Requirements, Quest Key Knowledge, and Hideout & Craft Uses.
+- Kept the most useful summary visible while each section is collapsed and retained the full breakdown when expanded.
+- Remembered section expansion independently for each selected item.
+
 ## 0.1.0-rc.2.2.1
 
 - Added quest-key knowledge to the selected key inside **Items & Market**.
@@ -8,7 +29,7 @@
 - Active and completed quest-key associations are marked separately from future or locked quests.
 - Added quest-key counts to the Items & Market usage summary and client-content fingerprint.
 
-## 0.1.0-rc.2.2.1
+## 0.1.0-rc.2.2
 
 - Changed every item-facing **Ask HERMES** action to open **Items & Market** and immediately look up the selected item, including native Hideout requirement and production items.
 - Kept recipe navigation inside the Crafts workspace separate from the global Ask HERMES item action.

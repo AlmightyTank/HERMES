@@ -16,7 +16,7 @@ public sealed class HermesPreparedProfileSnapshotService(
     ProfileHelper profileHelper,
     JsonUtil jsonUtil)
 {
-    private static readonly TimeSpan SharedReadWindow = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan SharedReadWindow = TimeSpan.FromSeconds(2);
     private readonly object _sync = new();
     private readonly Dictionary<string, PreparedEntry> _bySession =
         new(StringComparer.OrdinalIgnoreCase);

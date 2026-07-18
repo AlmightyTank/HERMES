@@ -16,7 +16,7 @@ namespace Hermes.Client;
 internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 {
     private const float SyncInterval = 0.20f;
-    private const int MaximumRowsPerSection = 60;
+    private static int MaximumRowsPerSection => Plugin.Settings.GetMaximumRowsPerSection();
     private const float CompactToolbarHeight = 36f;
     private const float CompactControlHeight = 32f;
     private const float CompactMetricHeight = 46f;
@@ -28,6 +28,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
     private readonly Dictionary<string, string> _workspaceRootFingerprints = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, ScrollRect>> _workspaceScrolls = new(StringComparer.Ordinal);
     private readonly HashSet<string> _expandedRaidMaps = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, bool> _itemDetailSectionExpansion = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _scrollsToForceTop = new(StringComparer.Ordinal);
 
     private HermesNativeWorkspaceState? _state;
@@ -730,21 +731,56 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
     private void RenderTraderSummary(Transform parent, HermesTraderSummaryResponse? summary)
     {
-        AddSectionHeader(parent, "TRADERS");
         if (summary is null)
         {
+            AddSectionHeader(parent, "TRADERS");
             AddEmptyState(parent, _state!.DetailLoading ? "Loading trader data..." : "Trader data unavailable.", string.Empty);
             return;
         }
         if (!summary.Found)
         {
+            AddSectionHeader(parent, "TRADERS");
             AddEmptyState(parent, "No trader analysis.", summary.Message ?? string.Empty);
             return;
         }
 
-        var best = summary.BestSellOffer;
+        var bestSale = summary.BestSellOffer;
+        var bestPurchase = summary.PurchaseOffers
+            .Where(offer => offer.IsAvailable)
+            .SelectMany(offer => offer.PaymentOptions
+                .Where(payment => payment.EstimateAvailable && payment.EstimatedRoubleValue > 0)
+                .Select(payment => new
+                {
+                    offer.TraderName,
+                    payment.DisplayPrice,
+                    payment.EstimatedRoubleValue
+                }))
+            .OrderBy(option => option.EstimatedRoubleValue)
+            .FirstOrDefault();
+
+        var saleSummary = bestSale is null
+            ? "Sell: no supported trader buyer"
+            : $"Sell: {bestSale.TraderName} for {Money(bestSale.RoubleEquivalent)}";
+        var purchaseSummary = bestPurchase is null
+            ? "Buy: no currently available trader offer"
+            : $"Buy: {bestPurchase.TraderName} for {bestPurchase.DisplayPrice} (about {Money(bestPurchase.EstimatedRoubleValue)})";
+        var traderMeta = $"{summary.SellOffers.Count:N0} sale option(s) • {summary.PurchaseOffers.Count:N0} purchase offer(s)"
+                         + (summary.UsesSelectedStashInstance ? " • SELECTED STASH COPY" : " • BASE ITEM");
+
+        var expanded = AddItemDetailCollapsibleSection(
+            parent,
+            "traders",
+            "TRADERS",
+            $"{saleSummary}\n{purchaseSummary}",
+            traderMeta,
+            Plugin.Settings.ExpandTraderComparisonByDefault.Value);
+        if (!expanded)
+        {
+            return;
+        }
+
         AddMetricGrid(parent,
-            ("BEST SALE", best is null ? "NO BUYER" : $"{best.TraderName} • {Money(best.RoubleEquivalent)}"),
+            ("BEST SALE", bestSale is null ? "NO BUYER" : $"{bestSale.TraderName} • {Money(bestSale.RoubleEquivalent)}"),
             ("REFERENCE", Money(summary.ReferencePrice)),
             ("PURCHASE OFFERS", summary.PurchaseOffers.Count.ToString("N0")));
 
@@ -754,6 +790,11 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             summary.SalePriceBasis,
             summary.UsesSelectedStashInstance ? "SELECTED STASH COPY" : "FULL-CONDITION BASE ITEM");
 
+        AddSectionHeader(parent, "SELL TO TRADERS");
+        if (summary.SellOffers.Count == 0)
+        {
+            AddEmptyState(parent, "No supported trader buyer.", summary.Message ?? string.Empty);
+        }
         foreach (var offer in summary.SellOffers.Take(12))
         {
             AddCard(parent,
@@ -762,9 +803,18 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 offer.IsBest ? "BEST TRADER SALE" : "TRADER SALE");
         }
 
+        AddSectionHeader(parent, "BUY FROM TRADERS");
+        if (summary.PurchaseOffers.Count == 0)
+        {
+            AddEmptyState(parent, "No trader purchase offer.", "No current vanilla-trader offer was found for this item.");
+        }
         foreach (var offer in summary.PurchaseOffers.Take(20))
         {
-            var payment = offer.PaymentOptions.OrderBy(option => option.EstimatedRoubleValue).FirstOrDefault();
+            var payment = offer.PaymentOptions
+                .Where(option => option.EstimateAvailable && option.EstimatedRoubleValue > 0)
+                .OrderBy(option => option.EstimatedRoubleValue)
+                .FirstOrDefault()
+                ?? offer.PaymentOptions.OrderBy(option => option.EstimatedRoubleValue).FirstOrDefault();
             AddCard(parent,
                 offer.TraderName,
                 payment is null
@@ -776,15 +826,45 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
     private void RenderMarketSummary(Transform parent, HermesMarketSummaryResponse? market)
     {
-        AddSectionHeader(parent, "FLEA MARKET");
         if (market is null)
         {
+            AddSectionHeader(parent, "FLEA MARKET");
             AddEmptyState(parent, _state!.DetailLoading ? "Loading local flea data..." : "Market data unavailable.", string.Empty);
             return;
         }
         if (!market.Found)
         {
+            AddSectionHeader(parent, "FLEA MARKET");
             AddEmptyState(parent, "No market analysis.", market.Message ?? string.Empty);
+            return;
+        }
+
+        var configuredMinimum = Plugin.Settings.GetMinimumComparableFleaOffers();
+        var reliable = market.MarketPriceFromActiveOffers && market.ComparableOfferCount >= configuredMinimum;
+        var reliability = reliable
+            ? "RELIABLE"
+            : market.MarketPriceFromActiveOffers
+                ? "LOW SAMPLE"
+                : "REFERENCE";
+        var saleSummary = !market.FleaUnlocked
+            ? $"Locked until player level {market.RequiredPlayerLevel}."
+            : !market.CanSellOnFlea
+                ? $"Cannot list: {market.SellUnavailableReason ?? "listing unavailable"}."
+                : $"Net sale {Money(market.EstimatedNetSale)} after fee {Money(market.EstimatedListingFee)} • suggested list {Money(market.SuggestedListPrice)}";
+        var buySummary = market.LowestPrice.HasValue
+            ? $"Lowest comparable offer {Money(market.LowestPrice)} • median {Money(market.MedianPrice)}"
+            : "No comparable Flea offer is currently available.";
+        var marketMeta = $"{market.ComparableOfferCount:N0} comparable offer(s) • {reliability} • {market.MarketPriceSource}";
+
+        var expanded = AddItemDetailCollapsibleSection(
+            parent,
+            "flea",
+            "FLEA MARKET",
+            $"{saleSummary}\n{buySummary}",
+            marketMeta,
+            Plugin.Settings.ExpandMarketByDefault.Value);
+        if (!expanded)
+        {
             return;
         }
 
@@ -798,6 +878,11 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         AddCard(parent, "BUY RECOMMENDATION", market.BuyRecommendation, market.FleaUnlocked ? "FLEA UNLOCKED" : $"UNLOCKS AT LEVEL {market.RequiredPlayerLevel}");
         AddCard(parent, "SELL RECOMMENDATION", market.SellRecommendation, market.CanSellOnFlea ? "CAN LIST" : market.SellUnavailableReason ?? "CANNOT LIST");
 
+        AddSectionHeader(parent, "LOWEST COMPARABLE OFFERS");
+        if (market.LowestOffers.Count == 0)
+        {
+            AddEmptyState(parent, "No comparable Flea offers.", market.MarketPriceSource);
+        }
         foreach (var offer in market.LowestOffers.Take(12))
         {
             AddCard(parent,
@@ -809,27 +894,107 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
     private void RenderItemUsage(Transform parent, HermesItemHideoutUsageResponse? usage)
     {
-        AddSectionHeader(parent, "QUEST, KEY, HIDEOUT & CRAFT USES");
         if (usage is null)
         {
+            AddSectionHeader(parent, "QUEST, KEY, HIDEOUT & CRAFT USES");
             AddEmptyState(parent, _state!.DetailLoading ? "Loading profile uses..." : "Profile usage unavailable.", string.Empty);
             return;
         }
         if (!usage.Found)
         {
+            AddSectionHeader(parent, "QUEST, KEY, HIDEOUT & CRAFT USES");
             AddEmptyState(parent, "No profile usage analysis.", usage.Message ?? string.Empty);
+            return;
+        }
+
+        RenderQuestRequirementSection(parent, usage);
+        RenderQuestKeySection(parent, usage);
+        RenderHideoutAndCraftUsageSection(parent, usage);
+    }
+
+    private void RenderQuestRequirementSection(Transform parent, HermesItemHideoutUsageResponse usage)
+    {
+        var active = usage.QuestUses
+            .Where(quest => quest.IsActive && !quest.ConditionCompleted && !quest.QuestCompleted)
+            .OrderByDescending(quest => quest.Missing > 0d)
+            .ThenBy(quest => quest.QuestName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var remaining = usage.QuestUses.Count(quest => !quest.ConditionCompleted && !quest.QuestCompleted);
+        var completed = usage.QuestUses.Count - remaining;
+        var first = active.FirstOrDefault()
+                    ?? usage.QuestUses.FirstOrDefault(quest => !quest.ConditionCompleted && !quest.QuestCompleted)
+                    ?? usage.QuestUses.FirstOrDefault();
+        var summary = first is null
+            ? "No standard quest item requirement uses this item."
+            : first.ConditionCompleted || first.QuestCompleted
+                ? $"Completed use: {first.QuestName}."
+                : $"{(first.IsActive ? "ACTIVE" : "FUTURE")}: {first.QuestName} • {first.ProgressText}";
+        var meta = $"{active.Count:N0} active • {remaining:N0} remaining • {completed:N0} completed • owned {FormatCount(usage.OwnedQuantity)} ({FormatCount(usage.OwnedFoundInRaidQuantity)} FIR)";
+
+        var expanded = AddItemDetailCollapsibleSection(
+            parent,
+            "quests",
+            "QUEST REQUIREMENTS",
+            summary,
+            meta,
+            !Plugin.Settings.CollapseSectionsByDefault.Value);
+        if (!expanded)
+        {
             return;
         }
 
         AddMetricGrid(parent,
             ("OWNED", FormatCount(usage.OwnedQuantity)),
             ("OWNED FIR", FormatCount(usage.OwnedFoundInRaidQuantity)),
-            ("QUEST USES", usage.QuestUses.Count.ToString("N0")),
-            ("KEY QUESTS", usage.QuestKeyUses.Count.ToString("N0")),
-            ("UPGRADES", usage.UpgradeUses.Count.ToString("N0")),
-            ("PRODUCED BY", usage.ProducedBy.Count.ToString("N0")),
-            ("USED BY", usage.UsedBy.Count.ToString("N0")));
+            ("ACTIVE", active.Count.ToString("N0")),
+            ("REMAINING", remaining.ToString("N0")),
+            ("COMPLETED", completed.ToString("N0")));
 
+        if (usage.QuestUses.Count == 0)
+        {
+            AddEmptyState(parent, "No quest requirements.", "No player-facing item requirement was found in standard quest completion conditions.");
+        }
+        foreach (var quest in usage.QuestUses.Take(30))
+        {
+            AddCard(parent,
+                quest.QuestName,
+                $"{quest.ProgressText}\nRequired {FormatCount(quest.Required)}{(quest.FoundInRaidRequired ? " FIR" : string.Empty)} • owned matching {FormatCount(quest.OwnedMatchingTargets)} • this item {FormatCount(quest.OwnedSelectedItem)}",
+                $"{quest.TraderName} • {quest.QuestStatus}{(quest.ConditionCompleted ? " • OBJECTIVE COMPLETE" : string.Empty)}");
+        }
+    }
+
+    private void RenderQuestKeySection(Transform parent, HermesItemHideoutUsageResponse usage)
+    {
+        var active = usage.QuestKeyUses
+            .Where(key => key.IsActive && !key.QuestCompleted)
+            .OrderBy(key => key.QuestName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var remaining = usage.QuestKeyUses.Count(key => !key.QuestCompleted);
+        var completed = usage.QuestKeyUses.Count - remaining;
+        var first = active.FirstOrDefault()
+                    ?? usage.QuestKeyUses.FirstOrDefault(key => !key.QuestCompleted)
+                    ?? usage.QuestKeyUses.FirstOrDefault();
+        var summary = first is null
+            ? "This item is not linked to a known quest-key requirement."
+            : $"{(first.IsActive && !first.QuestCompleted ? "ACTIVE" : first.QuestCompleted ? "COMPLETED" : "KNOWN")}: {first.QuestName} • {first.MapName} • {first.Opens}";
+        var meta = $"{active.Count:N0} active • {remaining:N0} remaining • {completed:N0} completed";
+
+        var expanded = AddItemDetailCollapsibleSection(
+            parent,
+            "quest-keys",
+            "QUEST KEY KNOWLEDGE",
+            summary,
+            meta,
+            !Plugin.Settings.CollapseSectionsByDefault.Value);
+        if (!expanded)
+        {
+            return;
+        }
+
+        if (usage.QuestKeyUses.Count == 0)
+        {
+            AddEmptyState(parent, "No quest-key knowledge.", "The installed key and quest databases do not associate this item with a known quest lock.");
+        }
         foreach (var keyUse in usage.QuestKeyUses.Take(30))
         {
             var status = keyUse.QuestCompleted
@@ -837,45 +1002,143 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 : keyUse.IsActive
                     ? "ACTIVE QUEST"
                     : keyUse.QuestStatus.ToUpperInvariant();
-            var acquisition = string.IsNullOrWhiteSpace(keyUse.Acquisition)
-                ? string.Empty
-                : $" • {keyUse.Acquisition}";
+            var details = new List<string>
+            {
+                $"{keyUse.MapName} • opens {keyUse.Opens}"
+            };
+            if (!string.IsNullOrWhiteSpace(keyUse.Purpose))
+            {
+                details.Add(keyUse.Purpose);
+            }
+            if (!string.IsNullOrWhiteSpace(keyUse.Acquisition))
+            {
+                details.Add($"Acquisition: {keyUse.Acquisition}");
+            }
+
             AddCard(parent,
-                $"QUEST KEY • {keyUse.QuestName}",
-                $"{keyUse.MapName} • {keyUse.Opens}",
-                $"{status}{(keyUse.AcquireInRaid ? " • ACQUIRE IN RAID" : string.Empty)}{acquisition}");
+                keyUse.QuestName,
+                string.Join("\n", details),
+                $"{status}{(keyUse.AcquireInRaid ? " • ACQUIRE IN RAID" : string.Empty)}");
+        }
+    }
+
+    private void RenderHideoutAndCraftUsageSection(Transform parent, HermesItemHideoutUsageResponse usage)
+    {
+        var nextUpgrade = usage.UpgradeUses
+            .Where(upgrade => !upgrade.IsMet && upgrade.TargetLevel > upgrade.CurrentLevel)
+            .OrderByDescending(upgrade => upgrade.IsNextUpgrade)
+            .ThenBy(upgrade => upgrade.TargetLevel)
+            .ThenBy(upgrade => upgrade.AreaName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        var readyCraft = usage.UsedBy
+            .Concat(usage.ProducedBy)
+            .OrderByDescending(craft => craft.CanStartNow || craft.IsComplete)
+            .ThenBy(craft => craft.StationName, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        var summary = nextUpgrade is not null
+            ? $"Next upgrade: {nextUpgrade.AreaName} L{nextUpgrade.TargetLevel} • owned {FormatCount(nextUpgrade.Owned)} / {FormatCount(nextUpgrade.Required)} • missing {FormatCount(nextUpgrade.Missing)}"
+            : readyCraft is not null
+                ? $"Craft use: {readyCraft.StationName} L{readyCraft.RequiredStationLevel} • {readyCraft.Status}"
+                : "No Hideout upgrade or player-facing recipe currently uses this item.";
+        var meta = $"{usage.UpgradeUses.Count:N0} upgrade(s) • {usage.ProducedBy.Count:N0} produced-by recipe(s) • {usage.UsedBy.Count:N0} ingredient recipe(s)";
+
+        var expanded = AddItemDetailCollapsibleSection(
+            parent,
+            "hideout-crafts",
+            "HIDEOUT & CRAFT USES",
+            summary,
+            meta,
+            !Plugin.Settings.CollapseSectionsByDefault.Value);
+        if (!expanded)
+        {
+            return;
         }
 
-        foreach (var quest in usage.QuestUses.Take(30))
+        AddMetricGrid(parent,
+            ("UPGRADES", usage.UpgradeUses.Count.ToString("N0")),
+            ("PRODUCED BY", usage.ProducedBy.Count.ToString("N0")),
+            ("USED BY", usage.UsedBy.Count.ToString("N0")));
+
+        AddSectionHeader(parent, "HIDEOUT UPGRADES");
+        if (usage.UpgradeUses.Count == 0)
         {
-            AddCard(parent,
-                quest.QuestName,
-                quest.ProgressText,
-                $"{quest.TraderName} • {quest.QuestStatus}{(quest.FoundInRaidRequired ? " • FIR" : string.Empty)}");
+            AddEmptyState(parent, "No Hideout upgrade use.", "This item is not required by a player-facing Hideout upgrade.");
         }
         foreach (var upgrade in usage.UpgradeUses.Take(30))
         {
             AddCard(parent,
                 $"{upgrade.AreaName} L{upgrade.TargetLevel}",
-                $"Owned {FormatCount(upgrade.Owned)} / {FormatCount(upgrade.Required)} • missing {FormatCount(upgrade.Missing)} • {upgrade.AcquisitionSource}",
-                upgrade.Status);
+                $"Current L{upgrade.CurrentLevel} • owned {FormatCount(upgrade.Owned)} / {FormatCount(upgrade.Required)} • missing {FormatCount(upgrade.Missing)}"
+                + (upgrade.EstimatedMissingCost.HasValue ? $" • estimated missing cost {Money(upgrade.EstimatedMissingCost)}" : string.Empty),
+                $"{upgrade.Status}{(upgrade.FoundInRaidRequired ? " • FIR" : string.Empty)}");
+        }
+
+        AddSectionHeader(parent, "USED AS A CRAFT INGREDIENT");
+        if (usage.UsedBy.Count == 0)
+        {
+            AddEmptyState(parent, "No ingredient use.", "This item is not used by a player-facing Hideout recipe.");
         }
         foreach (var craft in usage.UsedBy.Take(30))
         {
             AddCard(parent,
-                $"USED BY • {craft.OutputName}",
+                craft.OutputName,
                 $"{craft.StationName} L{craft.RequiredStationLevel} • requires {FormatCount(craft.ItemCount)} • owned {FormatCount(craft.Owned)} • missing {FormatCount(craft.Missing)}",
                 craft.Status,
-                () => _state.Navigate("Crafts"));
+                () => _state!.Navigate("Crafts"));
+        }
+
+        AddSectionHeader(parent, "PRODUCED BY CRAFTS");
+        if (usage.ProducedBy.Count == 0)
+        {
+            AddEmptyState(parent, "No production recipe.", "No player-facing Hideout recipe produces this item.");
         }
         foreach (var craft in usage.ProducedBy.Take(30))
         {
             AddCard(parent,
-                $"PRODUCED BY • {craft.OutputName}",
+                craft.OutputName,
                 $"{craft.StationName} L{craft.RequiredStationLevel} • output {craft.OutputQuantity:N0} • {FormatDuration(craft.DurationSeconds)}",
                 craft.Status,
-                () => _state.Navigate("Crafts"));
+                () => _state!.Navigate("Crafts"));
         }
+    }
+
+    private bool AddItemDetailCollapsibleSection(
+        Transform parent,
+        string sectionId,
+        string title,
+        string summary,
+        string meta,
+        bool defaultExpanded)
+    {
+        var itemKey = _state?.SelectedItem?.ItemKey ?? "none";
+        var key = $"{itemKey}|{sectionId}";
+        if (!_itemDetailSectionExpansion.TryGetValue(key, out var expanded))
+        {
+            if (_itemDetailSectionExpansion.Count >= 256)
+            {
+                // Section state is convenience-only. Bound it so long item-search sessions do
+                // not retain expansion flags for every item examined during the process lifetime.
+                _itemDetailSectionExpansion.Clear();
+            }
+
+            expanded = defaultExpanded;
+            _itemDetailSectionExpansion[key] = expanded;
+        }
+
+        var arrow = expanded ? "▼" : "▶";
+        var actionText = expanded ? "SELECT TO COLLAPSE" : "SELECT TO EXPAND";
+        AddCard(
+            parent,
+            $"{arrow}  {title}",
+            summary,
+            string.IsNullOrWhiteSpace(meta) ? actionText : $"{meta} • {actionText}",
+            () =>
+            {
+                _itemDetailSectionExpansion[key] = !expanded;
+                Invalidate(0.05f);
+            },
+            expanded ? new Color(0.10f, 0.12f, 0.11f, 0.86f) : null);
+        return expanded;
     }
 
     #endregion

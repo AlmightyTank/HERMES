@@ -15,6 +15,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
     private const float WideRailWidth = 230f;
     private const float WideContentLeft = 236f;
     private const float WideWorkspaceCellWidth = 208f;
+    private const float SyncIntervalSeconds = 0.10f;
 
     private static readonly (string Name, string Label, string Subtitle)[] WorkspaceDefinitions =
     [
@@ -60,6 +61,8 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
     private bool _syncingSearch;
     private bool _wideLayout;
     private float _lastRootWidth = -1f;
+    private float _nextSyncAt;
+    private int _lastClientRefreshRevision;
 
     internal void Initialize(HermesWindow window)
     {
@@ -80,6 +83,8 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         HermesNativeWorkspaceRuntime.RequestClientRefresh();
         gameObject.SetActive(true);
         HermesNativeWorkspaceRuntime.Active = true;
+        _lastClientRefreshRevision = HermesNativeWorkspaceRuntime.ClientRefreshRevision;
+        _nextSyncAt = 0f;
         SyncAll(true);
     }
 
@@ -382,8 +387,21 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
             return;
         }
 
-        ApplyResponsiveLayout(false);
-        SyncAll(false);
+        var refreshRevision = HermesNativeWorkspaceRuntime.ClientRefreshRevision;
+        var force = refreshRevision != _lastClientRefreshRevision;
+        if (!force && Time.unscaledTime < _nextSyncAt)
+        {
+            return;
+        }
+
+        if (force)
+        {
+            _lastClientRefreshRevision = refreshRevision;
+        }
+
+        _nextSyncAt = Time.unscaledTime + SyncIntervalSeconds;
+        ApplyResponsiveLayout(force);
+        SyncAll(force);
     }
 
     private void SyncAll(bool force)
@@ -430,7 +448,12 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
 
         if (_diagnosticsLabel != null)
         {
-            _diagnosticsLabel.text = HermesEftWindowReflection.FormatDiagnostics(_window);
+            var showDiagnostics = _wideLayout && Plugin.Settings.ShowDiagnosticsFooter.Value;
+            _diagnosticsLabel.gameObject.SetActive(showDiagnostics);
+            if (showDiagnostics)
+            {
+                _diagnosticsLabel.text = HermesEftWindowReflection.FormatDiagnostics(_window);
+            }
         }
 
         if (_assistantToggleObject != null)

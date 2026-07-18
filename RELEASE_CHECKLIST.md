@@ -1,6 +1,6 @@
 # HERMES 0.1.0 release checklist
 
-Build and test against a clean SPT 4.0.13 installation before changing `Version.props` from `0.1.0-rc.2.2.1` to `0.1.0`.
+Build and test against a clean SPT 4.0.13 installation before changing `Version.props` from `0.1.0-rc.2.4` to `0.1.0`.
 
 ## Build and package
 
@@ -93,3 +93,14 @@ Build and test against a clean SPT 4.0.13 installation before changing `Version.
 - Confirm at least one `QUEST KEY` card appears with the quest name and map.
 - Confirm active, completed, and future/locked quest statuses match the active PMC profile.
 - Confirm a normal non-key item does not receive an unrelated quest-key card.
+
+
+## RC.2.4 final-pass checks
+
+- [ ] Search for and carry an **MRE ration pack**; confirm Stash and Loadout classify it as **Provisions**, not **Medical**.
+- [ ] Confirm an MRE can satisfy the enabled energy requirement but never satisfies healing, bleed, fracture, pain, or surgery coverage.
+- [ ] Open the same prepared workspace repeatedly and confirm immediate duplicate reads are reused without serving stale data after pressing Refresh.
+- [ ] Confirm `/hermes/watch/` is absent from the client log and no server-held watch request remains registered.
+- [ ] Compare first-load Crafts, Loadout, and Items & Market timings with RC.2.3 and record the results.
+- [ ] Leave Character open for several minutes and confirm native screen discovery does not continuously scan every few seconds once the HERMES host is active.
+

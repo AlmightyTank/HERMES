@@ -42,7 +42,6 @@ public sealed class Plugin : BaseUnityPlugin
         // Legacy controller methods remain request/state owners only; every visible workspace is
         // built by HermesNativeWorkspaceBody under the EFT Canvas.
 
-        TryEnable("server revision workspace loading", () => new HermesSnapshotPresentationOpenPatch().Enable());
         TryEnable("native Ragfair asset capture", () => new HermesRagfairNativeAssetPatch().Enable());
         TryEnable("native Items & Market search toolbar", () => new HermesNativeItemSearchBarSuppressionPatch().Enable());
         TryEnable("native EFT notification click routing", () => new HermesNativeNotificationClickPatch().Enable());

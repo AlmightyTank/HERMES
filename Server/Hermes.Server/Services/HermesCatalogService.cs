@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Hermes.Server.Models;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.Helpers;
@@ -19,7 +20,11 @@ internal sealed record HermesCatalogItem(
     bool AcceptedBySupportedTrader);
 
 [Injectable(InjectionType.Singleton)]
-public sealed class HermesCatalogService(DatabaseService databaseService, ItemHelper itemHelper, JsonUtil jsonUtil)
+public sealed class HermesCatalogService(
+    DatabaseService databaseService,
+    ItemHelper itemHelper,
+    JsonUtil jsonUtil,
+    HermesStaticDataSnapshotService staticData)
 {
     private static readonly HashSet<string> SupportedTraderNames = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -34,6 +39,10 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
         "lightkeeper",
         "ref"
     };
+    private static readonly Regex MongoIdReferencePattern = new(
+        @"(?<![0-9a-fA-F])[0-9a-fA-F]{24}(?![0-9a-fA-F])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     private readonly object _sync = new();
     private IReadOnlyList<HermesCatalogItem>? _catalog;
     private Dictionary<string, HermesCatalogItem>? _byKey;
@@ -41,6 +50,9 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
     private string? _traderJson;
     private string? _hideoutJson;
     private string? _questJson;
+    private HashSet<string> _traderTemplateReferences = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _hideoutTemplateReferences = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _questTemplateReferences = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, long> _referencePrices = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, string> _questNames = new(StringComparer.OrdinalIgnoreCase);
 
@@ -346,9 +358,9 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
             item.Name,
             item.ShortName,
             GetReferencePrice(item.TemplateId),
-            item.AcceptedBySupportedTrader || CountOccurrences(_traderJson, templateId) > 0,
-            CountOccurrences(_hideoutJson, templateId) > 0,
-            CountOccurrences(_questJson, templateId) > 0);
+            item.AcceptedBySupportedTrader || _traderTemplateReferences.Contains(templateId),
+            _hideoutTemplateReferences.Contains(templateId),
+            _questTemplateReferences.Contains(templateId));
     }
 
     private static bool TokensMatch(HermesCatalogItem item, IReadOnlyList<string> tokens)
@@ -449,9 +461,16 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
             var itemsJson = SerializeDatabase(databaseService.GetItems());
             var handbookJson = SerializeDatabase(databaseService.GetHandbook());
             _traderJson = SerializeDatabase(databaseService.GetTraders());
-            _hideoutJson = SerializeDatabase(databaseService.GetHideout());
-            _questJson = SerializeDatabase(databaseService.GetQuests());
-            var localesJson = SerializeDatabase(databaseService.GetLocales());
+            _hideoutJson = staticData.GetHideoutJson();
+            _questJson = staticData.GetQuestsJson();
+            var localesJson = staticData.GetLocalesJson();
+
+            // Build usage flags once. The former implementation scanned all three large JSON
+            // documents for every search result and selected item, which made simple item lookup
+            // scale with the complete trader, Hideout, and quest database size.
+            _traderTemplateReferences = ExtractMongoIdReferences(_traderJson);
+            _hideoutTemplateReferences = ExtractMongoIdReferences(_hideoutJson);
+            _questTemplateReferences = ExtractMongoIdReferences(_questJson);
 
             var localeStrings = BuildLocaleLookup(localesJson);
             _referencePrices = BuildReferencePriceLookup(handbookJson);
@@ -805,24 +824,22 @@ public sealed class HermesCatalogService(DatabaseService databaseService, ItemHe
         }
     }
 
-    private static int CountOccurrences(string? source, string value)
+    private static HashSet<string> ExtractMongoIdReferences(string? source)
     {
-        if (string.IsNullOrEmpty(source) || string.IsNullOrEmpty(value))
+        var output = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(source))
         {
-            return 0;
+            return output;
         }
 
-        var count = 0;
-        var index = 0;
-
-        while ((index = source.IndexOf(value, index, StringComparison.OrdinalIgnoreCase)) >= 0)
+        foreach (System.Text.RegularExpressions.Match match in MongoIdReferencePattern.Matches(source))
         {
-            count++;
-            index += value.Length;
+            output.Add(match.Value);
         }
 
-        return count;
+        return output;
     }
+
 
 
     private static bool IsQuestOnlyItem(JsonObject itemObject)

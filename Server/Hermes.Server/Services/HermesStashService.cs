@@ -486,6 +486,20 @@ public sealed class HermesStashService(
             return "Armor";
         }
 
+        var lowerName = catalogService.GetPlayerFacingName(templateId).ToLowerInvariant();
+        var maximumResource = ReadDouble(properties, 0d, "MaxResource", "maxResource");
+        var isProvision = ReadDouble(properties, 0d, "FoodUseTime", "foodUseTime") > 0d
+                          || maximumResource > 0d
+                             && (serialized.Contains("Hydration", StringComparison.OrdinalIgnoreCase)
+                                 || serialized.Contains("Energy", StringComparison.OrdinalIgnoreCase)
+                                 || serialized.Contains("FoodDrink", StringComparison.OrdinalIgnoreCase))
+                          || lowerName.Contains("mre", StringComparison.Ordinal)
+                          || lowerName.Contains("ration", StringComparison.Ordinal);
+        if (isProvision)
+        {
+            return "Provisions";
+        }
+
         if (ReadDouble(properties, 0d, "MaxHpResource", "maxHpResource") > 0d
             || HasMeaningfulObject(GetProperty(properties, "effects_damage", "EffectsDamage"))
             || HasMeaningfulArray(GetProperty(properties, "Buffs", "buffs")))
@@ -496,13 +510,6 @@ public sealed class HermesStashService(
         if (ReadDouble(properties, 0d, "MaximumNumberOfUsage", "maximumNumberOfUsage") > 0d)
         {
             return "Keys";
-        }
-
-        if (ReadDouble(properties, 0d, "MaxResource", "maxResource") > 0d
-            && (serialized.Contains("Hydration", StringComparison.OrdinalIgnoreCase)
-                || serialized.Contains("Energy", StringComparison.OrdinalIgnoreCase)))
-        {
-            return "Provisions";
         }
 
         if (GetArray(GetProperty(properties, "Grids", "grids")).Any())

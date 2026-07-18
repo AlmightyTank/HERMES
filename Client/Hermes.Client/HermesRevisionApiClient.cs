@@ -62,17 +62,13 @@ internal static class HermesRevisionApiClient
     private static Task<T> GetAsync<T>(string route, TimeSpan timeout)
         where T : class
     {
-        var isServerHeldWatch = route.StartsWith(
-            "/hermes/watch/",
-            StringComparison.OrdinalIgnoreCase);
         return HermesRequestBroker.GetDataAsync<T>(
             route,
             () => throw new HermesInvalidResponseException(
                 route,
                 $"The data payload could not be converted to {typeof(T).Name}."),
             timeout,
-            isServerHeldWatch ? "server-held watch" : "revision request",
-            suppressSlowWarning: isServerHeldWatch);
+            "revision request");
     }
 
 }

@@ -466,15 +466,24 @@ public sealed class HermesLoadoutValueService(
         var maximumMedicalResource = ReadDouble(props, 0d, "MaxHpResource", "maxHpResource");
         var damageEffects = GetProperty(props, "effects_damage", "EffectsDamage");
         var stimulatorBuffs = GetProperty(props, "StimulatorBuffs", "stimulatorBuffs", "Buffs", "buffs");
-        var isMedical = maximumMedicalResource > 0d
-                        || HasEntries(damageEffects)
-                        || ReadBool(props, false, "UseStimulatorBuffs", "useStimulatorBuffs")
-                        || HasEntries(stimulatorBuffs);
         var maximumResource = ReadDouble(props, 0d, "MaxResource", "maxResource");
         var maximumKeyUses = ReadDouble(props, 0d, "MaximumNumberOfUsage", "maximumNumberOfUsage");
-        var isProvision = maximumResource > 0d
-                          && (serialized.Contains("Hydration", StringComparison.OrdinalIgnoreCase)
-                              || serialized.Contains("Energy", StringComparison.OrdinalIgnoreCase));
+        var foodUseTime = ReadDouble(props, 0d, "FoodUseTime", "foodUseTime");
+        var lowerName = name.ToLowerInvariant();
+        var isProvision = foodUseTime > 0d
+                          || maximumResource > 0d
+                             && (serialized.Contains("Hydration", StringComparison.OrdinalIgnoreCase)
+                                 || serialized.Contains("Energy", StringComparison.OrdinalIgnoreCase)
+                                 || serialized.Contains("FoodDrink", StringComparison.OrdinalIgnoreCase))
+                          || lowerName.Contains("mre", StringComparison.Ordinal)
+                          || lowerName.Contains("ration", StringComparison.Ordinal);
+        // Buff-bearing provisions are still provisions. Do not count an MRE or ration pack as
+        // medicine simply because the template contains a Buffs collection.
+        var isMedical = !isProvision
+                        && (maximumMedicalResource > 0d
+                            || HasEntries(damageEffects)
+                            || ReadBool(props, false, "UseStimulatorBuffs", "useStimulatorBuffs")
+                            || HasEntries(stimulatorBuffs));
 
         var info = new ValueTemplateInfo(
             true,

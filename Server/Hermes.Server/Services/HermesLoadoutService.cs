@@ -18,6 +18,7 @@ public sealed class HermesLoadoutService(
     HermesStashService stashService,
     HermesProfileScopeService profileScopeService,
     HermesQuestKeyKnowledgeService questKeyKnowledgeService,
+    HermesStaticDataSnapshotService staticData,
     JsonUtil jsonUtil)
 {
     private const string Ms2000MarkerTemplateId = "5991b51486f77447b112d44f";
@@ -810,19 +811,14 @@ public sealed class HermesLoadoutService(
         JsonNode? questsRoot;
         try
         {
-            questsRoot = JsonNode.Parse(jsonUtil.Serialize(databaseService.GetQuests()) ?? "{}");
+            questsRoot = staticData.GetQuestsRoot();
         }
         catch
         {
             return [];
         }
 
-        var traderNames = databaseService.GetTraders().ToDictionary(
-            pair => pair.Key.ToString(),
-            pair => string.IsNullOrWhiteSpace(pair.Value.Base.Nickname)
-                ? pair.Value.Base.Name ?? "Trader"
-                : pair.Value.Base.Nickname,
-            StringComparer.OrdinalIgnoreCase);
+        var traderNames = staticData.GetTraderNames();
         var output = new List<HermesQuestLoadoutRequirement>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -1952,32 +1948,6 @@ public sealed class HermesLoadoutService(
                        || GetArray(GetProperty(props, "weapFireType", "WeapFireType")).Count > 0;
         var damageEffects = GetProperty(props, "effects_damage", "EffectsDamage");
         var stimulatorBuffs = GetProperty(props, "StimulatorBuffs", "stimulatorBuffs", "Buffs", "buffs");
-        var isMedical = maximumMedicalResource > 0d
-                        || HasEntries(damageEffects)
-                        || ReadBool(props, false, "UseStimulatorBuffs", "useStimulatorBuffs")
-                        || HasEntries(stimulatorBuffs);
-        var isSurgeryKit = lowerName.Contains("cms", StringComparison.Ordinal)
-                           || lowerName.Contains("surv12", StringComparison.Ordinal)
-                           || lowerName.Contains("surgical", StringComparison.Ordinal)
-                           || serializedProps.Contains("Surgery", StringComparison.OrdinalIgnoreCase);
-        var isGeneralBleedMedkit = ContainsAny(
-            lowerName,
-            "ifak",
-            "afak",
-            "salewa",
-            "car first aid",
-            "car kit",
-            "grizzly");
-        var treatsLightBleed = ContainsAny(serializedProps, "LightBleeding", "Light bleed")
-                               || ContainsAny(lowerName, "bandage", "army bandage")
-                               || isGeneralBleedMedkit;
-        var treatsHeavyBleed = ContainsAny(serializedProps, "HeavyBleeding", "Heavy bleed")
-                               || ContainsAny(lowerName, "esmarch", "hemostat", "cat tourniquet", "calok")
-                               || isGeneralBleedMedkit;
-        var treatsFracture = ContainsAny(serializedProps, "Fracture")
-                             || ContainsAny(lowerName, "splint", "surv12");
-        var treatsPain = ContainsAny(serializedProps, "Pain")
-                         || ContainsAny(lowerName, "painkiller", "analgin", "ibuprofen", "golden star", "vaseline");
         var hydrationEffect = FindNamedEffectValue(props, "Hydration");
         var energyEffect = FindNamedEffectValue(props, "Energy");
         var foodUseTime = ReadDouble(props, 0d, "FoodUseTime", "foodUseTime");
@@ -2006,6 +1976,40 @@ public sealed class HermesLoadoutService(
                               "stew",
                               "sugar",
                               "chocolate");
+        // Food can legitimately contain Buffs/StimulatorBuffs. Provision identity takes
+        // precedence so ration packs are not counted as medicine merely because they grant buffs.
+        var isMedical = !isFoodDrink
+                        && (maximumMedicalResource > 0d
+                            || HasEntries(damageEffects)
+                            || ReadBool(props, false, "UseStimulatorBuffs", "useStimulatorBuffs")
+                            || HasEntries(stimulatorBuffs));
+        var isSurgeryKit = isMedical
+                           && (lowerName.Contains("cms", StringComparison.Ordinal)
+                           || lowerName.Contains("surv12", StringComparison.Ordinal)
+                           || lowerName.Contains("surgical", StringComparison.Ordinal)
+                           || serializedProps.Contains("Surgery", StringComparison.OrdinalIgnoreCase));
+        var isGeneralBleedMedkit = ContainsAny(
+            lowerName,
+            "ifak",
+            "afak",
+            "salewa",
+            "car first aid",
+            "car kit",
+            "grizzly");
+        var treatsLightBleed = isMedical
+                               && (ContainsAny(serializedProps, "LightBleeding", "Light bleed")
+                                   || ContainsAny(lowerName, "bandage", "army bandage")
+                                   || isGeneralBleedMedkit);
+        var treatsHeavyBleed = isMedical
+                               && (ContainsAny(serializedProps, "HeavyBleeding", "Heavy bleed")
+                                   || ContainsAny(lowerName, "esmarch", "hemostat", "cat tourniquet", "calok")
+                                   || isGeneralBleedMedkit);
+        var treatsFracture = isMedical
+                             && (ContainsAny(serializedProps, "Fracture")
+                                 || ContainsAny(lowerName, "splint", "surv12"));
+        var treatsPain = isMedical
+                         && (ContainsAny(serializedProps, "Pain")
+                             || ContainsAny(lowerName, "painkiller", "analgin", "ibuprofen", "golden star", "vaseline"));
         var providesHydration = isFoodDrink
                                 && (hydrationEffect is > 0d
                                     || !hydrationEffect.HasValue
@@ -2135,7 +2139,7 @@ public sealed class HermesLoadoutService(
             var output = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             try
             {
-                var root = JsonNode.Parse(jsonUtil.Serialize(databaseService.GetLocales()) ?? "{}");
+                var root = staticData.GetLocalesRoot();
                 var englishFound = false;
                 CollectLanguageLocaleStrings(root, "en", output, ref englishFound);
                 if (!englishFound)
@@ -2588,19 +2592,14 @@ public sealed class HermesLoadoutService(
         JsonNode? questsRoot;
         try
         {
-            questsRoot = JsonNode.Parse(jsonUtil.Serialize(databaseService.GetQuests()) ?? "{}");
+            questsRoot = staticData.GetQuestsRoot();
         }
         catch
         {
             return [];
         }
 
-        var traderNames = databaseService.GetTraders().ToDictionary(
-            pair => pair.Key.ToString(),
-            pair => string.IsNullOrWhiteSpace(pair.Value.Base.Nickname)
-                ? pair.Value.Base.Name ?? "Trader"
-                : pair.Value.Base.Nickname,
-            StringComparer.OrdinalIgnoreCase);
+        var traderNames = staticData.GetTraderNames();
         var questDrafts = new List<RaidQuestDraft>();
 
         foreach (var node in GetArray(questsRoot))

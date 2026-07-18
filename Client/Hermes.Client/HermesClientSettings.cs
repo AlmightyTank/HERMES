@@ -169,9 +169,9 @@ internal sealed class HermesClientSettings
             "Reopens HERMES on the most recently selected main tab.");
         AutomaticallyRefreshWhenOpened = config.Bind(
             "General",
-            "Automatically refresh when opened",
+            "Read prepared workspace when opened",
             true,
-            "Refreshes the currently loaded view when HERMES is opened. This does not clear server caches.");
+            "Reads the active workspace from the server's prepared cache when HERMES opens. It does not recheck sources or invalidate caches.");
         RequestTimeoutSeconds = config.Bind(
             "General",
             "Request timeout seconds",
@@ -364,13 +364,13 @@ internal sealed class HermesClientSettings
         CollapseSectionsByDefault = config.Bind(
             "Interface",
             "Collapse sections by default",
-            false,
-            "Starts collapsible shared detail sections closed until opened.");
+            true,
+            "Starts collapsible detail sections closed until opened, including quest, key, Hideout, and craft uses in Items & Market.");
         MaximumRowsPerSection = config.Bind(
             "Interface",
             "Maximum rows per section",
-            150,
-            "Maximum number of rows rendered in long shared lists before a hidden-row notice is shown. Range: 25-500.");
+            80,
+            "Maximum number of rows rendered in long lists before a hidden-row notice is shown. Lower values reduce Unity layout work. Range: 25-120.");
         MaximumSearchResults = config.Bind(
             "Item Search",
             "Maximum search results",
@@ -406,12 +406,12 @@ internal sealed class HermesClientSettings
             "Market Intelligence",
             "Expand trader comparison by default",
             false,
-            "Starts the vanilla-trader sale comparison expanded when selecting an item.");
+            "Starts the full Items & Market Traders section expanded, including sale comparisons and trader purchase offers.");
         ExpandMarketByDefault = config.Bind(
             "Market Intelligence",
             "Expand flea market by default",
-            true,
-            "Starts local flea market details expanded when selecting an item.");
+            false,
+            "Starts the full Items & Market Flea Market section expanded when selecting an item.");
         ShowConvertedBarterOffers = config.Bind(
             "Market Intelligence",
             "Show converted flea barter offers",
@@ -420,7 +420,7 @@ internal sealed class HermesClientSettings
         ShowDetailedBarterCalculations = config.Bind(
             "Market Intelligence",
             "Show detailed barter calculations",
-            true,
+            false,
             "Shows requirement-by-requirement market calculations for trader barters.");
         ShowListingFeeEstimates = config.Bind(
             "Market Intelligence",
@@ -895,7 +895,7 @@ internal sealed class HermesClientSettings
     public int GetMinimumAssistantNoticeCraftProfit() => Math.Clamp(MinimumAssistantNoticeCraftProfit.Value, 0, 10_000_000);
     public int GetMinimumAssistantNoticeStashValue() => Math.Clamp(MinimumAssistantNoticeStashValue.Value, 0, 100_000_000);
     public int GetHighValueUninsuredThreshold() => Math.Clamp(HighValueUninsuredThreshold.Value, 0, 10_000_000);
-    public int GetMaximumRowsPerSection() => Math.Clamp(MaximumRowsPerSection.Value, 25, 500);
+    public int GetMaximumRowsPerSection() => Math.Clamp(MaximumRowsPerSection.Value, 25, 120);
     public int GetMaximumSearchResults() => Math.Clamp(MaximumSearchResults.Value, 5, 50);
     public int GetMinimumSearchCharacters() => Math.Clamp(MinimumSearchCharacters.Value, 1, 10);
     public int GetMinimumComparableFleaOffers() => Math.Clamp(MinimumComparableFleaOffers.Value, 1, 20);

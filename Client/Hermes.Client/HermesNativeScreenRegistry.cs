@@ -10,7 +10,8 @@ namespace Hermes.Client;
 /// </summary>
 internal static class HermesNativeScreenRegistry
 {
-    private const float DiscoveryIntervalSeconds = 1.5f;
+    private const float DiscoveryIntervalSeconds = 3f;
+    private const float HostedDiscoveryIntervalSeconds = 15f;
 
     private static readonly List<WeakReference<HermesNativeScreenHost>> Hosts = [];
     private static float _nextDiscoveryTime;
@@ -76,6 +77,16 @@ internal static class HermesNativeScreenRegistry
         if (!Plugin.Settings.UseNativeInventoryTabs.Value
             || Time.unscaledTime < _nextDiscoveryTime)
         {
+            return;
+        }
+
+        Cleanup();
+        if (HasActiveRuntimeHost())
+        {
+            // InventoryScreen.Show is the authoritative attachment path. Once an active runtime
+            // host exists, the expensive global Unity object scan is only a very infrequent
+            // fallback for unusual modded screen lifecycles.
+            _nextDiscoveryTime = Time.unscaledTime + HostedDiscoveryIntervalSeconds;
             return;
         }
 
@@ -181,6 +192,22 @@ internal static class HermesNativeScreenRegistry
                 host.HideHermes(false);
             }
         }
+    }
+
+    private static bool HasActiveRuntimeHost()
+    {
+        foreach (var reference in Hosts)
+        {
+            if (reference.TryGetTarget(out var host)
+                && host != null
+                && host.IsScreenAvailable
+                && host.IsScreenActive)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static HermesNativeScreenHost? GetBestHost()

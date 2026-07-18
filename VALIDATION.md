@@ -1,13 +1,13 @@
-# HERMES 0.1.0-rc.2.2.1 validation
+# HERMES 0.1.0-rc.2.4 validation
 
-- Checks passed: 100
+- Checks passed: 119
 - Checks failed: 0
 
 - PASS: XML Hermes.Build.csproj
-- PASS: XML Server/Hermes.Server/Hermes.Server.csproj
 - PASS: XML Client/Hermes.Client/Hermes.Client.csproj
+- PASS: XML Server/Hermes.Server/Hermes.Server.csproj
 - PASS: XML Version.props
-- PASS: Quest-key JSON — 63
+- PASS: Quest-key JSON parses — 63 entries
 - PASS: C# delimiters Client/Hermes.Client/AskHermesContextMenuPatch.cs
 - PASS: C# delimiters Client/Hermes.Client/Compatibility/IsExternalInit.cs
 - PASS: C# delimiters Client/Hermes.Client/HermesApiClient.cs
@@ -79,29 +79,48 @@
 - PASS: C# delimiters Server/Hermes.Server/Services/HermesStashAnalysisService.cs
 - PASS: C# delimiters Server/Hermes.Server/Services/HermesStashAnalysisSettings.cs
 - PASS: C# delimiters Server/Hermes.Server/Services/HermesStashService.cs
+- PASS: C# delimiters Server/Hermes.Server/Services/HermesStaticDataSnapshotService.cs
 - PASS: C# delimiters Server/Hermes.Server/Services/HermesTraderService.cs
-- PASS: Server item response includes QuestKeyUses
-- PASS: Client item response includes QuestKeyUses
-- PASS: Quest-key model parity QuestName
-- PASS: Quest-key model parity MapName
-- PASS: Quest-key model parity Opens
-- PASS: Quest-key model parity Purpose
-- PASS: Quest-key model parity Acquisition
-- PASS: Quest-key model parity AcquireInRaid
-- PASS: Quest-key model parity QuestStatus
-- PASS: Quest-key model parity IsActive
-- PASS: Quest-key model parity QuestCompleted
-- PASS: Key lookup method exists
-- PASS: Key lookup template-id match
-- PASS: Key lookup normalized alias match
-- PASS: Item usage builds key knowledge
-- PASS: Item response returns key knowledge
-- PASS: Profile quest status is resolved
-- PASS: Native Items & Market key cards
-- PASS: Legacy Items & Market key section
-- PASS: Item fingerprint tracks key uses
-- PASS: Quest-key aliases are unambiguous — 64
-- PASS: Current version
-- PASS: No build artifacts
+- PASS: Shared response-model coverage — 35 shared response types
+- PASS: Client response contracts unchanged from RC.2.3
+- PASS: Server response contracts unchanged from RC.2.3
+- PASS: Current version is rc.2.4
+- PASS: README current version
+- PASS: Release package is clean
+- PASS: Required documentation
+- PASS: MIT license present
+- PASS: Single client HTTP owner — ['Client/Hermes.Client/HermesRequestBroker.cs']
+- PASS: Server-held watch route removed
+- PASS: Watch wait machinery removed
+- PASS: Obsolete presentation patch removed
+- PASS: Presentation open calls coordinator
+- PASS: Static-data snapshot singleton
+- PASS: Static Hideout data cached
+- PASS: Static quest data cached
+- PASS: Static locale data cached
+- PASS: Static trader names cached
+- PASS: Catalog pre-indexes template references
+- PASS: Catalog removed per-item occurrence scans
+- PASS: Static database fingerprint materialized once
+- PASS: Quest-key lookup indexed
+- PASS: Prepared profile sharing is two seconds
+- PASS: Immediate response reuse bounded
+- PASS: Mutation clears recent responses
+- PASS: Read-only response cache allowlist
+- PASS: Active host discovery throttled
+- PASS: Native view synchronization throttled
+- PASS: Row cap uses F12 setting
+- PASS: Row cap release default
+- PASS: Expansion-state cache bounded
+- PASS: Collapsed details release defaults
+- PASS: Loadout provision precedes medical
+- PASS: MRE excluded from medical readiness
+- PASS: Medical capabilities gated by medical identity
+- PASS: Loadout value classifies MRE as provision
+- PASS: Stash classifies provision before medical
+- PASS: No target-typed new char array
+- PASS: Readiness uses explicit string constructor
+- PASS: TemplateInfo missing factory uses named args
+- PASS: Comfort reference present
 
 Compilation and runtime testing require Visual Studio and the local SPT 4.0.13 assemblies.

@@ -2,7 +2,7 @@
 
 HERMES is a read-only in-game assistant for SPT 4.0.13. It adds a native **HERMES** tab to the Character and in-raid inventory screens and analyzes the active PMC profile without changing inventory, quests, traders, crafts, or hideout state.
 
-This source is prepared as **0.1.0-rc.2.2.1**. The final `0.1.0` tag should be created only after the runtime checklist in `RELEASE_CHECKLIST.md` passes.
+This source is prepared as **0.1.0-rc.2.4**. The final `0.1.0` tag should be created only after the runtime checklist in `RELEASE_CHECKLIST.md` passes.
 
 ## Main features
 
@@ -21,6 +21,13 @@ This source is prepared as **0.1.0-rc.2.2.1**. The final `0.1.0` tag should be c
 - Native EFT tab, controls, notifications, and Ragfair-derived UI assets
 
 HERMES does not use an external AI service and does not perform game actions.
+
+
+### Final polish and performance pass
+
+RC.2.4 keeps the current feature set and removes avoidable work before the final release decision. Immutable SPT quest, Hideout, locale, and trader data is materialized once; item-usage and quest-key associations are indexed; immediate duplicate read requests are reused; native Unity discovery and synchronization are throttled; and large lists use a release-safe row cap. Manual Refresh still clears the short client reuse window before reading changed server data.
+
+Food and drink classification now takes precedence over generic buff detection. An MRE ration pack and other buff-bearing provisions count toward carried energy or hydration but are never counted as medical items or bleed/surgery coverage.
 
 ## Requirements
 
@@ -57,7 +64,7 @@ SptRoot=D:\Games\SPT
 Build `HERMES.sln` or `Hermes.Build.csproj` in **Release**. The build project creates:
 
 ```text
-HERMES-0.1.0-rc.2.2.1.zip
+HERMES-0.1.0-rc.2.4.zip
 ```
 
 Automatic deployment is disabled by default for release safety. To copy the DLLs into a test installation during a build, set:

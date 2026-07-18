@@ -12,6 +12,15 @@ public sealed class HermesQuestKeyKnowledgeService
     private const string ResourceSuffix = ".quest_key_knowledge.json";
     private readonly HermesQuestKeyKnowledgeDocument _document;
     private readonly string? _loadError;
+    private readonly Dictionary<string, List<HermesQuestKeyKnowledgeEntry>> _byQuestId =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<HermesQuestKeyKnowledgeEntry>> _byQuestName =
+        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<HermesQuestKeyKnowledgeEntry>> _byKeyTemplate =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<HermesQuestKeyKnowledgeEntry>> _byExactKeyName =
+        new(StringComparer.Ordinal);
+    private readonly List<(string Name, HermesQuestKeyKnowledgeEntry Entry)> _keyAliases = [];
 
     public HermesQuestKeyKnowledgeService()
     {
@@ -24,19 +33,21 @@ public sealed class HermesQuestKeyKnowledgeService
             _document = new HermesQuestKeyKnowledgeDocument();
             _loadError = exception.Message;
         }
+
+        BuildIndexes();
     }
 
     public IReadOnlyList<HermesQuestKeyKnowledgeEntry> FindForQuest(string questId, string questName)
     {
-        var normalizedName = Normalize(questName);
-        return _document.Entries
-            .Where(entry =>
-                entry.QuestIds.Any(id => id.Equals(questId, StringComparison.OrdinalIgnoreCase))
-                || entry.QuestNames.Any(name => Normalize(name).Equals(normalizedName, StringComparison.Ordinal)))
+        var matches = new HashSet<HermesQuestKeyKnowledgeEntry>();
+        AddMatches(matches, _byQuestId, (questId ?? string.Empty).Trim());
+        AddMatches(matches, _byQuestName, Normalize(questName));
+        return matches
             .OrderBy(entry => entry.MapName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(entry => entry.KeyNames.FirstOrDefault() ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
 
     public IReadOnlyList<HermesQuestKeyKnowledgeEntry> FindForKey(string templateId, string keyName)
     {
@@ -47,15 +58,29 @@ public sealed class HermesQuestKeyKnowledgeService
             return [];
         }
 
-        return _document.Entries
-            .Where(entry =>
-                (!string.IsNullOrWhiteSpace(entry.KeyTemplateId)
-                 && string.Equals(entry.KeyTemplateId, normalizedTemplateId, StringComparison.OrdinalIgnoreCase))
-                || entry.KeyNames.Any(name => KeyNamesMatch(NormalizeKeyName(name), normalizedKeyName)))
+        var matches = new HashSet<HermesQuestKeyKnowledgeEntry>();
+        AddMatches(matches, _byKeyTemplate, normalizedTemplateId);
+        AddMatches(matches, _byExactKeyName, normalizedKeyName);
+
+        // Localized EFT names can add a leading article or location qualifier. Exact aliases use
+        // the dictionary above; only the small pre-normalized alias list needs containment checks.
+        if (normalizedKeyName.Length >= 12)
+        {
+            foreach (var (catalogName, entry) in _keyAliases)
+            {
+                if (KeyNamesMatch(catalogName, normalizedKeyName))
+                {
+                    matches.Add(entry);
+                }
+            }
+        }
+
+        return matches
             .OrderBy(entry => entry.MapName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(entry => entry.QuestNames.FirstOrDefault() ?? string.Empty, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
 
     public HermesQuestKeyKnowledgeStatusResponse GetStatus()
     {
@@ -67,6 +92,73 @@ public sealed class HermesQuestKeyKnowledgeService
             _document.SourceUrl,
             _document.RetrievedOn,
             _loadError);
+    }
+
+    private void BuildIndexes()
+    {
+        foreach (var entry in _document.Entries)
+        {
+            foreach (var questId in entry.QuestIds)
+            {
+                AddIndex(_byQuestId, questId?.Trim() ?? string.Empty, entry);
+            }
+
+            foreach (var questName in entry.QuestNames)
+            {
+                AddIndex(_byQuestName, Normalize(questName), entry);
+            }
+
+            AddIndex(_byKeyTemplate, entry.KeyTemplateId?.Trim() ?? string.Empty, entry);
+            foreach (var keyName in entry.KeyNames)
+            {
+                var normalized = NormalizeKeyName(keyName);
+                if (normalized.Length == 0)
+                {
+                    continue;
+                }
+
+                AddIndex(_byExactKeyName, normalized, entry);
+                _keyAliases.Add((normalized, entry));
+            }
+        }
+    }
+
+    private static void AddIndex(
+        IDictionary<string, List<HermesQuestKeyKnowledgeEntry>> index,
+        string key,
+        HermesQuestKeyKnowledgeEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return;
+        }
+
+        if (!index.TryGetValue(key, out var entries))
+        {
+            entries = [];
+            index[key] = entries;
+        }
+
+        if (!entries.Contains(entry))
+        {
+            entries.Add(entry);
+        }
+    }
+
+    private static void AddMatches(
+        ISet<HermesQuestKeyKnowledgeEntry> output,
+        IReadOnlyDictionary<string, List<HermesQuestKeyKnowledgeEntry>> index,
+        string key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || !index.TryGetValue(key, out var entries))
+        {
+            return;
+        }
+
+        foreach (var entry in entries)
+        {
+            output.Add(entry);
+        }
     }
 
     private static HermesQuestKeyKnowledgeDocument LoadDocument()

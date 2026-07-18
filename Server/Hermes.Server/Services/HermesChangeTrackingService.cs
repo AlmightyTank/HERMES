@@ -33,8 +33,6 @@ public sealed class HermesChangeTrackingService(
 {
     private const long StaticDatabaseCheckSeconds = 60;
     private const long MarketCheckSeconds = 30;
-    private const int ActiveWatchSeconds = 30;
-    private const int InactiveWatchSeconds = 60;
 
     private static readonly string[] AllDomains =
     [
@@ -544,48 +542,6 @@ public sealed class HermesChangeTrackingService(
             revision.Reason);
     }
 
-    /// <summary>
-    /// Holds one client request on the server instead of making the client repeatedly ask for
-    /// changes. Revision state and the wake signal are scoped to the concrete active PMC profile,
-    /// not merely the launcher/account session.
-    /// </summary>
-    public async ValueTask<HermesChangesResponse> WaitForChangesAsync(
-        MongoId sessionId,
-        long knownRevision,
-        bool hermesOpen)
-    {
-        var scope = profileScopeService.Resolve(sessionId);
-        if (scope is null)
-        {
-            return GetChanges(sessionId, knownRevision);
-        }
-
-        var state = ResolveState(scope);
-        Task changeSignal;
-        lock (state.Sync)
-        {
-            changeSignal = state.ChangeSignal.Task;
-        }
-
-        var immediate = GetChanges(sessionId, knownRevision);
-        if (HasTrueUpdate(immediate, knownRevision) || !immediate.Found
-            || !string.Equals(immediate.ContextToken, scope.ContextToken, StringComparison.Ordinal))
-        {
-            return immediate;
-        }
-
-        var holdSeconds = hermesOpen ? ActiveWatchSeconds : InactiveWatchSeconds;
-        var holdDelay = Task.Delay(TimeSpan.FromSeconds(holdSeconds));
-        _ = await Task.WhenAny(changeSignal, holdDelay);
-
-        return GetChanges(sessionId, knownRevision);
-    }
-
-    private static bool HasTrueUpdate(HermesChangesResponse response, long knownRevision)
-        => response.Found
-           && response.Revision > Math.Max(0L, knownRevision)
-           && response.Changed.Count > 0;
-
     private HermesWorkspaceSnapshotResponse MissingSnapshot(
         MongoId sessionId,
         HermesStashAnalysisSettings stashSettings,
@@ -769,7 +725,6 @@ public sealed class HermesChangeTrackingService(
             state.NextStaticCheckUnix = 0;
             state.NextMarketCheckUnix = 0;
             state.LastReason = normalizedReason;
-            Pulse(state);
         }
 
         return new HermesRecheckResponse(
@@ -795,7 +750,6 @@ public sealed class HermesChangeTrackingService(
                 state.NextStaticCheckUnix = 0;
                 state.NextMarketCheckUnix = 0;
                 state.LastReason = normalizedReason;
-                Pulse(state);
             }
         }
     }
@@ -1533,13 +1487,6 @@ public sealed class HermesChangeTrackingService(
         }
     }
 
-    private static void Pulse(SessionState state)
-    {
-        var previousSignal = state.ChangeSignal;
-        state.ChangeSignal = CreateChangeSignal();
-        previousSignal.TrySetResult(true);
-    }
-
     private static void Advance(SessionState state, IEnumerable<string> domains, string reason)
     {
         state.Revision++;
@@ -1550,10 +1497,6 @@ public sealed class HermesChangeTrackingService(
 
         state.LastReason = reason;
 
-        // Wake the single server-held client watch only after a real domain revision advances.
-        // RunContinuationsAsynchronously prevents the router continuation from running inside
-        // the state lock used by RefreshState and manual cache invalidation.
-        Pulse(state);
     }
 
     private static RevisionSnapshot ReadRevision(SessionState state)
@@ -1597,9 +1540,6 @@ public sealed class HermesChangeTrackingService(
     private static string Hash(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
-    private static TaskCompletionSource<bool> CreateChangeSignal()
-        => new(TaskCreationOptions.RunContinuationsAsynchronously);
-
     private sealed class SessionState
     {
         public object Sync { get; } = new();
@@ -1611,7 +1551,6 @@ public sealed class HermesChangeTrackingService(
         public long NextMarketCheckUnix { get; set; }
         public string LastReason { get; set; } = "Server startup";
         public bool Initialized { get; set; }
-        public TaskCompletionSource<bool> ChangeSignal { get; set; } = CreateChangeSignal();
     }
 
     private sealed record PreparedAssistantFeed(
