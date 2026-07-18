@@ -61,6 +61,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
     private HermesNativeTabController? _hermesController;
     private global::GClass3808? _boundNativeTabGroup;
     private Coroutine? _refreshCoroutine;
+    private Coroutine? _initialHeaderSettleCoroutine;
 
     private bool _configured;
     private bool _inventoryOpen;
@@ -130,6 +131,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         _buildComplete = false;
         _boundNativeTabGroup = null;
         _buildAttempts = 0;
+        StopInitialHeaderSettle();
         HideHermesVisualsImmediate();
 
         // InventoryScreen.Show() replaces EFT's GClass3808 every time the Character or
@@ -162,6 +164,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
             StopCoroutine(_refreshCoroutine);
             _refreshCoroutine = null;
         }
+        StopInitialHeaderSettle();
 
         HideHermesVisualsImmediate();
         if (_hermesTabObject != null)
@@ -564,6 +567,8 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
             _hermesTabObject.SetActive(Plugin.Settings.UseNativeInventoryTabs.Value
                                        && _inventoryOpen
                                        && generation == _showGeneration);
+            RepairInitialHeaderState();
+            QueueInitialHeaderSettle(generation);
 
             if (_lastAttachedLogGeneration != generation)
             {
@@ -823,6 +828,66 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         }
     }
 
+    private void RepairInitialHeaderState()
+    {
+        if (_showingHermes || _selectionPending || _showWhenReady)
+        {
+            return;
+        }
+
+        // The cloned Tab can receive one late visual update from EFT after it is activated.
+        // Normalize both the external HERMES header and the authoritative native selection.
+        _hermesTab?.UpdateVisual(false);
+        _hermesTabObject?.GetComponent<HermesNativeTabHeaderStateController>()
+            ?.SetSelected(false);
+        ResolveSelectedNativeTab()?.UpdateVisual(true);
+    }
+
+    private void QueueInitialHeaderSettle(int generation)
+    {
+        StopInitialHeaderSettle();
+        if (!_inventoryOpen || generation != _showGeneration || !isActiveAndEnabled)
+        {
+            return;
+        }
+
+        _initialHeaderSettleCoroutine = StartCoroutine(SettleInitialHeaderState(generation));
+    }
+
+    private IEnumerator SettleInitialHeaderState(int generation)
+    {
+        // EFT finalizes the opening Gear/native tab after HERMES has been cloned. Repair the
+        // inactive state across the next few frames so the first inventory load looks exactly
+        // like later loads after the player has clicked another tab.
+        for (var frame = 0; frame < 4; frame++)
+        {
+            yield return null;
+            if (!_inventoryOpen
+                || generation != _showGeneration
+                || _hermesTabObject == null
+                || !isActiveAndEnabled
+                || !gameObject.activeInHierarchy)
+            {
+                break;
+            }
+
+            RepairInitialHeaderState();
+        }
+
+        _initialHeaderSettleCoroutine = null;
+    }
+
+    private void StopInitialHeaderSettle()
+    {
+        if (_initialHeaderSettleCoroutine == null)
+        {
+            return;
+        }
+
+        StopCoroutine(_initialHeaderSettleCoroutine);
+        _initialHeaderSettleCoroutine = null;
+    }
+
     private void EnsureContentPlacement(RectTransform template)
     {
         if (_contentRoot == null)
@@ -952,6 +1017,16 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         }
 
         _lastNativeTab = nativeTab;
+
+        // HERMES is external to EFT's enum-backed tab group. A cloned Tab can retain
+        // its selected child even while Gear or another native tab is authoritative.
+        // Clear HERMES immediately on every native selection so exactly one header is
+        // visually active. The header-state controller repeats this at LateUpdate as
+        // protection against EFT toggling the clone later in the same frame.
+        _hermesTab?.UpdateVisual(false);
+        _hermesTabObject?.GetComponent<HermesNativeTabHeaderStateController>()
+            ?.SetSelected(false);
+
         if (IsShowingHermes || (_contentView != null && _contentView.gameObject.activeSelf))
         {
             HideHermesFromNativeSelection(nativeTab);
@@ -1137,6 +1212,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
             StopCoroutine(_refreshCoroutine);
             _refreshCoroutine = null;
         }
+        StopInitialHeaderSettle();
 
         HideHermesVisualsImmediate();
         if (_hermesTabObject != null)
@@ -1155,6 +1231,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
             StopCoroutine(_refreshCoroutine);
             _refreshCoroutine = null;
         }
+        StopInitialHeaderSettle();
 
         UnsubscribeNativeTabs();
         if (_hermesTab != null)

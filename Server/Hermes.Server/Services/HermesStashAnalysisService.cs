@@ -12,80 +12,107 @@ public sealed class HermesStashAnalysisService(
     HermesReservationService reservationService,
     HermesTraderService traderService,
     HermesMarketService marketService,
-    ProfileHelper profileHelper,
-    JsonUtil jsonUtil)
+    HermesPreparedProfileSnapshotService preparedProfiles,
+    HermesProfileScopeService profileScopeService)
 {
-    public const int StashCacheTtlSeconds = 10;
+    public const int StashCacheTtlSeconds = 0; // revision-bound; no time expiry
 
     private readonly object _sync = new();
+    private readonly object _buildSync = new();
     private readonly Dictionary<string, CacheEntry> _cache = new(StringComparer.OrdinalIgnoreCase);
     private long _cacheHits;
     private long _cacheMisses;
     private long _cacheWrites;
+    private long _contentRevision;
+    private long _cacheGeneration;
 
     public HermesStashSummaryResponse GetSummary(
         MongoId sessionId,
         HermesStashAnalysisSettings settings)
     {
-        var key = $"{sessionId}:{settings.CacheKey}";
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var profileRevision = stashService.GetProfileRevision(sessionId);
-        if (string.IsNullOrWhiteSpace(profileRevision))
+        var scope = profileScopeService.ResolveIdentity(sessionId);
+        if (scope is null)
         {
-            return NotFound("HERMES could not fingerprint the active PMC profile.");
+            return NotFound("HERMES could not resolve the active PMC profile scope.");
         }
 
+        var key = $"{scope.ScopeKey}:{settings.CacheKey}";
         lock (_sync)
         {
-            if (_cache.TryGetValue(key, out var cached)
-                && cached.ExpiresUnixTime > now
-                && cached.ProfileRevision.Equals(profileRevision, StringComparison.Ordinal))
+            if (_cache.TryGetValue(key, out var cached))
             {
                 Interlocked.Increment(ref _cacheHits);
                 return cached.Response;
             }
-
-            _cache.Remove(key);
         }
 
-        Interlocked.Increment(ref _cacheMisses);
-        var response = BuildSummary(sessionId, settings, now);
-        if (response.Found)
+        // Only one expensive stash analysis may run at a time. A caller that arrived through
+        // Assistant while the workspace was already warming waits here and then consumes the
+        // materialized result instead of repeating trader/Flea valuation. Cache invalidation is
+        // driven by server domain revisions rather than a short timer.
+        lock (_buildSync)
         {
             lock (_sync)
             {
-                _cache[key] = new CacheEntry(
-                    response,
-                    now + StashCacheTtlSeconds,
-                    profileRevision);
-                Interlocked.Increment(ref _cacheWrites);
+                if (_cache.TryGetValue(key, out var cached))
+                {
+                    Interlocked.Increment(ref _cacheHits);
+                    return cached.Response;
+                }
             }
-        }
 
-        return response;
+            Interlocked.Increment(ref _cacheMisses);
+            var generation = Interlocked.Read(ref _cacheGeneration);
+            var response = BuildSummary(
+                sessionId,
+                settings,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+            // A source recheck can invalidate the cache while a long valuation pass is running.
+            // Rebuild once against the newly prepared profile instead of publishing a stale result
+            // after Clear() has already advanced the workspace generation.
+            if (generation != Interlocked.Read(ref _cacheGeneration))
+            {
+                generation = Interlocked.Read(ref _cacheGeneration);
+                response = BuildSummary(
+                    sessionId,
+                    settings,
+                    DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+            }
+
+            if (response.Found)
+            {
+                lock (_sync)
+                {
+                    if (generation == Interlocked.Read(ref _cacheGeneration))
+                    {
+                        response = response with
+                        {
+                            ContentRevision = Interlocked.Increment(ref _contentRevision)
+                        };
+                        _cache[key] = new CacheEntry(response);
+                        Interlocked.Increment(ref _cacheWrites);
+                    }
+                }
+            }
+
+            return response;
+        }
     }
 
     public void Clear(string? reason = null)
     {
         lock (_sync)
         {
+            Interlocked.Increment(ref _cacheGeneration);
             _cache.Clear();
         }
     }
 
     public HermesAnalysisCacheDiagnostics GetCacheDiagnostics()
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         lock (_sync)
         {
-            foreach (var key in _cache
-                         .Where(pair => pair.Value.ExpiresUnixTime <= now)
-                         .Select(pair => pair.Key)
-                         .ToList())
-            {
-                _cache.Remove(key);
-            }
-
             return new HermesAnalysisCacheDiagnostics(
                 _cache.Count,
                 Interlocked.Read(ref _cacheHits),
@@ -101,8 +128,8 @@ public sealed class HermesStashAnalysisService(
         long generatedUnixTime)
     {
         var snapshot = stashService.BuildAnalysisSnapshot(sessionId);
-        var profile = profileHelper.GetPmcProfile(sessionId);
-        if (snapshot is null || profile is null)
+        var preparedProfile = preparedProfiles.Get(sessionId);
+        if (snapshot is null || preparedProfile is null)
         {
             return NotFound("HERMES could not read the active PMC stash.");
         }
@@ -129,7 +156,7 @@ public sealed class HermesStashAnalysisService(
             return NotFound("HERMES could not read the active quest and hideout reservation state.");
         }
 
-        var profileJson = jsonUtil.Serialize(profile) ?? "{}";
+        var profileJson = preparedProfile.ProfileJson;
         long fullHandbookValue = 0;
         long conditionAdjustedHandbookValue = 0;
         long traderLiquidationValue = 0;
@@ -930,8 +957,5 @@ public sealed class HermesStashAnalysisService(
         }
     }
 
-    private sealed record CacheEntry(
-        HermesStashSummaryResponse Response,
-        long ExpiresUnixTime,
-        string ProfileRevision);
+    private sealed record CacheEntry(HermesStashSummaryResponse Response);
 }

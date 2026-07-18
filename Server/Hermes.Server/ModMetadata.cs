@@ -8,7 +8,7 @@ public record ModMetadata : AbstractModMetadata
     public override string Name { get; init; } = "HERMES";
     public override string Author { get; init; } = "AMightyTank";
     public override List<string>? Contributors { get; init; } = [];
-    public override SemanticVersioning.Version Version { get; init; } = new("0.1.0-alpha13.0.10");
+    public override SemanticVersioning.Version Version { get; init; } = new("0.1.0-alpha14.0.8");
     public override SemanticVersioning.Range SptVersion { get; init; } = new("~4.0.13");
     public override List<string>? Incompatibilities { get; init; } = [];
     public override Dictionary<string, SemanticVersioning.Range>? ModDependencies { get; init; } = null;

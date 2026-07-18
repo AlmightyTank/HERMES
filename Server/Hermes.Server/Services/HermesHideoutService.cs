@@ -30,7 +30,8 @@ internal sealed record HermesStashReservationSnapshot(
 [Injectable(InjectionType.Singleton)]
 public sealed class HermesHideoutService(
     DatabaseService databaseService,
-    ProfileHelper profileHelper,
+    HermesPreparedProfileSnapshotService preparedProfiles,
+    HermesProfileScopeService profileScopeService,
     JsonUtil jsonUtil,
     HermesCatalogService catalogService,
     HermesTraderService traderService,
@@ -39,6 +40,16 @@ public sealed class HermesHideoutService(
     SeasonalEventService seasonalEventService)
 {
     private readonly object _sync = new();
+    private readonly object _hideoutSummaryCacheSync = new();
+    private readonly object _craftsSummaryCacheSync = new();
+    private readonly Dictionary<string, MaterializedSummaryEntry<HermesHideoutSummaryResponse>>
+        _hideoutSummaryCache = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, MaterializedSummaryEntry<HermesCraftsResponse>>
+        _craftsSummaryCache = new(StringComparer.Ordinal);
+    private long _hideoutSummaryGeneration;
+    private long _craftsSummaryGeneration;
+    private long _hideoutContentRevision;
+    private long _craftsContentRevision;
     private Dictionary<string, AreaDefinition>? _areasByKey;
     private Dictionary<int, AreaDefinition>? _areasByType;
     private Dictionary<string, CraftDefinition>? _craftsByKey;
@@ -48,6 +59,35 @@ public sealed class HermesHideoutService(
     private double _generatorFuelFlowRate;
 
     public HermesHideoutSummaryResponse GetSummary(MongoId sessionId)
+    {
+        var cacheKey = BuildMaterializedSummaryKey(sessionId, "hideout");
+        lock (_hideoutSummaryCacheSync)
+        {
+            if (cacheKey is not null
+                && _hideoutSummaryCache.TryGetValue(cacheKey, out var cached))
+            {
+                return cached.Response;
+            }
+
+            var response = BuildSummaryCore(sessionId);
+            var confirmedKey = BuildMaterializedSummaryKey(sessionId, "hideout");
+            if (response.Found
+                && cacheKey is not null
+                && string.Equals(cacheKey, confirmedKey, StringComparison.Ordinal))
+            {
+                response = response with
+                {
+                    ContentRevision = Interlocked.Increment(ref _hideoutContentRevision)
+                };
+                _hideoutSummaryCache[cacheKey] =
+                    new MaterializedSummaryEntry<HermesHideoutSummaryResponse>(cacheKey, response);
+            }
+
+            return response;
+        }
+    }
+
+    private HermesHideoutSummaryResponse BuildSummaryCore(MongoId sessionId)
     {
         EnsureStaticIndex();
         var snapshot = BuildProfileSnapshot(sessionId);
@@ -136,6 +176,35 @@ public sealed class HermesHideoutService(
 
     public HermesCraftsResponse GetCrafts(MongoId sessionId)
     {
+        var cacheKey = BuildMaterializedSummaryKey(sessionId, "crafts");
+        lock (_craftsSummaryCacheSync)
+        {
+            if (cacheKey is not null
+                && _craftsSummaryCache.TryGetValue(cacheKey, out var cached))
+            {
+                return cached.Response;
+            }
+
+            var response = BuildCraftsCore(sessionId);
+            var confirmedKey = BuildMaterializedSummaryKey(sessionId, "crafts");
+            if (response.Found
+                && cacheKey is not null
+                && string.Equals(cacheKey, confirmedKey, StringComparison.Ordinal))
+            {
+                response = response with
+                {
+                    ContentRevision = Interlocked.Increment(ref _craftsContentRevision)
+                };
+                _craftsSummaryCache[cacheKey] =
+                    new MaterializedSummaryEntry<HermesCraftsResponse>(cacheKey, response);
+            }
+
+            return response;
+        }
+    }
+
+    private HermesCraftsResponse BuildCraftsCore(MongoId sessionId)
+    {
         EnsureStaticIndex();
         var snapshot = BuildProfileSnapshot(sessionId);
         if (snapshot is null)
@@ -146,17 +215,36 @@ public sealed class HermesHideoutService(
         var valuationCache = new Dictionary<string, ItemValuation>(StringComparer.OrdinalIgnoreCase);
         var traderSaleCache = new Dictionary<string, TraderSaleEstimate>(StringComparer.OrdinalIgnoreCase);
         var fleaSaleCache = new FleaSaleCache();
-        var crafts = _craftsByKey!
-            .Values
-            .Where(craft => IsCraftStationAvailable(craft, snapshot))
-            .Select(craft => BuildCraftEvaluation(
-                craft,
-                snapshot,
-                sessionId,
-                valuationCache,
-                includeLivePricing: false,
-                traderSaleCache: traderSaleCache,
-                fleaSaleCache: fleaSaleCache))
+        var crafts = new List<HermesCraftSummary>();
+
+        // Evaluate recipes independently. Custom production tables occasionally contain
+        // incomplete event recipes or references to stations removed by another server mod.
+        // One malformed recipe must not abort every valid /hermes/crafts/summary result.
+        foreach (var craft in _craftsByKey!.Values)
+        {
+            if (!IsCraftStationAvailable(craft, snapshot))
+            {
+                continue;
+            }
+
+            try
+            {
+                crafts.Add(BuildCraftEvaluation(
+                    craft,
+                    snapshot,
+                    sessionId,
+                    valuationCache,
+                    includeLivePricing: false,
+                    traderSaleCache: traderSaleCache,
+                    fleaSaleCache: fleaSaleCache));
+            }
+            catch
+            {
+                // Hide only the malformed recipe and continue returning all valid crafts.
+            }
+        }
+
+        crafts = crafts
             .OrderByDescending(craft => craft.CanStartNow)
             .ThenByDescending(craft => craft.IsAvailable)
             .ThenByDescending(craft => craft.EstimatedBestSaleProfitPerHour)
@@ -1383,8 +1471,7 @@ public sealed class HermesHideoutService(
         TraderSaleEstimate estimate;
         try
         {
-            var summary = traderService.GetSummary(item.ItemKey, null, sessionId);
-            var bestSell = summary.BestSellOffer;
+            var bestSell = traderService.GetBestBaseItemSellOffer(item.TemplateId, sessionId);
             estimate = bestSell is not null && bestSell.RoubleEquivalent > 0
                 ? new TraderSaleEstimate(bestSell.TraderName, bestSell.RoubleEquivalent)
                 : new TraderSaleEstimate(null, 0L);
@@ -1418,17 +1505,13 @@ public sealed class HermesHideoutService(
         FleaSaleEstimate estimate;
         try
         {
-            var market = marketService.GetSummary(item.ItemKey, sessionId);
-            if (market.Found)
-            {
-                cache.FleaUnlocked = market.FleaUnlocked;
-            }
+            var market = marketService.GetCraftEstimate(item.TemplateId, sessionId);
+            cache.FleaUnlocked = market.FleaUnlocked;
 
-            estimate = market.Found
-                && market.FleaUnlocked
+            estimate = market.FleaUnlocked
                 && market.CanSellOnFlea
-                && market.EstimatedNetSale is > 0
-                    ? new FleaSaleEstimate(true, true, market.EstimatedNetSale.Value)
+                && market.UnitNetValue > 0
+                    ? new FleaSaleEstimate(true, true, market.UnitNetValue)
                     : new FleaSaleEstimate(market.FleaUnlocked, false, 0L);
         }
         catch
@@ -1616,24 +1699,50 @@ public sealed class HermesHideoutService(
 
     private bool IsCraftStationAvailable(CraftDefinition craft, ProfileSnapshot snapshot)
     {
-        if (!_areasByType!.TryGetValue(craft.AreaType, out var area)
-            || !IsAreaAvailable(area, snapshot)
-            || !snapshot.Areas.TryGetValue(craft.AreaType, out var profileArea))
+        // Production tables can be extended by server mods and seasonal data. Treat an
+        // incomplete recipe/station/profile entry as unavailable instead of allowing one
+        // malformed record to abort the entire crafts summary response.
+        if (craft is null
+            || snapshot is null
+            || _areasByType is null
+            || snapshot.Areas is null)
         {
             return false;
         }
 
-        // SPT keeps level-zero placeholders for hideout areas that the active PMC has not
-        // constructed yet. Presence in Hideout.Areas therefore does not mean the station is
-        // installed. Only expose recipes after this exact profile has built level 1 or higher.
-        // Higher-level recipes can still be shown for planning once the station exists; their
-        // required level remains evaluated separately by BuildCraftEvaluation().
-        return profileArea.Level > 0;
+        try
+        {
+            if (!_areasByType.TryGetValue(craft.AreaType, out var area)
+                || area is null
+                || !IsAreaAvailable(area, snapshot)
+                || !snapshot.Areas.TryGetValue(craft.AreaType, out var profileArea)
+                || profileArea is null)
+            {
+                return false;
+            }
+
+            // SPT keeps level-zero placeholders for hideout areas that the active PMC has not
+            // constructed yet. Presence in Hideout.Areas therefore does not mean the station is
+            // installed. Only expose recipes after this exact profile has built level 1 or higher.
+            // Higher-level recipes can still be shown for planning once the station exists; their
+            // required level remains evaluated separately by BuildCraftEvaluation().
+            return profileArea.Level > 0;
+        }
+        catch
+        {
+            // Hide malformed or partially initialized mod/event recipes. The detail endpoint
+            // reports the station as unavailable instead of returning HTTP 500.
+            return false;
+        }
     }
 
     private bool IsAreaAvailable(AreaDefinition area, ProfileSnapshot snapshot)
     {
-        if (!area.Enabled || !snapshot.Areas.ContainsKey(area.Type))
+        if (area is null
+            || snapshot is null
+            || snapshot.Areas is null
+            || !area.Enabled
+            || !snapshot.Areas.ContainsKey(area.Type))
         {
             return false;
         }
@@ -1648,14 +1757,35 @@ public sealed class HermesHideoutService(
 
     private bool IsChristmasHideoutActive()
     {
-        if (seasonalEventService.ChristmasEventEnabled())
+        try
         {
-            return true;
+            if (seasonalEventService.ChristmasEventEnabled())
+            {
+                return true;
+            }
+        }
+        catch
+        {
+            // Fall through to globals. Some modded event configurations omit collections
+            // that the vanilla seasonal service expects to be initialized.
         }
 
-        // Also honor server mods that enable the Christmas hideout directly through globals.
-        return databaseService.GetGlobals().Configuration.EventType.Any(eventType =>
-            eventType.ToString().Equals("Christmas", StringComparison.OrdinalIgnoreCase));
+        try
+        {
+            // Also honor server mods that enable the Christmas hideout directly through globals.
+            // EventType may be absent in stripped or custom global configurations.
+            var globals = databaseService.GetGlobals();
+            var eventTypes = globals?.Configuration?.EventType;
+            return eventTypes is not null && eventTypes.Any(eventType =>
+                string.Equals(
+                    Convert.ToString(eventType, CultureInfo.InvariantCulture),
+                    "Christmas",
+                    StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static long RoundCost(long? unitPrice, double quantity)
@@ -1733,19 +1863,61 @@ public sealed class HermesHideoutService(
     }
 
 
-    private ProfileSnapshot? BuildProfileSnapshot(MongoId sessionId)
+    /// <summary>
+    /// Drops only the materialized Hideout/Crafts response objects. Static recipe indexes remain
+    /// intact unless the change tracker separately detects a database-table change.
+    /// </summary>
+    public void InvalidateMaterializedSummaries(
+        bool hideout = true,
+        bool crafts = true,
+        string? reason = null)
     {
-        var profile = profileHelper.GetPmcProfile(sessionId);
-        if (profile is null)
+        if (hideout)
+        {
+            Interlocked.Increment(ref _hideoutSummaryGeneration);
+            lock (_hideoutSummaryCacheSync)
+            {
+                _hideoutSummaryCache.Clear();
+            }
+        }
+
+        if (crafts)
+        {
+            Interlocked.Increment(ref _craftsSummaryGeneration);
+            lock (_craftsSummaryCacheSync)
+            {
+                _craftsSummaryCache.Clear();
+            }
+        }
+    }
+
+    private string? BuildMaterializedSummaryKey(MongoId sessionId, string domain)
+    {
+        // Materialized workspace responses are invalidated by HermesChangeTrackingService when
+        // relevant profile, hideout, quest, trader, or market source revisions change. Opening a
+        // workspace therefore needs only a profile-scope key and generation number; it must not
+        // serialize and hash large profile sections just to prove that a prepared response exists.
+        var scope = profileScopeService.ResolveIdentity(sessionId);
+        if (scope is null)
         {
             return null;
         }
 
-        var root = JsonNode.Parse(jsonUtil.Serialize(profile) ?? "{}");
-        if (root is null)
+        var generation = domain.Equals("crafts", StringComparison.OrdinalIgnoreCase)
+            ? Interlocked.Read(ref _craftsSummaryGeneration)
+            : Interlocked.Read(ref _hideoutSummaryGeneration);
+        return $"{scope.ScopeKey}|{domain}|{generation}";
+    }
+
+    private ProfileSnapshot? BuildProfileSnapshot(MongoId sessionId)
+    {
+        var preparedProfile = preparedProfiles.Get(sessionId);
+        if (preparedProfile is null)
         {
             return null;
         }
+
+        var root = preparedProfile.Root;
 
         var inventory = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         var foundInRaid = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
@@ -2706,6 +2878,10 @@ public sealed class HermesHideoutService(
     private sealed record ProfileQuestState(
         int StatusCode,
         IReadOnlySet<string> CompletedConditions);
+
+    private sealed record MaterializedSummaryEntry<T>(
+        string Key,
+        T Response);
 
     private sealed record ProfileSnapshot(
         IReadOnlyDictionary<string, double> Inventory,

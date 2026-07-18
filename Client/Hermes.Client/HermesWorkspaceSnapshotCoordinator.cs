@@ -1,25 +1,24 @@
 using System.Reflection;
-using System.Security.Cryptography;
-using System.Text;
 using Hermes.Client.Models;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using SPT.Reflection.Patching;
 using UnityEngine;
 
 namespace Hermes.Client;
 
 /// <summary>
-/// Loads one server-created workspace snapshot, then maintains one quiet server-held change watch.
-/// The server holds that request for 30 seconds while HERMES is open or 60 seconds while closed,
-/// and the client downloads full summaries only after a real domain revision is reported.
+/// Owns one automatic full workspace load during profile startup and one after each raid.
+/// Between those full loads, opening a workspace downloads that workspace's already-prepared
+/// server summary so the screen always reflects the server cache. The top Refresh button is the
+/// only path that first asks the server to recheck source data before downloading the active view.
 /// </summary>
 internal sealed class HermesWorkspaceSnapshotCoordinator
 {
-    private const float InitialDelaySeconds = 0.5f;
-    private const float WatchReconnectDelaySeconds = 0.2f;
-    private const float RetrySeconds = 15f;
+    private const float InitialDelaySeconds = 5f;
+    private const float PostRaidReloadDelaySeconds = 5f;
     private const BindingFlags InstanceFlags = BindingFlags.Instance | BindingFlags.NonPublic;
+    private const float RaidStatePollSeconds = 0.5f;
+    private const float WorkspaceOpenDebounceSeconds = 1.5f;
+    private static readonly Lazy<Func<bool>> RaidActiveReader = new(BuildRaidActiveReader);
 
     private static readonly FieldInfo HideoutPanelField = RequiredField(typeof(HermesWindow), "_hideoutPanel");
     private static readonly FieldInfo CraftPanelField = RequiredField(typeof(HermesWindow), "_craftPanel");
@@ -32,8 +31,11 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     private readonly object _pendingSync = new();
     private readonly object _sharedLoadoutSync = new();
     private readonly object _preRaidPrefetchSync = new();
+    private readonly object _workspaceRefreshSync = new();
+    private readonly Dictionary<string, Task> _workspaceRefreshTasks = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, float> _lastWorkspaceOpenRequestAt = new(StringComparer.OrdinalIgnoreCase);
     private HermesWorkspaceSnapshotResponse? _pendingSnapshot;
-    private DeltaBundle? _pendingDelta;
+    private readonly Queue<DeltaBundle> _pendingDeltas = new();
     private HermesLoadoutSummaryResponse? _pendingSharedLoadout;
     private HermesLoadoutSummaryResponse? _cachedLoadout;
     private Task<HermesLoadoutSummaryResponse>? _sharedLoadoutTask;
@@ -43,6 +45,11 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     private int _preRaidPrefetchGeneration;
     private bool _loading;
     private bool _initialized;
+    private bool _automaticFullLoadPending = true;
+    private bool _automaticFullLoadAfterRaid;
+    private bool _raidWasActive;
+    private bool _legacyRefreshSuppressed;
+    private float _nextRaidStateCheckAt;
     private float _nextCheckAt;
     private long _revision;
     private string? _profileToken;
@@ -54,10 +61,21 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     internal static HermesWorkspaceSnapshotCoordinator? Current { get; private set; }
 
     /// <summary>
-    /// True only while the quiet server-held watch is in flight. Native UI activity indicators
-    /// ignore this background work, so waiting for a real server change never flashes a spinner.
+    /// True while the one automatic startup/post-raid full workspace load is running.
+    /// There is no continuous client-side workspace watch in Alpha 14.0.7.
     /// </summary>
-    internal static bool IsBackgroundCheckActive => Current?._loading == true && Current._initialized;
+    internal static bool IsBackgroundCheckActive => Current?._loading == true;
+
+    /// <summary>
+    /// True after Hideout, Crafts, Stash, and Loadout have all been loaded for the active PMC.
+    /// Assistant refresh controls can then rebuild alerts locally without starting another server request.
+    /// </summary>
+    internal bool HasLoadedWorkspaceData => _initialized;
+
+    /// <summary>
+    /// True while a startup or post-raid full workspace snapshot is being prepared.
+    /// </summary>
+    internal bool IsInitialWorkspaceLoadActive => _loading;
 
     /// <summary>
     /// The exact loadout model currently displayed by the HERMES Loadout and Raid Planner pages.
@@ -117,6 +135,36 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     {
         try
         {
+            // Map selection is the one pre-raid point where accuracy matters more than merely
+            // reopening a prepared workspace. Recheck the profile sources first so equipment,
+            // vitals, insurance, and quest changes invalidate the server-held loadout response
+            // before readiness joins the shared loadout request.
+            try
+            {
+                var recheck = await HermesRevisionApiClient.RequestRecheckAsync();
+                if (recheck.Accepted)
+                {
+                    var changes = await HermesRevisionApiClient.GetChangesAsync(_revision);
+                    if (changes.Found)
+                    {
+                        if (!string.IsNullOrWhiteSpace(changes.ContextToken))
+                        {
+                            _profileToken = changes.ContextToken;
+                        }
+
+                        _revision = Math.Max(_revision, changes.Revision);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (Plugin.Settings.DetailedLogging.Value)
+                {
+                    Plugin.Log.LogWarning(
+                        $"HERMES map-selection source recheck continued with the prepared loadout: {ex.Message}");
+                }
+            }
+
             var response = await GetSharedLoadoutAsync(forceRefresh: true);
             if (response is { Found: true })
             {
@@ -178,19 +226,125 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         return Current;
     }
 
+    /// <summary>
+    /// Compatibility entry point used by the native Assistant state. It may accelerate the
+    /// one pending startup/post-raid full load, but it never starts another full workspace
+    /// request after that one-shot load has completed.
+    /// </summary>
     internal void EnsureInitialLoad()
     {
-        // Opening HERMES only accelerates the very first snapshot. Once initialized, one server-
-        // held watch is already active and reopening the tab never forces a second request.
-        if (!_initialized)
+        if (_automaticFullLoadPending && !_loading)
         {
             _nextCheckAt = Time.realtimeSinceStartup;
         }
     }
 
+    internal void OnPresentationOpened()
+    {
+        // Opening HERMES may accelerate the one startup load. Once that one-shot load has
+        // completed, reopening the presentation refreshes only the currently visible workspace
+        // from the server's prepared summary cache.
+        if (_automaticFullLoadPending && !_loading)
+        {
+            _nextCheckAt = Time.realtimeSinceStartup;
+            return;
+        }
+
+        if (_loading)
+        {
+            return;
+        }
+
+        QueueWorkspaceOpenRefresh(GetActiveTabName());
+    }
+
     internal void RequestImmediateRecheck()
     {
-        _nextCheckAt = Time.realtimeSinceStartup;
+        // Kept for compatibility with older callers. Refreshing is now explicit and tab-scoped.
+        _ = RefreshWorkspaceAsync(GetActiveTabName(), manual: true);
+    }
+
+    internal void OnWorkspaceSelected(string tabName)
+    {
+        var normalized = NormalizeWorkspace(tabName);
+        if (normalized is "ItemSearch" or "")
+        {
+            return;
+        }
+
+        // Never duplicate the startup/post-raid full load. The active tab will receive that
+        // completed snapshot. Afterward, every workspace opening requests only its prepared
+        // server summary; it does not trigger a source scan or a full multi-workspace load.
+        if (_automaticFullLoadPending || _loading)
+        {
+            return;
+        }
+
+        QueueWorkspaceOpenRefresh(normalized);
+    }
+
+    private void QueueWorkspaceOpenRefresh(string tabName)
+    {
+        var normalized = NormalizeWorkspace(tabName);
+        if (normalized is "ItemSearch" or "")
+        {
+            return;
+        }
+
+        var requestKey = WorkspaceRequestKey(normalized);
+        var now = Time.realtimeSinceStartup;
+        lock (_workspaceRefreshSync)
+        {
+            if (_lastWorkspaceOpenRequestAt.TryGetValue(requestKey, out var previous)
+                && now - previous < WorkspaceOpenDebounceSeconds)
+            {
+                if (Plugin.Settings.DetailedLogging.Value)
+                {
+                    Plugin.Log.LogDebug($"HERMES reused the recent {requestKey} workspace-open refresh.");
+                }
+                return;
+            }
+
+            _lastWorkspaceOpenRequestAt[requestKey] = now;
+        }
+
+        _ = RefreshWorkspaceAsync(normalized, manual: false);
+    }
+
+    internal Task RefreshWorkspaceAsync(string tabName, bool manual)
+    {
+        var normalized = NormalizeWorkspace(tabName);
+        if (normalized is "ItemSearch" or "")
+        {
+            return Task.CompletedTask;
+        }
+
+        var requestKey = WorkspaceRequestKey(normalized);
+        lock (_workspaceRefreshSync)
+        {
+            if (_workspaceRefreshTasks.TryGetValue(requestKey, out var active)
+                && !active.IsCompleted)
+            {
+                return active;
+            }
+
+            var task = RefreshWorkspaceCoreAsync(normalized, manual);
+            _workspaceRefreshTasks[requestKey] = task;
+            _ = task.ContinueWith(
+                _ =>
+                {
+                    lock (_workspaceRefreshSync)
+                    {
+                        if (_workspaceRefreshTasks.TryGetValue(requestKey, out var current)
+                            && ReferenceEquals(current, task))
+                        {
+                            _workspaceRefreshTasks.Remove(requestKey);
+                        }
+                    }
+                },
+                TaskScheduler.Default);
+            return task;
+        }
     }
 
     internal void RefreshNoticesFromLoadedData(bool manual)
@@ -201,73 +355,145 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     internal void Tick()
     {
         ApplyPending();
-        SuppressLegacyAutomaticRefresh();
+        TrackRaidLifecycle();
 
-        if (_loading || Time.realtimeSinceStartup < _nextCheckAt)
+        if (_loading || !_automaticFullLoadPending || Time.realtimeSinceStartup < _nextCheckAt)
         {
             return;
         }
 
+        var afterRaid = _automaticFullLoadAfterRaid;
+        _automaticFullLoadPending = false;
+        _automaticFullLoadAfterRaid = false;
         _loading = true;
-        if (!_initialized)
-        {
-            RefreshStatusField.SetValue(_window, "Loading initial HERMES server snapshot...");
-            _ = FetchInitialSnapshotAsync();
-            return;
-        }
-
-        _ = WatchServerChangesAsync();
+        RefreshStatusField.SetValue(
+            _window,
+            afterRaid
+                ? "Refreshing all HERMES workspaces after the raid..."
+                : "Loading the initial HERMES workspace snapshot...");
+        _ = FetchInitialSnapshotAsync(afterRaid);
     }
 
-    private async Task FetchInitialSnapshotAsync()
+    private async Task FetchInitialSnapshotAsync(bool afterRaid)
     {
         try
         {
-            // The old /hermes/snapshot route built Hideout, Crafts, Stash, and Loadout serially.
-            // The same domain endpoints are safe to request together (normal HERMES refresh already
-            // does this), so startup now waits for the slowest domain instead of the sum of all four.
-            var changesTask = HermesRevisionApiClient.GetChangesAsync(0);
-            var hideoutTask = HermesApiClient.GetHideoutSummaryAsync();
-            var craftsTask = HermesApiClient.GetCraftsAsync();
-            var stashTask = HermesApiClient.GetStashSummaryAsync(
-                Plugin.Settings.CreateStashRequestSettings());
-            var loadoutTask = GetSharedLoadoutAsync(forceRefresh: true);
+            // One explicit source scan precedes the one full startup/post-raid load. Domain
+            // responses are isolated so a slow Crafts route cannot discard successful Hideout,
+            // Stash, and Loadout results or cause the client to retry every workspace.
+            if (afterRaid)
+            {
+                try
+                {
+                    await HermesRevisionApiClient.RequestRecheckAsync();
+                }
+                catch (Exception ex)
+                {
+                    if (Plugin.Settings.DetailedLogging.Value)
+                    {
+                        Plugin.Log.LogWarning($"HERMES post-raid source recheck continued with current server data: {ex.Message}");
+                    }
+                }
+            }
 
-            await Task.WhenAll(
-                (Task)changesTask,
-                hideoutTask,
-                craftsTask,
-                stashTask,
-                loadoutTask);
+            var changes = await TryFetchAsync(
+                () => HermesRevisionApiClient.GetChangesAsync(afterRaid ? _revision : 0),
+                afterRaid ? "post-raid revisions" : "initial revisions");
 
-            var changes = changesTask.Result;
+            // GetChanges performs the server-side semantic source scan and invalidates only the
+            // affected caches. Start the expensive domain summaries after that scan completes.
+            var hideoutTask = TryFetchAsync(HermesWorkspaceSummaryApiClient.GetHideoutSummaryAsync, "full-load hideout");
+            var craftsTask = TryFetchAsync(HermesWorkspaceSummaryApiClient.GetCraftsAsync, "full-load crafts");
+            var stashTask = TryFetchAsync(
+                () => HermesApiClient.GetStashSummaryAsync(Plugin.Settings.CreateStashRequestSettings()),
+                "full-load stash");
+            var loadoutTask = TryFetchAsync(
+                () => GetSharedLoadoutAsync(forceRefresh: true),
+                "full-load loadout");
+
+            await Task.WhenAll((Task)hideoutTask, craftsTask, stashTask, loadoutTask);
+
+            // Register the server-owned Assistant feed without downloading the same four large
+            // workspace payloads a second time. The screen applies the results already returned
+            // by the parallel summary requests above.
+            var preparedFeed = await TryFetchAsync(
+                () => HermesRevisionApiClient.PrepareAssistantFeedAsync(
+                    Plugin.Settings.CreateStashRequestSettings(),
+                    Plugin.Settings.CreateLoadoutRequestSettings()),
+                afterRaid ? "post-raid Assistant feed preparation" : "initial Assistant feed preparation");
+
+            var hideout = hideoutTask.Result;
+            var crafts = craftsTask.Result;
+            var stash = stashTask.Result;
+            var loadout = loadoutTask.Result;
+
+            // A caller can reach its local timeout while the SPT server continues the same
+            // materialization. PrepareAssistantFeed joins those server-side gates. Once it
+            // reports success, recover any locally timed-out result from the completed cache
+            // instead of leaving the first client snapshot incomplete.
+            if (preparedFeed is { Prepared: true })
+            {
+                if (hideout is not { Found: true })
+                {
+                    hideout = await TryFetchAsync(
+                        HermesWorkspaceSummaryApiClient.GetHideoutSummaryAsync,
+                        "full-load cached hideout recovery");
+                }
+                if (crafts is not { Found: true })
+                {
+                    crafts = await TryFetchAsync(
+                        HermesWorkspaceSummaryApiClient.GetCraftsAsync,
+                        "full-load cached crafts recovery");
+                }
+                if (stash is not { Found: true })
+                {
+                    stash = await TryFetchAsync(
+                        () => HermesApiClient.GetStashSummaryAsync(Plugin.Settings.CreateStashRequestSettings()),
+                        "full-load cached stash recovery");
+                }
+                if (loadout is not { Found: true })
+                {
+                    loadout = await TryFetchAsync(
+                        () => GetSharedLoadoutAsync(forceRefresh: false),
+                        "full-load cached loadout recovery");
+                }
+            }
+
             var snapshot = new HermesWorkspaceSnapshotResponse
             {
-                Found = changes.Found,
-                Message = changes.Message,
-                ContextToken = changes.ContextToken,
-                Revision = changes.Revision,
-                Domains = changes.Domains,
-                Hideout = hideoutTask.Result,
-                Crafts = craftsTask.Result,
-                Stash = stashTask.Result,
-                Loadout = loadoutTask.Result
+                Found = hideout is { Found: true }
+                        || crafts is { Found: true }
+                        || stash is { Found: true }
+                        || loadout is { Found: true },
+                Message = afterRaid
+                    ? "Post-raid HERMES workspace load completed."
+                    : "Initial HERMES workspace load completed.",
+                ContextToken = preparedFeed?.ContextToken
+                               ?? changes?.ContextToken
+                               ?? _profileToken
+                               ?? string.Empty,
+                Revision = preparedFeed?.Revision ?? changes?.Revision ?? _revision,
+                Domains = preparedFeed?.Domains ?? changes?.Domains ?? new HermesDomainRevisions(),
+                Hideout = hideout ?? new HermesHideoutSummaryResponse(),
+                Crafts = crafts ?? new HermesCraftsResponse(),
+                Stash = stash ?? new HermesStashSummaryResponse(),
+                Loadout = loadout ?? new HermesLoadoutSummaryResponse()
             };
 
             lock (_pendingSync)
             {
                 _pendingSnapshot = snapshot;
             }
-
-            ScheduleWatchReconnect();
         }
         catch (Exception ex)
         {
-            Plugin.Log.LogWarning($"HERMES parallel initial workspace load failed: {ex.Message}");
+            Plugin.Log.LogWarning($"HERMES one-time full workspace load failed: {ex.Message}");
             RefreshStatusField.SetValue(
                 _window,
-                HermesApiClient.DescribeFailure(ex, "Initial HERMES workspace load"));
-            _nextCheckAt = Time.realtimeSinceStartup + RetrySeconds;
+                HermesApiClient.DescribeFailure(ex, afterRaid
+                    ? "Post-raid HERMES workspace load"
+                    : "Initial HERMES workspace load"));
+            _initialized = true;
         }
         finally
         {
@@ -369,91 +595,447 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         return await GetSharedLoadoutAsync(forceRefresh: true);
     }
 
-    private async Task WatchServerChangesAsync()
+    private async Task RefreshWorkspaceCoreAsync(string workspace, bool manual)
     {
+        // Cached-on-open refreshes keep the currently rendered screen visible. Loading chrome is
+        // shown only for a manual Refresh or when that workspace has never received data.
+        var showLoading = manual || !HasWorkspaceData(workspace);
+        if (showLoading)
+        {
+            MarkWorkspaceLoading(workspace, true);
+        }
+
         try
         {
-            var hermesOpen = HermesNativeWorkspaceRuntime.Active;
-            var changes = await HermesRevisionApiClient.WatchChangesAsync(_revision, hermesOpen);
-            if (!changes.Found)
+            HermesChangesResponse? changes = null;
+
+            // Opening a workspace reads the server's already-prepared summary directly. Only the
+            // top Refresh button asks the server to rescan source data first.
+            if (manual)
             {
-                throw new InvalidOperationException(changes.Message ?? "HERMES revision status is unavailable.");
+                var recheck = await HermesRevisionApiClient.RequestRecheckAsync();
+                if (!recheck.Accepted)
+                {
+                    throw new InvalidOperationException(
+                        recheck.Message ?? "The HERMES server did not accept the source recheck.");
+                }
+
+                // The source scan owns invalidation. GetChanges compares semantic source
+                // fingerprints and retires only workspaces whose inputs actually changed. A
+                // manual Refresh must not throw away materialized responses when the server
+                // confirms that their source data is unchanged.
+                try
+                {
+                    changes = await HermesRevisionApiClient.GetChangesAsync(_revision);
+                    if (changes.Found)
+                    {
+                        if (!string.IsNullOrWhiteSpace(_profileToken)
+                            && !string.IsNullOrWhiteSpace(changes.ContextToken)
+                            && !string.Equals(_profileToken, changes.ContextToken, StringComparison.Ordinal))
+                        {
+                            InvalidateProfileBoundRequests();
+                            ClearProfileBoundWorkspaceData();
+                            ClearSemanticFingerprints();
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(changes.ContextToken))
+                        {
+                            _profileToken = changes.ContextToken;
+                        }
+
+                        _revision = Math.Max(_revision, changes.Revision);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // The explicit source recheck was accepted, so the selected summary can still
+                    // be downloaded even when the lightweight revision response is unavailable.
+                    if (Plugin.Settings.DetailedLogging.Value)
+                    {
+                        Plugin.Log.LogWarning(
+                            $"HERMES {workspace} revision settle continued with the prepared server summary: {ex.Message}");
+                    }
+                }
             }
 
-            if (!string.IsNullOrWhiteSpace(_profileToken)
-                && !string.IsNullOrWhiteSpace(changes.ContextToken)
-                && !string.Equals(_profileToken, changes.ContextToken, StringComparison.Ordinal))
+            HermesHideoutSummaryResponse? hideout = null;
+            HermesCraftsResponse? crafts = null;
+            HermesStashSummaryResponse? stash = null;
+            HermesLoadoutSummaryResponse? loadout = null;
+
+            if (workspace == "Assistant")
             {
-                ResetForProfileChange(changes.ContextToken);
-                return;
+                if (!manual)
+                {
+                    // Opening Assistant reads one display-ready server feed. It must never reopen
+                    // Hideout, Crafts, Stash, and Loadout merely to rebuild alert cards in Unity.
+                    if (NoticeServiceField.GetValue(_window) is HermesAssistantNoticeService preparedNotices)
+                    {
+                        await preparedNotices.RefreshFromPreparedServerAsync(manual: false);
+                    }
+                    return;
+                }
+
+                // Manual Assistant Refresh remains accurate but is now domain-selective. The
+                // source scan above already invalidated changed materializations, so unchanged
+                // Hideout, Crafts, Stash, and Loadout responses stay hot on the server.
+                var refreshAllAssistantSources = changes is null || !changes.Found;
+                var refreshHideout = refreshAllAssistantSources || HasChangedDomain(changes, "hideout");
+                var refreshCrafts = refreshAllAssistantSources || HasChangedDomain(changes, "crafts");
+                var refreshStash = refreshAllAssistantSources || HasChangedDomain(changes, "stash");
+                var refreshLoadout = refreshAllAssistantSources
+                                     || HasChangedDomain(changes, "loadout")
+                                     || HasChangedDomain(changes, "raidPlanner");
+
+                var hideoutTask = refreshHideout
+                    ? TryFetchAsync(
+                        HermesWorkspaceSummaryApiClient.GetHideoutSummaryAsync,
+                        "Assistant refreshed hideout")
+                    : Task.FromResult<HermesHideoutSummaryResponse?>(null);
+                var craftsTask = refreshCrafts
+                    ? TryFetchAsync(
+                        HermesWorkspaceSummaryApiClient.GetCraftsAsync,
+                        "Assistant refreshed crafts")
+                    : Task.FromResult<HermesCraftsResponse?>(null);
+                var stashTask = refreshStash
+                    ? TryFetchAsync(
+                        () => HermesApiClient.GetStashSummaryAsync(Plugin.Settings.CreateStashRequestSettings()),
+                        "Assistant refreshed stash")
+                    : Task.FromResult<HermesStashSummaryResponse?>(null);
+                var loadoutTask = refreshLoadout
+                    ? TryFetchAsync(
+                        () => GetSharedLoadoutAsync(forceRefresh: true),
+                        "Assistant refreshed loadout")
+                    : Task.FromResult<HermesLoadoutSummaryResponse?>(null);
+
+                await Task.WhenAll((Task)hideoutTask, craftsTask, stashTask, loadoutTask);
+                hideout = hideoutTask.Result;
+                crafts = craftsTask.Result;
+                stash = stashTask.Result;
+                loadout = loadoutTask.Result;
+
+                var prepared = await TryFetchAsync(
+                    () => HermesRevisionApiClient.PrepareAssistantFeedAsync(
+                        Plugin.Settings.CreateStashRequestSettings(),
+                        Plugin.Settings.CreateLoadoutRequestSettings()),
+                    "Assistant prepared feed registration");
+                if (prepared is { Prepared: true })
+                {
+                    // Server preparation joins any materialization that outlived a local timeout.
+                    // Recover only missing client models from the completed server cache.
+                    if (refreshHideout && hideout is not { Found: true })
+                    {
+                        hideout = await TryFetchAsync(
+                            HermesWorkspaceSummaryApiClient.GetHideoutSummaryAsync,
+                            "Assistant cached hideout recovery");
+                    }
+                    if (refreshCrafts && crafts is not { Found: true })
+                    {
+                        crafts = await TryFetchAsync(
+                            HermesWorkspaceSummaryApiClient.GetCraftsAsync,
+                            "Assistant cached crafts recovery");
+                    }
+                    if (refreshStash && stash is not { Found: true })
+                    {
+                        stash = await TryFetchAsync(
+                            () => HermesApiClient.GetStashSummaryAsync(Plugin.Settings.CreateStashRequestSettings()),
+                            "Assistant cached stash recovery");
+                    }
+                    if (refreshLoadout && loadout is not { Found: true })
+                    {
+                        loadout = await TryFetchAsync(
+                            () => GetSharedLoadoutAsync(forceRefresh: false),
+                            "Assistant cached loadout recovery");
+                    }
+
+                    changes = new HermesChangesResponse
+                    {
+                        Found = true,
+                        ContextToken = prepared.ContextToken,
+                        Revision = prepared.Revision,
+                        Domains = prepared.Domains
+                    };
+                }
+            }
+            else if (workspace == "Hideout")
+            {
+                hideout = await HermesWorkspaceSummaryApiClient.GetHideoutSummaryAsync();
+            }
+            else if (workspace == "Crafts")
+            {
+                crafts = await HermesWorkspaceSummaryApiClient.GetCraftsAsync();
+            }
+            else if (workspace == "Stash")
+            {
+                stash = await HermesApiClient.GetStashSummaryAsync(Plugin.Settings.CreateStashRequestSettings());
+            }
+            else if (workspace is "Loadout" or "RaidPlanner")
+            {
+                loadout = await GetSharedLoadoutAsync(forceRefresh: true);
             }
 
-            if (changes.Revision <= _revision || changes.Changed.Count == 0)
+            if (manual && workspace != "Assistant")
             {
-                _revision = Math.Max(_revision, changes.Revision);
-                RefreshStatusField.SetValue(_window, string.Empty);
-                ScheduleWatchReconnect();
-                return;
+                // Keep the server-owned Assistant feed aligned with a manually refreshed domain.
+                // The selected summary has already been rebuilt, and the other summaries remain
+                // materialized, so this combined registration is a cache read rather than a second
+                // analysis pass.
+                var prepared = await TryFetchAsync(
+                    () => HermesRevisionApiClient.PrepareAssistantFeedAsync(
+                        Plugin.Settings.CreateStashRequestSettings(),
+                        Plugin.Settings.CreateLoadoutRequestSettings()),
+                    $"{workspace} Assistant feed registration");
+                if (prepared is { Prepared: true })
+                {
+                    changes = new HermesChangesResponse
+                    {
+                        Found = true,
+                        ContextToken = prepared.ContextToken,
+                        Revision = prepared.Revision,
+                        Domains = prepared.Domains
+                    };
+                }
             }
 
-            var domains = new HashSet<string>(changes.Changed, StringComparer.OrdinalIgnoreCase);
-            var hideoutTask = domains.Contains("hideout")
-                ? TryFetchAsync(HermesApiClient.GetHideoutSummaryAsync, "changed hideout")
-                : Task.FromResult<HermesHideoutSummaryResponse?>(null);
-            var craftsTask = domains.Contains("crafts")
-                ? TryFetchAsync(HermesApiClient.GetCraftsAsync, "changed crafts")
-                : Task.FromResult<HermesCraftsResponse?>(null);
-            var stashTask = domains.Contains("stash")
-                ? TryFetchAsync(
-                    () => HermesApiClient.GetStashSummaryAsync(Plugin.Settings.CreateStashRequestSettings()),
-                    "changed stash")
-                : Task.FromResult<HermesStashSummaryResponse?>(null);
-            var loadoutTask = domains.Contains("loadout") || domains.Contains("raidPlanner")
-                ? TryFetchAsync(
-                    () => GetSharedLoadoutAsync(forceRefresh: true),
-                    "changed loadout and raid planner")
-                : Task.FromResult<HermesLoadoutSummaryResponse?>(null);
-
-            await Task.WhenAll((Task)hideoutTask, craftsTask, stashTask, loadoutTask);
             lock (_pendingSync)
             {
-                _pendingDelta = new DeltaBundle(
-                    changes,
-                    hideoutTask.Result,
-                    craftsTask.Result,
-                    stashTask.Result,
-                    loadoutTask.Result);
+                _pendingDeltas.Enqueue(new DeltaBundle(
+                    changes ?? new HermesChangesResponse
+                    {
+                        Found = true,
+                        ContextToken = _profileToken ?? string.Empty,
+                        Revision = _revision
+                    },
+                    hideout,
+                    crafts,
+                    stash,
+                    loadout,
+                    manual));
             }
 
-            ScheduleWatchReconnect();
+            // The downloaded server summary is applied on the Unity thread with the queued delta.
         }
         catch (Exception ex)
         {
-            if (Plugin.Settings.DetailedLogging.Value)
-            {
-                Plugin.Log.LogWarning($"HERMES server-held update watch failed: {ex.Message}");
-            }
-
-            _nextCheckAt = Time.realtimeSinceStartup + RetrySeconds;
+            Plugin.Log.LogWarning($"HERMES {workspace} refresh failed: {ex.Message}");
+            RefreshStatusField.SetValue(_window, HermesApiClient.DescribeFailure(ex, $"{workspace} refresh"));
         }
         finally
         {
-            _loading = false;
+            if (showLoading)
+            {
+                MarkWorkspaceLoading(workspace, false);
+            }
+        }
+    }
+
+    private void TrackRaidLifecycle()
+    {
+        if (Time.realtimeSinceStartup < _nextRaidStateCheckAt)
+        {
+            return;
+        }
+
+        _nextRaidStateCheckAt = Time.realtimeSinceStartup + RaidStatePollSeconds;
+        var raidActive = IsRaidActive();
+        if (raidActive)
+        {
+            _raidWasActive = true;
+            return;
+        }
+
+        if (!_raidWasActive)
+        {
+            return;
+        }
+
+        _raidWasActive = false;
+        ScheduleAutomaticFullWorkspaceLoad(afterRaid: true, PostRaidReloadDelaySeconds);
+        if (Plugin.Settings.DetailedLogging.Value)
+        {
+            Plugin.Log.LogInfo("HERMES detected raid completion and scheduled one post-raid full workspace load.");
+        }
+    }
+
+    private void ScheduleAutomaticFullWorkspaceLoad(bool afterRaid, float delaySeconds)
+    {
+        _automaticFullLoadPending = true;
+        _automaticFullLoadAfterRaid |= afterRaid;
+        _nextCheckAt = Time.realtimeSinceStartup + Math.Max(0f, delaySeconds);
+    }
+
+    private bool HasWorkspaceData(string workspace)
+    {
+        if (workspace == "Assistant")
+        {
+            return _initialized;
+        }
+
+        if (workspace == "Hideout")
+        {
+            var panel = HideoutPanelField.GetValue(_window);
+            return panel is not null
+                   && Get<HermesHideoutSummaryResponse>(panel, "_summary") is { Found: true };
+        }
+
+        if (workspace == "Crafts")
+        {
+            var panel = CraftPanelField.GetValue(_window);
+            return panel is not null
+                   && Get<HermesCraftsResponse>(panel, "_response") is { Found: true };
+        }
+
+        if (workspace == "Stash")
+        {
+            var panel = StashPanelField.GetValue(_window);
+            return panel is not null
+                   && Get<HermesStashSummaryResponse>(panel, "_summary") is { Found: true };
+        }
+
+        if (workspace is "Loadout" or "RaidPlanner")
+        {
+            return CachedLoadout is { Found: true };
+        }
+
+        return false;
+    }
+
+    private void MarkWorkspaceLoading(string workspace, bool loading)
+    {
+        object? panel = workspace switch
+        {
+            "Hideout" => HideoutPanelField.GetValue(_window),
+            "Crafts" => CraftPanelField.GetValue(_window),
+            "Stash" => StashPanelField.GetValue(_window),
+            "Loadout" or "RaidPlanner" => LoadoutPanelField.GetValue(_window),
+            _ => null
+        };
+        if (panel is not null)
+        {
+            Set(panel, "_loading", loading);
+        }
+    }
+
+    private string GetActiveTabName()
+        => FindField(_window, "_activeTab")?.GetValue(_window)?.ToString() ?? "ItemSearch";
+
+    private static bool HasChangedDomain(HermesChangesResponse? changes, string domain)
+        => changes?.Changed?.Any(value =>
+            string.Equals(value, domain, StringComparison.OrdinalIgnoreCase)) == true;
+
+    private static string WorkspaceRequestKey(string workspace)
+        => workspace is "RaidPlanner" ? "Loadout" : workspace;
+
+    private static string NormalizeWorkspace(string? tabName)
+    {
+        var value = tabName?.Trim() ?? string.Empty;
+        return value.ToLowerInvariant() switch
+        {
+            "assistant" or "chat" => "Assistant",
+            "hideout" => "Hideout",
+            "craft" or "crafts" => "Crafts",
+            "stash" => "Stash",
+            "loadout" => "Loadout",
+            "raid" or "raidplanner" or "raid planner" => "RaidPlanner",
+            _ => "ItemSearch"
+        };
+    }
+
+    private static bool IsRaidActive()
+    {
+        try
+        {
+            return RaidActiveReader.Value();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static Func<bool> BuildRaidActiveReader()
+    {
+        try
+        {
+            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            var gameWorldType = assemblies
+                .Select(assembly => assembly.GetType("EFT.GameWorld", false))
+                .FirstOrDefault(type => type is not null);
+            if (gameWorldType is null)
+            {
+                return static () => false;
+            }
+
+            var directProperty = gameWorldType.GetProperty(
+                "Instance",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            var directField = gameWorldType.GetField(
+                "Instance",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+
+            PropertyInfo? singletonProperty = null;
+            if (directProperty is null && directField is null)
+            {
+                var singletonType = assemblies
+                    .Select(assembly => assembly.GetType("Comfort.Common.Singleton`1", false))
+                    .FirstOrDefault(type => type is not null);
+                if (singletonType is not null)
+                {
+                    singletonProperty = singletonType
+                        .MakeGenericType(gameWorldType)
+                        .GetProperty(
+                            "Instance",
+                            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                }
+            }
+
+            return () => directProperty?.GetValue(null) is not null
+                         || directField?.GetValue(null) is not null
+                         || singletonProperty?.GetValue(null) is not null;
+        }
+        catch
+        {
+            return static () => false;
+        }
+    }
+
+    private void SuppressLegacyAutomaticRefresh()
+    {
+        if (_legacyRefreshSuppressed)
+        {
+            return;
+        }
+
+        _legacyRefreshSuppressed = true;
+        foreach (var panel in new[]
+                 {
+                     HideoutPanelField.GetValue(_window),
+                     CraftPanelField.GetValue(_window),
+                     StashPanelField.GetValue(_window),
+                     LoadoutPanelField.GetValue(_window)
+                 })
+        {
+            if (panel is null)
+            {
+                continue;
+            }
+
+            Set(panel, "_nextAutomaticRefresh", float.PositiveInfinity);
         }
     }
 
     private void ApplyPending()
     {
         HermesWorkspaceSnapshotResponse? snapshot;
-        DeltaBundle? delta;
+        List<DeltaBundle> deltas;
         HermesLoadoutSummaryResponse? sharedLoadout;
         lock (_pendingSync)
         {
             snapshot = _pendingSnapshot;
-            delta = _pendingDelta;
+            deltas = _pendingDeltas.ToList();
+            _pendingDeltas.Clear();
             sharedLoadout = _pendingSharedLoadout;
             _pendingSnapshot = null;
-            _pendingDelta = null;
             _pendingSharedLoadout = null;
         }
 
@@ -462,7 +1044,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             ApplySnapshot(snapshot);
         }
 
-        if (delta is not null)
+        foreach (var delta in deltas)
         {
             ApplyDelta(delta);
         }
@@ -484,16 +1066,19 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             && !string.IsNullOrWhiteSpace(snapshot.ContextToken)
             && !string.Equals(_profileToken, snapshot.ContextToken, StringComparison.Ordinal))
         {
+            InvalidateProfileBoundRequests();
             ClearProfileBoundWorkspaceData();
+            ClearSemanticFingerprints();
         }
 
         if (!snapshot.Found)
         {
-            _initialized = false;
-            _nextCheckAt = Time.realtimeSinceStartup + RetrySeconds;
+            // The automatic full-load budget is one attempt. Missing workspaces can be refreshed
+            // when selected or explicitly through the top Refresh button.
+            _initialized = true;
             RefreshStatusField.SetValue(
                 _window,
-                snapshot.Message ?? "Waiting for the active PMC profile before loading HERMES data...");
+                snapshot.Message ?? "The automatic HERMES workspace load did not return profile data. Open a workspace or press Refresh to try that view.");
             return;
         }
 
@@ -526,23 +1111,18 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             loaded.Add("Loadout / Raid Planner");
         }
 
-        _initialized = snapshot.Hideout is { Found: true }
-                       && snapshot.Crafts is { Found: true }
-                       && snapshot.Stash is { Found: true }
-                       && snapshot.Loadout is { Found: true };
+        // A full-load attempt is complete even if one expensive domain timed out. Successful
+        // domains stay visible, and an unavailable domain is retried only when selected or when
+        // the player explicitly presses Refresh.
+        _initialized = true;
 
-        if (!_initialized)
-        {
-            _nextCheckAt = Time.realtimeSinceStartup + RetrySeconds;
-            RefreshStatusField.SetValue(
-                _window,
-                loaded.Count > 0
-                    ? $"Initial data partially loaded: {string.Join(", ", loaded)}. Retrying unavailable workspaces..."
-                    : "Waiting for the active PMC profile before loading workspace data...");
-            return;
-        }
-
-        RefreshStatusField.SetValue(_window, string.Empty);
+        RefreshStatusField.SetValue(
+            _window,
+            loaded.Count == 4
+                ? string.Empty
+                : loaded.Count > 0
+                    ? $"Loaded {string.Join(", ", loaded)}. Unavailable workspaces will refresh when opened."
+                    : "No workspace summary loaded. Open a workspace or press Refresh to retry that view.");
         UpdateNoticeCandidates(manual: false);
         if (Plugin.Settings.DetailedLogging.Value)
         {
@@ -585,9 +1165,9 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         // Background server revisions are intentionally silent. They update only the affected
         // workspace models and never replace the normal workspace subtitle with diagnostic text.
         RefreshStatusField.SetValue(_window, string.Empty);
-        if (changed.Count > 0)
+        if (changed.Count > 0 || delta.Manual)
         {
-            UpdateNoticeCandidates(manual: false);
+            UpdateNoticeCandidates(manual: delta.Manual);
         }
         if (Plugin.Settings.DetailedLogging.Value)
         {
@@ -602,18 +1182,6 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         }
     }
 
-    private bool IsActiveTab(string expected)
-    {
-        var active = FindField(_window, "_activeTab")?.GetValue(_window)?.ToString() ?? string.Empty;
-        return active.Contains(expected, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private void ScheduleWatchReconnect()
-    {
-        // The previous request already waited on the server. Reconnect quickly so there is only
-        // one continuous watch instead of a client timer repeatedly asking whether anything changed.
-        _nextCheckAt = Time.realtimeSinceStartup + WatchReconnectDelaySeconds;
-    }
 
     private bool ApplyHideout(HermesHideoutSummaryResponse response)
     {
@@ -638,19 +1206,11 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         Set(panel, "_detailLoading", false);
         Set(panel, "_status", $"Loaded {response.Areas.Count:N0} hideout area(s) and {response.ActiveProductions.Count:N0} production(s).");
 
-        var previous = Get<HermesHideoutAreaSummary>(panel, "_selectedArea");
-        var selected = previous is null
-            ? response.Areas.FirstOrDefault()
-            : response.Areas.FirstOrDefault(area => area.AreaKey == previous.AreaKey)
-              ?? response.Areas.FirstOrDefault();
-        if (selected is not null)
-        {
-            Set(panel, "_selectedArea", selected);
-            if (IsActiveTab("Hideout"))
-            {
-                InvokeTask(panel, "SelectAreaAsync", selected);
-            }
-        }
+        // Summary opening is one request. Area acquisition details are demand-loaded only after
+        // the player explicitly selects an area card.
+        Set(panel, "_selectedArea", null);
+        Set(panel, "_detail", null);
+        Set(panel, "_detailLoading", false);
 
         return true;
     }
@@ -678,31 +1238,11 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         Set(panel, "_detailLoading", false);
         Set(panel, "_status", $"Loaded {response.TotalCrafts:N0} recipe(s). Select a recipe for live sourcing details.");
 
-        var previous = Get<HermesCraftSummary>(panel, "_selectedCraft");
-        if (previous is null)
-        {
-            Set(panel, "_detail", null);
-            Set(panel, "_detailLoading", false);
-            return true;
-        }
-
-        var selected = response.Crafts.FirstOrDefault(craft => craft.CraftKey == previous.CraftKey);
-        if (selected is null)
-        {
-            // The previously selected recipe may belong to a different profile or may no longer
-            // be visible for this profile. Never leave its detail model on screen.
-            Set(panel, "_selectedCraft", null);
-            Set(panel, "_detail", null);
-            Set(panel, "_detailLoading", false);
-            return true;
-        }
-
-        Set(panel, "_selectedCraft", selected);
-        if (IsActiveTab("Crafts"))
-        {
-            InvokeTask(panel, "SelectCraftAsync", selected);
-        }
-
+        // Recipe sourcing details remain demand-loaded. Opening or refreshing Crafts must not
+        // automatically issue /hermes/crafts/detail for the first or previously selected row.
+        Set(panel, "_selectedCraft", null);
+        Set(panel, "_detail", null);
+        Set(panel, "_detailLoading", false);
         return true;
     }
 
@@ -801,61 +1341,24 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     }
 
     private static string BuildHideoutSemanticFingerprint(HermesHideoutSummaryResponse response)
-        => BuildSemanticFingerprint(
-            response,
-            "SecondsUntilComplete",
-            "SecondsRemaining",
-            "EstimatedGeneratorRuntimeSeconds",
-            "FuelResourceRemaining",
-            "FuelCounter",
-            "AirFilterCounter",
-            "WaterFilterCounter");
+        => response.ContentRevision > 0
+            ? $"server:{response.ContentRevision}"
+            : $"legacy:{response.ReadyAreaCount}:{response.MaterialBlockedAreaCount}:{response.ProgressionBlockedAreaCount}:{response.Areas.Count}:{response.ActiveProductions.Count}";
 
     private static string BuildCraftsSemanticFingerprint(HermesCraftsResponse response)
-        => BuildSemanticFingerprint(response);
+        => response.ContentRevision > 0
+            ? $"server:{response.ContentRevision}"
+            : $"legacy:{response.TotalCrafts}:{response.Crafts.Count}";
 
     private static string BuildStashSemanticFingerprint(HermesStashSummaryResponse response)
-        => BuildSemanticFingerprint(response, "GeneratedUnixTime", "CacheTtlSeconds");
+        => response.ContentRevision > 0
+            ? $"server:{response.ContentRevision}"
+            : $"legacy:{response.TotalItemInstances}:{response.IndependentItemCount}:{response.PotentialBestSaleValue}";
 
     private static string BuildLoadoutSemanticFingerprint(HermesLoadoutSummaryResponse response)
-        => BuildSemanticFingerprint(response, "GeneratedUnixTime");
-
-    private static string BuildSemanticFingerprint(object response, params string[] ignoredProperties)
-    {
-        var ignored = ignoredProperties.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var token = JToken.FromObject(response);
-        RemoveIgnoredProperties(token, ignored);
-
-        var json = token.ToString(Formatting.None);
-        using var sha = SHA256.Create();
-        return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(json))).Replace("-", string.Empty).ToLowerInvariant();
-    }
-
-    private static void RemoveIgnoredProperties(JToken token, ISet<string> ignored)
-    {
-        if (token is JObject obj)
-        {
-            foreach (var property in obj.Properties().ToList())
-            {
-                if (ignored.Contains(property.Name))
-                {
-                    property.Remove();
-                    continue;
-                }
-
-                RemoveIgnoredProperties(property.Value, ignored);
-            }
-            return;
-        }
-
-        if (token is JArray array)
-        {
-            foreach (var child in array)
-            {
-                RemoveIgnoredProperties(child, ignored);
-            }
-        }
-    }
+        => response.ContentRevision > 0
+            ? $"server:{response.ContentRevision}"
+            : $"legacy:{response.ReadinessScore}:{response.WarningCount}:{response.CriticalCount}:{response.GeneratedUnixTime}";
 
     private void ClearSemanticFingerprints()
     {
@@ -863,60 +1366,6 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         _craftsSemanticFingerprint = string.Empty;
         _stashSemanticFingerprint = string.Empty;
         _loadoutSemanticFingerprint = string.Empty;
-    }
-
-    private void SuppressLegacyAutomaticRefresh()
-    {
-        // The revision coordinator is the only owner of automatic profile-bound summary loads.
-        // Setting these request flags from the first frame prevents the legacy panel Draw methods
-        // from launching overlapping /hideout, /crafts, /stash and /loadout requests. An older
-        // response can therefore never arrive after a new profile snapshot and overwrite it.
-        var hideout = HideoutPanelField.GetValue(_window);
-        if (hideout is not null)
-        {
-            Set(hideout, "_loadRequested", true);
-        }
-
-        var crafts = CraftPanelField.GetValue(_window);
-        if (crafts is not null)
-        {
-            Set(crafts, "_loadRequested", true);
-        }
-
-        var stash = StashPanelField.GetValue(_window);
-        if (stash is not null)
-        {
-            Set(stash, "_requested", true);
-        }
-
-        var loadout = LoadoutPanelField.GetValue(_window);
-        if (loadout is not null)
-        {
-            Set(loadout, "_requested", true);
-            Set(loadout, "_nextAutomaticRefresh", float.PositiveInfinity);
-        }
-
-        var raidPlanner = HermesWorkspaceSeparation.RaidPlanner;
-        Set(raidPlanner, "_requested", true);
-        Set(raidPlanner, "_nextAutomaticRefresh", float.PositiveInfinity);
-    }
-
-    private void ResetForProfileChange(string contextToken)
-    {
-        InvalidateProfileBoundRequests();
-        ClearProfileBoundWorkspaceData();
-        ClearSemanticFingerprints();
-        _initialized = false;
-        _revision = 0;
-        _profileToken = contextToken;
-        _nextCheckAt = Time.realtimeSinceStartup;
-        RefreshStatusField.SetValue(_window, "Loading HERMES data for the active PMC profile...");
-        UpdateNoticeCandidates(manual: false);
-
-        if (Plugin.Settings.DetailedLogging.Value)
-        {
-            Plugin.Log.LogInfo("HERMES detected an active PMC profile change and discarded the previous profile snapshot.");
-        }
     }
 
     private void InvalidateProfileBoundRequests()
@@ -967,6 +1416,11 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
 
     private void ClearProfileBoundWorkspaceData()
     {
+        lock (_workspaceRefreshSync)
+        {
+            _lastWorkspaceOpenRequestAt.Clear();
+        }
+
         _cachedLoadout = null;
         lock (_preRaidPrefetchSync)
         {
@@ -1098,13 +1552,15 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             HermesHideoutSummaryResponse? hideout,
             HermesCraftsResponse? crafts,
             HermesStashSummaryResponse? stash,
-            HermesLoadoutSummaryResponse? loadout)
+            HermesLoadoutSummaryResponse? loadout,
+            bool manual)
         {
             Changes = changes;
             Hideout = hideout;
             Crafts = crafts;
             Stash = stash;
             Loadout = loadout;
+            Manual = manual;
         }
 
         public HermesChangesResponse Changes { get; }
@@ -1112,12 +1568,13 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         public HermesCraftsResponse? Crafts { get; }
         public HermesStashSummaryResponse? Stash { get; }
         public HermesLoadoutSummaryResponse? Loadout { get; }
+        public bool Manual { get; }
     }
 }
 
 /// <summary>
-/// Presentation-open now asks the revision coordinator for an immediate lightweight check rather
-/// than forcing the active workspace to rebuild.
+/// Presentation-open accelerates the one startup full load. After that load finishes, reopening
+/// HERMES refreshes only the currently visible workspace from the server's prepared summary.
 /// </summary>
 internal sealed class HermesSnapshotPresentationOpenPatch : ModulePatch
 {
@@ -1128,7 +1585,7 @@ internal sealed class HermesSnapshotPresentationOpenPatch : ModulePatch
     [PatchPrefix]
     private static bool Prefix()
     {
-        HermesWorkspaceSnapshotCoordinator.Current?.EnsureInitialLoad();
+        HermesWorkspaceSnapshotCoordinator.Current?.OnPresentationOpened();
         return false;
     }
 }

@@ -9,6 +9,11 @@ using SPTarkov.Server.Core.Services;
 
 namespace Hermes.Server.Services;
 
+internal sealed record HermesCraftFleaValuation(
+    bool FleaUnlocked,
+    bool CanSellOnFlea,
+    long UnitNetValue);
+
 internal sealed record HermesStashFleaValuation(
     bool Available,
     bool ReliableForRecommendation,
@@ -356,6 +361,110 @@ public sealed class HermesMarketService(
 
         cacheService.SetMarketSummary(item.ItemKey, sessionId, response, cacheGeneration);
         return response;
+    }
+
+    internal HermesCraftFleaValuation GetCraftEstimate(
+        MongoId itemTemplateId,
+        MongoId sessionId)
+    {
+        var pmcProfile = profileHelper.GetPmcProfile(sessionId);
+        if (pmcProfile is null)
+        {
+            return new HermesCraftFleaValuation(false, false, 0L);
+        }
+
+        var requiredPlayerLevel = databaseService.GetGlobals().Configuration.RagFair.MinUserLevel;
+        var fleaUnlocked = (pmcProfile.Info?.Level ?? 1) >= requiredPlayerLevel;
+        if (!fleaUnlocked)
+        {
+            return new HermesCraftFleaValuation(false, false, 0L);
+        }
+
+        if (!databaseService.GetItems().TryGetValue(itemTemplateId, out var itemTemplate)
+            || itemTemplate.Properties?.CanSellOnRagfair != true)
+        {
+            return new HermesCraftFleaValuation(true, false, 0L);
+        }
+
+        IEnumerable<RagfairOffer> offers;
+        try
+        {
+            offers = ragfairOfferService.GetOffersOfType(itemTemplateId) ?? [];
+        }
+        catch
+        {
+            offers = [];
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var requirementPriceCache = new Dictionary<string, HermesMarketUnitValuation>(
+            StringComparer.OrdinalIgnoreCase);
+        var lowestGross = long.MaxValue;
+        var lowestNet = 0L;
+
+        foreach (var offer in offers)
+        {
+            if (IsTraderOfferSafe(offer)
+                || offer.Locked == true
+                || offer.Quantity <= 0
+                || offer.EndTime is null
+                || offer.EndTime <= now
+                || offer.Items is null
+                || offer.Items.Count != 1)
+            {
+                continue;
+            }
+
+            var rootItem = offer.Items[0];
+            if (rootItem.Template != itemTemplateId)
+            {
+                continue;
+            }
+
+            var requirements = offer.Requirements?.ToList() ?? [];
+            if (requirements.Count == 0
+                || !TryGetOfferUnitValue(
+                    offer,
+                    requirements,
+                    itemTemplateId,
+                    now,
+                    requirementPriceCache,
+                    out var offerValue)
+                || offerValue.UnitValue <= 0
+                || offerValue.UnitValue >= lowestGross)
+            {
+                continue;
+            }
+
+            double quality;
+            try
+            {
+                quality = Math.Clamp(itemHelper.GetItemQualityModifier(rootItem), 0.01d, 1d);
+            }
+            catch
+            {
+                quality = 1d;
+            }
+
+            if (quality < MinimumComparableCondition)
+            {
+                continue;
+            }
+
+            var suggested = Math.Max(1L, offerValue.UnitValue - SuggestedUndercutAmount);
+            try
+            {
+                var fee = ragfairTaxService.CalculateTax(rootItem, pmcProfile, suggested, 1, false);
+                lowestGross = offerValue.UnitValue;
+                lowestNet = Math.Max(0L, suggested - Convert.ToInt64(Math.Round(fee)));
+            }
+            catch
+            {
+                // A fee-backed net value is required before Flea can beat a trader.
+            }
+        }
+
+        return new HermesCraftFleaValuation(true, true, lowestNet);
     }
 
     internal HermesStashFleaValuation GetStashEstimate(

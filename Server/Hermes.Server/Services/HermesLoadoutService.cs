@@ -12,10 +12,11 @@ namespace Hermes.Server.Services;
 [Injectable(InjectionType.Singleton)]
 public sealed class HermesLoadoutService(
     DatabaseService databaseService,
-    ProfileHelper profileHelper,
+    HermesPreparedProfileSnapshotService preparedProfiles,
     HermesCatalogService catalogService,
     HermesLoadoutValueService loadoutValueService,
     HermesStashService stashService,
+    HermesProfileScopeService profileScopeService,
     JsonUtil jsonUtil)
 {
     private const string Ms2000MarkerTemplateId = "5991b51486f77447b112d44f";
@@ -116,76 +117,95 @@ public sealed class HermesLoadoutService(
     private readonly object _keyTemplateSync = new();
     private IReadOnlyList<TemplateInfo>? _keyTemplates;
     private readonly object _summaryCacheSync = new();
+    private readonly object _summaryBuildSync = new();
     private readonly Dictionary<string, LoadoutCacheEntry> _summaryCache = new(StringComparer.OrdinalIgnoreCase);
     private long _summaryCacheHits;
     private long _summaryCacheMisses;
     private long _summaryCacheWrites;
-    private const int SummaryCacheTtlSeconds = 10;
+    private long _contentRevision;
+    private long _summaryCacheGeneration;
+    private const int SummaryCacheTtlSeconds = 0; // revision-bound; no time expiry
 
     public HermesLoadoutSummaryResponse GetSummary(
         MongoId sessionId,
         HermesLoadoutAnalysisSettings? settings = null)
     {
         settings ??= HermesLoadoutAnalysisSettings.Default;
-        var profileRevision = stashService.GetProfileRevision(sessionId);
-        if (string.IsNullOrWhiteSpace(profileRevision))
+        var scope = profileScopeService.ResolveIdentity(sessionId);
+        if (scope is null)
         {
-            return NotFound("HERMES could not fingerprint the active PMC profile.");
+            return NotFound("HERMES could not resolve the active PMC profile scope.");
         }
 
-        var key = $"{sessionId}:{settings.CacheKey}";
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var key = $"{scope.ScopeKey}:{settings.CacheKey}";
         lock (_summaryCacheSync)
         {
-            if (_summaryCache.TryGetValue(key, out var cached)
-                && cached.ExpiresUnixTime > now
-                && cached.ProfileRevision.Equals(profileRevision, StringComparison.Ordinal))
+            if (_summaryCache.TryGetValue(key, out var cached))
             {
                 Interlocked.Increment(ref _summaryCacheHits);
                 return cached.Response;
             }
-
-            _summaryCache.Remove(key);
         }
 
-        Interlocked.Increment(ref _summaryCacheMisses);
-        var response = BuildSummary(sessionId, settings);
-        if (response.Found)
+        // Loadout, Raid Planner, pre-raid readiness, and Assistant all share this materialization
+        // gate. Server source revisions clear this cache only when a relevant domain changes.
+        lock (_summaryBuildSync)
         {
             lock (_summaryCacheSync)
             {
-                _summaryCache[key] = new LoadoutCacheEntry(
-                    response,
-                    now + SummaryCacheTtlSeconds,
-                    profileRevision);
-                Interlocked.Increment(ref _summaryCacheWrites);
+                if (_summaryCache.TryGetValue(key, out var cached))
+                {
+                    Interlocked.Increment(ref _summaryCacheHits);
+                    return cached.Response;
+                }
             }
-        }
 
-        return response;
+            Interlocked.Increment(ref _summaryCacheMisses);
+            var generation = Interlocked.Read(ref _summaryCacheGeneration);
+            var response = BuildSummary(sessionId, settings);
+
+            // Loadout analysis can overlap a manual/source invalidation. Rebuild once after the
+            // generation changes so the completed request cannot repopulate the cache with the
+            // equipment or vitals snapshot that Clear() intentionally retired.
+            if (generation != Interlocked.Read(ref _summaryCacheGeneration))
+            {
+                generation = Interlocked.Read(ref _summaryCacheGeneration);
+                response = BuildSummary(sessionId, settings);
+            }
+
+            if (response.Found)
+            {
+                lock (_summaryCacheSync)
+                {
+                    if (generation == Interlocked.Read(ref _summaryCacheGeneration))
+                    {
+                        response = response with
+                        {
+                            ContentRevision = Interlocked.Increment(ref _contentRevision)
+                        };
+                        _summaryCache[key] = new LoadoutCacheEntry(response);
+                        Interlocked.Increment(ref _summaryCacheWrites);
+                    }
+                }
+            }
+
+            return response;
+        }
     }
 
     public void Clear(string? reason = null)
     {
         lock (_summaryCacheSync)
         {
+            Interlocked.Increment(ref _summaryCacheGeneration);
             _summaryCache.Clear();
         }
     }
 
     public HermesAnalysisCacheDiagnostics GetCacheDiagnostics()
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         lock (_summaryCacheSync)
         {
-            foreach (var key in _summaryCache
-                         .Where(pair => pair.Value.ExpiresUnixTime <= now)
-                         .Select(pair => pair.Key)
-                         .ToList())
-            {
-                _summaryCache.Remove(key);
-            }
-
             return new HermesAnalysisCacheDiagnostics(
                 _summaryCache.Count,
                 Interlocked.Read(ref _summaryCacheHits),
@@ -199,26 +219,13 @@ public sealed class HermesLoadoutService(
         MongoId sessionId,
         HermesLoadoutAnalysisSettings settings)
     {
-        var profile = profileHelper.GetPmcProfile(sessionId);
-        if (profile is null)
+        var preparedProfile = preparedProfiles.Get(sessionId);
+        if (preparedProfile is null)
         {
             return NotFound("HERMES could not read the active PMC profile.");
         }
 
-        JsonObject? root;
-        try
-        {
-            root = JsonNode.Parse(jsonUtil.Serialize(profile) ?? "{}") as JsonObject;
-        }
-        catch
-        {
-            return NotFound("HERMES could not parse the active PMC profile.");
-        }
-
-        if (root is null)
-        {
-            return NotFound("HERMES could not parse the active PMC profile.");
-        }
+        var root = preparedProfile.Root;
 
         var inventoryNode = GetProperty(root, "Inventory", "inventory");
         var equipmentId = ReadString(inventoryNode, "Equipment", "equipment");
@@ -3435,10 +3442,7 @@ public sealed class HermesLoadoutService(
             DateTimeOffset.UtcNow.ToUnixTimeSeconds());
     }
 
-    private sealed record LoadoutCacheEntry(
-        HermesLoadoutSummaryResponse Response,
-        long ExpiresUnixTime,
-        string ProfileRevision);
+    private sealed record LoadoutCacheEntry(HermesLoadoutSummaryResponse Response);
 
     private sealed record InventoryNode(
         string Id,

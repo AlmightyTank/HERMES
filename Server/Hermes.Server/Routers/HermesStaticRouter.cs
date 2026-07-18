@@ -1,3 +1,4 @@
+using Hermes.Server.Models;
 using Hermes.Server.Services;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.DI;
@@ -22,6 +23,10 @@ public sealed class HermesStaticRouter(
                 (_, _, _, _) => ValueTask.FromResult<object>(
                     httpResponseUtil.GetBody(catalogService.GetStatus()))),
             new RouteAction(
+                "/hermes/assistant/alerts",
+                (_, _, sessionId, _) => ValueTask.FromResult<object>(
+                    httpResponseUtil.GetBody(changeTrackingService.GetAssistantAlerts(sessionId)))),
+            new RouteAction(
                 "/hermes/cache/status",
                 (_, _, _, _) => ValueTask.FromResult<object>(
                     httpResponseUtil.GetBody(cacheService.GetStatus(
@@ -33,6 +38,41 @@ public sealed class HermesStaticRouter(
                     httpResponseUtil.GetBody(changeTrackingService.RequestRecheck(
                         sessionId,
                         "Manual HERMES workspace recheck")))),
+            new RouteAction(
+                "/hermes/workspace/invalidate/hideout",
+                (_, _, sessionId, _) => ValueTask.FromResult<object>(
+                    httpResponseUtil.GetBody(changeTrackingService.InvalidatePreparedWorkspace(
+                        sessionId,
+                        "Hideout",
+                        "Manual Hideout workspace refresh")))),
+            new RouteAction(
+                "/hermes/workspace/invalidate/crafts",
+                (_, _, sessionId, _) => ValueTask.FromResult<object>(
+                    httpResponseUtil.GetBody(changeTrackingService.InvalidatePreparedWorkspace(
+                        sessionId,
+                        "Crafts",
+                        "Manual Crafts workspace refresh")))),
+            new RouteAction(
+                "/hermes/workspace/invalidate/stash",
+                (_, _, sessionId, _) => ValueTask.FromResult<object>(
+                    httpResponseUtil.GetBody(changeTrackingService.InvalidatePreparedWorkspace(
+                        sessionId,
+                        "Stash",
+                        "Manual Stash workspace refresh")))),
+            new RouteAction(
+                "/hermes/workspace/invalidate/loadout",
+                (_, _, sessionId, _) => ValueTask.FromResult<object>(
+                    httpResponseUtil.GetBody(changeTrackingService.InvalidatePreparedWorkspace(
+                        sessionId,
+                        "Loadout",
+                        "Manual Loadout workspace refresh")))),
+            new RouteAction(
+                "/hermes/workspace/invalidate/assistant",
+                (_, _, sessionId, _) => ValueTask.FromResult<object>(
+                    httpResponseUtil.GetBody(changeTrackingService.InvalidatePreparedWorkspace(
+                        sessionId,
+                        "Assistant",
+                        "Manual Assistant workspace refresh")))),
             new RouteAction(
                 "/hermes/cache/clear",
                 (_, _, _, _) =>

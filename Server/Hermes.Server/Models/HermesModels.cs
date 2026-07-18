@@ -233,7 +233,10 @@ public sealed record HermesHideoutSummaryResponse(
     int ProgressionBlockedAreaCount,
     IReadOnlyList<HermesHideoutAreaSummary> Areas,
     IReadOnlyList<HermesActiveProductionSummary> ActiveProductions,
-    HermesHideoutResourceSummary Resources);
+    HermesHideoutResourceSummary Resources)
+{
+    public long ContentRevision { get; init; }
+}
 
 public sealed record HermesHideoutAreaSummary(
     string AreaKey,
@@ -305,7 +308,10 @@ public sealed record HermesCraftsResponse(
     bool Found,
     string? Message,
     int TotalCrafts,
-    IReadOnlyList<HermesCraftSummary> Crafts);
+    IReadOnlyList<HermesCraftSummary> Crafts)
+{
+    public long ContentRevision { get; init; }
+}
 
 public sealed record HermesCraftSummary(
     string CraftKey,
@@ -478,7 +484,10 @@ public sealed record HermesStashSummaryResponse(
     long CleanupTraderSaleValue,
     long CleanupFleaNetValue,
     long CleanupBestSaleValue,
-    IReadOnlyList<HermesStashValuationItem> CleanupCandidates);
+    IReadOnlyList<HermesStashValuationItem> CleanupCandidates)
+{
+    public long ContentRevision { get; init; }
+}
 
 public sealed record HermesStashTraderBreakdown(
     string TraderName,
@@ -579,7 +588,10 @@ public sealed record HermesLoadoutSummaryResponse(
     IReadOnlyList<HermesRaidPlanSummary> RaidPlans,
     HermesLoadoutValueSummary ValueSummary,
     IReadOnlyList<HermesLoadoutWarning> Warnings,
-    long GeneratedUnixTime);
+    long GeneratedUnixTime)
+{
+    public long ContentRevision { get; init; }
+}
 
 public sealed record HermesLoadoutValueSummary(
     bool Found,
@@ -765,3 +777,23 @@ public sealed record HermesLoadoutWarning(
     string Severity,
     string Category,
     string Message);
+
+public sealed record HermesAssistantAlertsResponse(
+    bool Found,
+    string? Message,
+    string ContextToken,
+    long Revision,
+    bool IsStale,
+    int TotalAlerts,
+    IReadOnlyList<HermesAssistantAlertSummary> Alerts);
+
+public sealed record HermesAssistantAlertSummary(
+    string Fingerprint,
+    string Kind,
+    string Severity,
+    string Category,
+    string Title,
+    string Message,
+    string TargetTab,
+    long NumericValue,
+    int SeverityRank);

@@ -7,6 +7,7 @@ namespace Hermes.Client;
 internal sealed class HermesAssistantNoticeService
 {
     private const int MaximumRetainedNotices = 8;
+    private const long PreparedFeedReuseMilliseconds = 2000;
 
     private readonly List<HermesAssistantNotice> _notices = [];
     private readonly HashSet<string> _dismissedFingerprints = new(StringComparer.Ordinal);
@@ -20,6 +21,10 @@ internal sealed class HermesAssistantNoticeService
     private HermesHideoutSummaryResponse? _cachedHideout;
     private HermesCraftsResponse? _cachedCrafts;
     private HermesStashSummaryResponse? _cachedStash;
+    private Task? _serverRefreshTask;
+    private long _serverRevision;
+    private bool _serverSnapshotStale;
+    private long _lastPreparedFeedFetchUnixMilliseconds;
 
     public int ActiveNoticeCount => _notices.Count(notice => !notice.Dismissed);
 
@@ -32,7 +37,8 @@ internal sealed class HermesAssistantNoticeService
     {
         return $"enabled={Plugin.Settings.EnableProactiveAssistantNotices.Value}, active={ActiveNoticeCount}, "
                + $"native-active={HermesNativeNotificationBridge.ActiveCount}, retained={_notices.Count}, "
-               + $"checking={_checking}, source=server-revision-snapshot, "
+               + $"checking={_checking}, source=server-prepared-assistant-feed, "
+               + $"server-revision={_serverRevision}, server-stale={_serverSnapshotStale}, "
                + $"profile-context={(!string.IsNullOrWhiteSpace(_profileToken) ? "available" : "unavailable")}";
     }
 
@@ -44,10 +50,7 @@ internal sealed class HermesAssistantNoticeService
     }
 
     public Task RefreshNowAsync()
-    {
-        RefreshFromCachedWorkspaceData(manual: true);
-        return Task.CompletedTask;
-    }
+        => RefreshFromPreparedServerAsync(manual: true);
 
     public void UpdateFromWorkspaceData(
         string? profileToken,
@@ -69,6 +72,9 @@ internal sealed class HermesAssistantNoticeService
             _cachedHideout = null;
             _cachedCrafts = null;
             _cachedStash = null;
+            _serverRevision = 0;
+            _serverSnapshotStale = false;
+            _lastPreparedFeedFetchUnixMilliseconds = 0;
         }
 
         if (!string.IsNullOrWhiteSpace(profileToken))
@@ -93,7 +99,159 @@ internal sealed class HermesAssistantNoticeService
             _cachedStash = stash;
         }
 
-        RefreshFromCachedWorkspaceData(manual);
+        // The server owns alert construction in Alpha 14.0.7. The client keeps these summaries
+        // only as an offline/transport fallback and for native workspace rendering.
+        if (manual || (_serverRevision == 0 && HasCompleteFallbackSnapshot()))
+        {
+            _ = RefreshFromPreparedServerAsync(manual);
+        }
+    }
+
+    public Task RefreshFromPreparedServerAsync(bool manual)
+    {
+        if (_serverRefreshTask is { IsCompleted: false })
+        {
+            return _serverRefreshTask;
+        }
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (!manual
+            && _serverRevision > 0
+            && now - _lastPreparedFeedFetchUnixMilliseconds < PreparedFeedReuseMilliseconds)
+        {
+            if (Plugin.Settings.DetailedLogging.Value)
+            {
+                Plugin.Log.LogDebug("HERMES reused the recently downloaded prepared Assistant feed.");
+            }
+            return Task.CompletedTask;
+        }
+
+        _serverRefreshTask = RefreshFromPreparedServerCoreAsync(manual);
+        return _serverRefreshTask;
+    }
+
+    private async Task RefreshFromPreparedServerCoreAsync(bool manual)
+    {
+        if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
+        {
+            _status = "Alerts are disabled in F12 configuration.";
+            return;
+        }
+
+        _checking = true;
+        try
+        {
+            var response = await HermesRevisionApiClient.GetAssistantAlertsAsync();
+            if (!response.Found)
+            {
+                var hasFallback = HasCompleteFallbackSnapshot();
+                RefreshFromCachedWorkspaceData(manual);
+                if (!hasFallback && !string.IsNullOrWhiteSpace(response.Message))
+                {
+                    _status = response.Message;
+                }
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(_profileToken)
+                && !string.IsNullOrWhiteSpace(response.ContextToken)
+                && !string.Equals(_profileToken, response.ContextToken, StringComparison.Ordinal))
+            {
+                HermesNativeNotificationBridge.DismissAll();
+                _notices.Clear();
+                _activeFingerprints.Clear();
+                _dismissedFingerprints.Clear();
+            }
+
+            if (!string.IsNullOrWhiteSpace(response.ContextToken))
+            {
+                _profileToken = response.ContextToken;
+            }
+
+            _serverRevision = response.Revision;
+            _serverSnapshotStale = response.IsStale;
+            _lastPreparedFeedFetchUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (response.IsStale && HasCompleteFallbackSnapshot())
+            {
+                RefreshFromCachedWorkspaceData(manual);
+                _status += " • server feed will be rematerialized by the next full or manual Refresh";
+                return;
+            }
+
+            var candidates = response.Alerts
+                .Where(IsServerAlertEnabled)
+                .Select(alert => new HermesAssistantNoticeCandidate(
+                    alert.Fingerprint,
+                    alert.Severity,
+                    alert.Category,
+                    alert.Title,
+                    alert.Message,
+                    alert.TargetTab))
+                .ToList();
+            ApplyCandidates(candidates);
+            UpdateStatusFromCandidates(candidates, manual, response.IsStale, response.Message);
+        }
+        catch (Exception ex)
+        {
+            if (Plugin.Settings.DetailedLogging.Value)
+            {
+                Plugin.Log.LogWarning($"HERMES prepared Assistant feed used the local fallback: {ex.Message}");
+            }
+
+            RefreshFromCachedWorkspaceData(manual);
+        }
+        finally
+        {
+            _checking = false;
+            _serverRefreshTask = null;
+        }
+    }
+
+    private bool IsServerAlertEnabled(HermesAssistantAlertSummary alert)
+        => alert.Kind.Trim().ToLowerInvariant() switch
+        {
+            "loadout-critical" => Plugin.Settings.NotifyLoadoutReadiness.Value,
+            "uninsured" => Plugin.Settings.NotifyHighValueUninsuredItems.Value
+                           && alert.NumericValue >= Plugin.Settings.GetHighValueUninsuredThreshold(),
+            "production-complete" => Plugin.Settings.NotifyCompletedHideoutProduction.Value,
+            "hideout-ready" => Plugin.Settings.NotifyReadyHideoutUpgrades.Value,
+            "craft-ready" => Plugin.Settings.NotifyReadyProfitableCrafts.Value
+                             && alert.NumericValue >= Plugin.Settings.GetMinimumAssistantNoticeCraftProfit(),
+            "stash-cleanup" or "stash-surplus" => Plugin.Settings.NotifyStashOpportunities.Value
+                                                    && alert.NumericValue >= Plugin.Settings.GetMinimumAssistantNoticeStashValue(),
+            _ => true
+        };
+
+    private bool HasCompleteFallbackSnapshot()
+        => _cachedLoadout is { Found: true }
+           && _cachedHideout is { Found: true }
+           && _cachedCrafts is { Found: true }
+           && _cachedStash is { Found: true };
+
+    private void UpdateStatusFromCandidates(
+        IReadOnlyCollection<HermesAssistantNoticeCandidate> candidates,
+        bool manual,
+        bool stale,
+        string? serverMessage)
+    {
+        var ordered = candidates
+            .OrderByDescending(candidate => SeverityRank(candidate.Severity))
+            .ThenBy(candidate => candidate.Title, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (ordered.Count == 0)
+        {
+            _status = !string.IsNullOrWhiteSpace(serverMessage)
+                ? serverMessage
+                : manual
+                    ? "Checked the prepared server snapshot • no actionable conditions found."
+                    : "No actionable conditions in the prepared server snapshot.";
+            return;
+        }
+
+        var top = ordered[0];
+        var suffix = ordered.Count > 1 ? $" • +{ordered.Count - 1:N0} more" : string.Empty;
+        var staleSuffix = stale ? " • prepared snapshot may need Refresh" : string.Empty;
+        _status = $"{ordered.Count:N0} actionable • {top.Title} — {top.Message}{suffix}{staleSuffix}";
     }
 
     private void RefreshFromCachedWorkspaceData(bool manual)
@@ -143,6 +301,9 @@ internal sealed class HermesAssistantNoticeService
         _notices.Clear();
         _activeFingerprints.Clear();
         _dismissedFingerprints.Clear();
+        _serverRevision = 0;
+        _serverSnapshotStale = false;
+        _lastPreparedFeedFetchUnixMilliseconds = 0;
         _status = "Alerts cleared.";
     }
 

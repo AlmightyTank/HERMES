@@ -50,6 +50,25 @@ public sealed class HermesDynamicRouter(
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(
+                "/hermes/assistant/prepare/",
+                (url, _, sessionId, _) =>
+                {
+                    var tail = GetTail(url, "/hermes/assistant/prepare/");
+                    const string separator = "/loadout/";
+                    var separatorIndex = tail.IndexOf(separator, StringComparison.OrdinalIgnoreCase);
+                    var stashTail = separatorIndex >= 0 ? tail[..separatorIndex] : tail;
+                    var loadoutTail = separatorIndex >= 0
+                        ? tail[(separatorIndex + separator.Length)..]
+                        : string.Empty;
+                    var stashSettings = HermesStashAnalysisSettings.Parse('/' + stashTail.Trim('/'));
+                    var loadoutSettings = HermesLoadoutAnalysisSettings.Parse('/' + loadoutTail.Trim('/'));
+                    var response = changeTrackingService.PrepareAssistantFeed(
+                        sessionId,
+                        stashSettings,
+                        loadoutSettings);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
                 "/hermes/watch/",
                 (url, _, sessionId, _) => WatchForChangesAsync(
                     url,

@@ -1704,15 +1704,17 @@ internal sealed class HermesWindow
         {
             if (isProfileWorkspace)
             {
-                var recheck = await HermesRevisionApiClient.RequestRecheckAsync();
-                if (!recheck.Accepted)
+                var coordinator = HermesWorkspaceSnapshotCoordinator.Current;
+                if (coordinator is null)
                 {
-                    throw new InvalidOperationException(
-                        recheck.Message ?? "The HERMES server did not accept the profile source recheck.");
+                    throw new InvalidOperationException("The HERMES workspace coordinator is unavailable.");
                 }
 
-                _refreshStatus = recheck.Message ?? "The server is checking the active PMC sources.";
-                HermesWorkspaceSnapshotCoordinator.Current?.RequestImmediateRecheck();
+                var tabName = GetTabName(_activeTab);
+                _refreshStatus = $"Asking the server to verify and refresh {GetTabDisplayName(_activeTab)}...";
+                await coordinator.RefreshWorkspaceAsync(tabName, manual: true);
+                _refreshStatus = $"{GetTabDisplayName(_activeTab)} refreshed from the latest server sources.";
+                return;
             }
             else if (clearCaches)
             {
@@ -2160,10 +2162,12 @@ internal sealed class HermesWindow
         {
             _loadoutPanel.OpenView("Overview");
         }
-        Plugin.Settings.RememberTab(GetTabName(tab));
+        var tabName = GetTabName(tab);
+        Plugin.Settings.RememberTab(tabName);
+        HermesWorkspaceSnapshotCoordinator.Current?.OnWorkspaceSelected(tabName);
         if (Plugin.Settings.DetailedLogging.Value)
         {
-            Plugin.Log.LogDebug($"HERMES active tab changed to {GetTabName(tab)}.");
+            Plugin.Log.LogDebug($"HERMES active tab changed to {tabName}; prepared server summary refresh started.");
         }
     }
 

@@ -49,7 +49,7 @@ internal sealed record HermesStashAnalysisSnapshot(
 [Injectable(InjectionType.Singleton)]
 public sealed class HermesStashService(
     DatabaseService databaseService,
-    ProfileHelper profileHelper,
+    HermesPreparedProfileSnapshotService preparedProfiles,
     HermesCatalogService catalogService,
     ItemHelper itemHelper,
     JsonUtil jsonUtil)
@@ -233,24 +233,6 @@ public sealed class HermesStashService(
         }
 
         return null;
-    }
-
-    internal string? GetProfileRevision(MongoId sessionId)
-    {
-        var profile = profileHelper.GetPmcProfile(sessionId);
-        if (profile is null)
-        {
-            return null;
-        }
-
-        var profileJson = jsonUtil.Serialize(profile);
-        if (string.IsNullOrWhiteSpace(profileJson))
-        {
-            return null;
-        }
-
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(profileJson));
-        return Convert.ToHexString(bytes).ToLowerInvariant()[..24];
     }
 
     internal HermesStashAnalysisSnapshot? BuildAnalysisSnapshot(MongoId sessionId)
@@ -689,14 +671,13 @@ public sealed class HermesStashService(
 
     private InventorySnapshot? BuildInventorySnapshot(MongoId sessionId)
     {
-        var profile = profileHelper.GetPmcProfile(sessionId);
-        if (profile is null)
+        var preparedProfile = preparedProfiles.Get(sessionId);
+        if (preparedProfile is null)
         {
             return null;
         }
 
-        var root = JsonNode.Parse(jsonUtil.Serialize(profile) ?? "{}") as JsonObject;
-        var inventory = GetProperty(root, "Inventory", "inventory");
+        var inventory = GetProperty(preparedProfile.Root, "Inventory", "inventory");
         if (inventory is null)
         {
             return null;

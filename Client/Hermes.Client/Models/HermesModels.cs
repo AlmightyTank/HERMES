@@ -253,6 +253,7 @@ public sealed class HermesFleaOfferSample
 public sealed class HermesHideoutSummaryResponse
 {
     public bool Found { get; set; }
+    public long ContentRevision { get; set; }
     public string? Message { get; set; }
     public int ReadyAreaCount { get; set; }
     public int MaterialBlockedAreaCount { get; set; }
@@ -343,6 +344,7 @@ public sealed class HermesHideoutResourceSummary
 public sealed class HermesCraftsResponse
 {
     public bool Found { get; set; }
+    public long ContentRevision { get; set; }
     public string? Message { get; set; }
     public int TotalCrafts { get; set; }
     public List<HermesCraftSummary> Crafts { get; set; } = [];
@@ -497,6 +499,7 @@ public sealed class HermesCraftUse
 internal sealed class HermesStashSummaryResponse
 {
     public bool Found { get; set; }
+    public long ContentRevision { get; set; }
     public string? Message { get; set; }
     public int TotalItemInstances { get; set; }
     public int IndependentItemCount { get; set; }
@@ -635,6 +638,7 @@ internal sealed class HermesStashConditionItem
 internal sealed class HermesLoadoutSummaryResponse
 {
     public bool Found { get; set; }
+    public long ContentRevision { get; set; }
     public string? Message { get; set; }
     public string Readiness { get; set; } = string.Empty;
     public int ReadinessScore { get; set; }
@@ -865,4 +869,28 @@ internal sealed class HermesLoadoutWarning
     public string Severity { get; set; } = string.Empty;
     public string Category { get; set; } = string.Empty;
     public string Message { get; set; } = string.Empty;
+}
+
+public sealed class HermesAssistantAlertsResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public string ContextToken { get; set; } = string.Empty;
+    public long Revision { get; set; }
+    public bool IsStale { get; set; }
+    public int TotalAlerts { get; set; }
+    public IReadOnlyList<HermesAssistantAlertSummary> Alerts { get; set; } = [];
+}
+
+public sealed class HermesAssistantAlertSummary
+{
+    public string Fingerprint { get; set; } = string.Empty;
+    public string Kind { get; set; } = string.Empty;
+    public string Severity { get; set; } = "Information";
+    public string Category { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string TargetTab { get; set; } = "Assistant";
+    public long NumericValue { get; set; }
+    public int SeverityRank { get; set; }
 }

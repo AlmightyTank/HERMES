@@ -26,6 +26,15 @@ internal sealed class HermesWorkspaceSnapshotResponse
     public HermesLoadoutSummaryResponse Loadout { get; set; } = new();
 }
 
+internal sealed class HermesAssistantPrepareResponse
+{
+    public bool Prepared { get; set; }
+    public string? Message { get; set; }
+    public string ContextToken { get; set; } = string.Empty;
+    public long Revision { get; set; }
+    public HermesDomainRevisions Domains { get; set; } = new();
+}
+
 internal sealed class HermesChangesResponse
 {
     public bool Found { get; set; }

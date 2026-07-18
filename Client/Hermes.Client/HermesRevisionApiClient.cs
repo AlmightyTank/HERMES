@@ -1,8 +1,4 @@
-using System.Diagnostics;
 using Hermes.Client.Models;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using SPT.Common.Http;
 
 namespace Hermes.Client;
 
@@ -12,17 +8,17 @@ namespace Hermes.Client;
 /// </summary>
 internal static class HermesRevisionApiClient
 {
-    public static Task<HermesWorkspaceSnapshotResponse> GetWorkspaceSnapshotAsync(
+    public static Task<HermesAssistantPrepareResponse> PrepareAssistantFeedAsync(
         HermesStashRequestSettings stashSettings,
         HermesLoadoutRequestSettings loadoutSettings)
     {
-        var route = "/hermes/snapshot/"
+        var route = "/hermes/assistant/prepare/"
                     + stashSettings.ToRouteSuffix().Trim('/')
                     + "/loadout/"
                     + loadoutSettings.ToRouteSuffix().Trim('/');
-        return GetAsync<HermesWorkspaceSnapshotResponse>(
+        return GetAsync<HermesAssistantPrepareResponse>(
             route,
-            TimeSpan.FromSeconds(Math.Max(120, Plugin.Settings.GetLongRequestTimeoutSeconds())));
+            TimeSpan.FromSeconds(Math.Max(30, Plugin.Settings.GetLongRequestTimeoutSeconds())));
     }
 
     /// <summary>
@@ -44,6 +40,13 @@ internal static class HermesRevisionApiClient
             TimeSpan.FromSeconds(holdSeconds + transportGraceSeconds));
     }
 
+    public static Task<HermesAssistantAlertsResponse> GetAssistantAlertsAsync()
+    {
+        return GetAsync<HermesAssistantAlertsResponse>(
+            "/hermes/assistant/alerts",
+            TimeSpan.FromSeconds(Plugin.Settings.GetRequestTimeoutSeconds()));
+    }
+
     public static Task<HermesRecheckResponse> RequestRecheckAsync()
     {
         return GetAsync<HermesRecheckResponse>(
@@ -51,8 +54,23 @@ internal static class HermesRevisionApiClient
             TimeSpan.FromSeconds(Plugin.Settings.GetRequestTimeoutSeconds()));
     }
 
-    // Kept for diagnostics and backwards compatibility. Normal operation uses the
-    // server-held watch route above instead of repeatedly polling this immediate route.
+    public static Task<HermesRecheckResponse> InvalidatePreparedWorkspaceAsync(string workspace)
+    {
+        var route = (workspace ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "craft" or "crafts" => "/hermes/workspace/invalidate/crafts",
+            "stash" => "/hermes/workspace/invalidate/stash",
+            "loadout" or "raidplanner" or "raid planner" => "/hermes/workspace/invalidate/loadout",
+            "assistant" or "chat" => "/hermes/workspace/invalidate/assistant",
+            _ => "/hermes/workspace/invalidate/hideout"
+        };
+        return GetAsync<HermesRecheckResponse>(
+            route,
+            TimeSpan.FromSeconds(Plugin.Settings.GetRequestTimeoutSeconds()));
+    }
+
+    // Used by the one startup/post-raid full load and by explicit top-button refreshes.
+    // Opening a workspace in Alpha 14.0.7 reads its materialized server summary without a source scan.
     public static Task<HermesChangesResponse> GetChangesAsync(long knownRevision)
     {
         var route = "/hermes/changes/" + Math.Max(0L, knownRevision);
@@ -61,125 +79,20 @@ internal static class HermesRevisionApiClient
             TimeSpan.FromSeconds(Plugin.Settings.GetRequestTimeoutSeconds()));
     }
 
-    private static async Task<T> GetAsync<T>(string route, TimeSpan timeout)
+    private static Task<T> GetAsync<T>(string route, TimeSpan timeout)
         where T : class
     {
-        var stopwatch = Stopwatch.StartNew();
-        Task<string> requestTask;
-        try
-        {
-            requestTask = RequestHandler.GetJsonAsync(route);
-        }
-        catch (Exception ex)
-        {
-            throw new HermesTransportException(route, ex);
-        }
-
-        using var timeoutCancellation = new CancellationTokenSource();
-        var timeoutTask = Task.Delay(timeout, timeoutCancellation.Token);
-        var completed = await Task.WhenAny(requestTask, timeoutTask);
-        if (completed != requestTask)
-        {
-            ObserveLateCompletion(requestTask, route);
-            throw new HermesRequestTimeoutException(route, timeout);
-        }
-
-        timeoutCancellation.Cancel();
-        string json;
-        try
-        {
-            json = await requestTask;
-        }
-        catch (Exception ex)
-        {
-            throw new HermesTransportException(route, ex);
-        }
-        finally
-        {
-            stopwatch.Stop();
-        }
-
-        var isServerHeldWatch = route.StartsWith("/hermes/watch/", StringComparison.OrdinalIgnoreCase);
-        if (!isServerHeldWatch
-            && stopwatch.Elapsed >= TimeSpan.FromSeconds(Plugin.Settings.GetSlowRequestWarningSeconds()))
-        {
-            Plugin.Log.LogWarning($"Slow HERMES revision request ({stopwatch.Elapsed.TotalSeconds:N1}s): {route}");
-        }
-        else if (Plugin.Settings.DetailedLogging.Value)
-        {
-            var kind = isServerHeldWatch ? "server-held watch" : "revision request";
-            Plugin.Log.LogDebug(
-                $"HERMES {kind} completed in {stopwatch.Elapsed.TotalMilliseconds:N0}ms: {route}");
-        }
-
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            throw new HermesInvalidResponseException(route, "The server returned an empty response.");
-        }
-
-        try
-        {
-            var token = JToken.Parse(json);
-            ThrowIfServerReportedError(token, route);
-            var data = token["data"] ?? token["Data"] ?? token;
-            return data.ToObject<T>()
-                   ?? throw new HermesInvalidResponseException(
-                       route,
-                       $"The data payload could not be converted to {typeof(T).Name}.");
-        }
-        catch (HermesInvalidResponseException)
-        {
-            throw;
-        }
-        catch (JsonException ex)
-        {
-            throw new HermesInvalidResponseException(route, "The server response was not valid JSON.", ex);
-        }
-    }
-
-    private static void ThrowIfServerReportedError(JToken token, string route)
-    {
-        var errorToken = token["err"] ?? token["Err"] ?? token["error"] ?? token["Error"];
-        if (errorToken is null || errorToken.Type is JTokenType.Null or JTokenType.Undefined)
-        {
-            return;
-        }
-
-        var hasError = errorToken.Type switch
-        {
-            JTokenType.Integer => errorToken.Value<long>() != 0L,
-            JTokenType.Boolean => errorToken.Value<bool>(),
-            JTokenType.String => !string.IsNullOrWhiteSpace(errorToken.Value<string>())
-                                 && !string.Equals(errorToken.Value<string>(), "0", StringComparison.Ordinal),
-            _ => false
-        };
-        if (!hasError)
-        {
-            return;
-        }
-
-        var message = (token["errmsg"] ?? token["message"] ?? token["Message"])?.ToString();
-        throw new HermesInvalidResponseException(
+        var isServerHeldWatch = route.StartsWith(
+            "/hermes/watch/",
+            StringComparison.OrdinalIgnoreCase);
+        return HermesRequestBroker.GetDataAsync<T>(
             route,
-            string.IsNullOrWhiteSpace(message)
-                ? "The SPT server reported an error for this route."
-                : $"The SPT server reported: {message}");
+            () => throw new HermesInvalidResponseException(
+                route,
+                $"The data payload could not be converted to {typeof(T).Name}."),
+            timeout,
+            isServerHeldWatch ? "server-held watch" : "revision request",
+            suppressSlowWarning: isServerHeldWatch);
     }
 
-    private static void ObserveLateCompletion(Task<string> requestTask, string route)
-    {
-        _ = requestTask.ContinueWith(
-            task =>
-            {
-                if (task.IsFaulted && task.Exception is not null)
-                {
-                    Plugin.Log.LogError($"Timed-out HERMES revision request later failed ({route}): {task.Exception}");
-                }
-                else if (Plugin.Settings.DetailedLogging.Value)
-                {
-                    Plugin.Log.LogDebug($"Timed-out HERMES revision request later completed: {route}");
-                }
-            },
-            TaskScheduler.Default);
-    }
 }

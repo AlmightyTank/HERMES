@@ -74,6 +74,63 @@ internal sealed class HermesNativeWorkspaceState
     internal IReadOnlyList<HermesNativeNoticeData> Notices => ReadNotices();
     internal bool NoticesLoading => GetField<bool>(_notices, "_checking");
     internal string NoticeStatus => GetField<string>(_notices, "_status") ?? string.Empty;
+    internal int ActiveNoticeCount => Notices.Count(notice => !notice.Dismissed);
+    internal bool WorkspaceReady => HermesWorkspaceSnapshotCoordinator.Current?.HasLoadedWorkspaceData == true;
+    internal bool WorkspaceInitialLoading => HermesWorkspaceSnapshotCoordinator.Current?.IsInitialWorkspaceLoadActive == true;
+
+    internal string AssistantContextLabel
+    {
+        get
+        {
+            if (SelectedItem is null)
+            {
+                return "ACTIVE PMC";
+            }
+
+            var suffix = string.IsNullOrWhiteSpace(SelectedStashInstanceKey)
+                ? string.Empty
+                : " • EXACT COPY";
+            var maximumNameLength = suffix.Length == 0 ? 28 : 18;
+            var name = SelectedItem.Name.Length <= maximumNameLength
+                ? SelectedItem.Name
+                : SelectedItem.Name[..Math.Max(1, maximumNameLength - 1)].TrimEnd() + "…";
+            return name + suffix;
+        }
+    }
+
+    internal string AssistantOverviewStatus
+    {
+        get
+        {
+            if (AssistantLoading)
+            {
+                return string.IsNullOrWhiteSpace(AssistantStatus)
+                    ? "HERMES IS PREPARING A RESPONSE"
+                    : AssistantStatus;
+            }
+
+            if (!WorkspaceReady)
+            {
+                return WorkspaceInitialLoading
+                    ? "PREPARING SHARED PMC PROFILE DATA"
+                    : "WAITING FOR SHARED PMC PROFILE DATA";
+            }
+
+            if (NoticesLoading)
+            {
+                return "CHECKING THE LOADED PMC PROFILE";
+            }
+
+            if (!string.IsNullOrWhiteSpace(AssistantStatus))
+            {
+                return AssistantStatus;
+            }
+
+            return string.IsNullOrWhiteSpace(NoticeStatus)
+                ? "CURRENT PROFILE DATA READY"
+                : NoticeStatus;
+        }
+    }
 
     internal HermesHideoutSummaryResponse? HideoutSummary => GetField<HermesHideoutSummaryResponse>(_hideout, "_summary");
     internal HermesHideoutAreaSummary? SelectedHideoutArea => GetField<HermesHideoutAreaSummary>(_hideout, "_selectedArea");
@@ -133,6 +190,23 @@ internal sealed class HermesNativeWorkspaceState
     }
 
     internal void ClearAssistant() => _assistant.Clear();
+
+    internal void RefreshAssistantFromCache()
+    {
+        var coordinator = HermesWorkspaceSnapshotCoordinator.Current;
+        if (coordinator is null)
+        {
+            RefreshNotices();
+            return;
+        }
+
+        coordinator.EnsureInitialLoad();
+        _ = coordinator.RefreshWorkspaceAsync("Assistant", manual: true);
+    }
+
+    internal void CheckPreparedAssistantFeed()
+        => _ = _notices.RefreshFromPreparedServerAsync(manual: true);
+
     internal void RefreshNotices() => _notices.UpdateFromWorkspaceData(
         profileToken: null,
         loadout: LoadoutSummary,
@@ -183,7 +257,10 @@ internal sealed class HermesNativeWorkspaceState
                 AssistantStatus,
                 AssistantLoading,
                 NoticeStatus,
-                NoticesLoading),
+                NoticesLoading,
+                WorkspaceReady,
+                WorkspaceInitialLoading,
+                AssistantContextLabel),
             "ItemSearch" => string.Join("|",
                 tab,
                 SearchQuery,

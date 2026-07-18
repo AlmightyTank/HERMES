@@ -12,7 +12,7 @@ namespace Hermes.Server.Services;
 [Injectable(InjectionType.Singleton)]
 public sealed class HermesLoadoutValueService(
     DatabaseService databaseService,
-    ProfileHelper profileHelper,
+    HermesPreparedProfileSnapshotService preparedProfiles,
     HermesCatalogService catalogService,
     HermesMarketPriceService marketPriceService,
     HermesTraderService traderService,
@@ -46,27 +46,14 @@ public sealed class HermesLoadoutValueService(
         bool enableInsuranceWarnings,
         long highValueUninsuredThreshold)
     {
-        var profile = profileHelper.GetPmcProfile(sessionId);
-        if (profile is null)
+        var preparedProfile = preparedProfiles.Get(sessionId);
+        if (preparedProfile is null)
         {
             return Unavailable("HERMES could not read the active PMC profile for loadout valuation.");
         }
 
-        var profileJson = jsonUtil.Serialize(profile) ?? "{}";
-        JsonObject? root;
-        try
-        {
-            root = JsonNode.Parse(profileJson) as JsonObject;
-        }
-        catch
-        {
-            return Unavailable("HERMES could not parse the active PMC profile for loadout valuation.");
-        }
-
-        if (root is null)
-        {
-            return Unavailable("HERMES could not parse the active PMC profile for loadout valuation.");
-        }
+        var profileJson = preparedProfile.ProfileJson;
+        var root = preparedProfile.Root;
 
         var inventory = GetProperty(root, "Inventory", "inventory");
         var equipmentId = ReadString(inventory, "Equipment", "equipment");

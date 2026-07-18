@@ -16,7 +16,7 @@ namespace Hermes.Client;
 internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 {
     private const float SyncInterval = 0.20f;
-    private const int MaximumRowsPerSection = 250;
+    private const int MaximumRowsPerSection = 60;
     private const float CompactToolbarHeight = 36f;
     private const float CompactControlHeight = 32f;
     private const float CompactMetricHeight = 46f;
@@ -24,6 +24,9 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
     private readonly Dictionary<string, float> _savedScrollPositions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ScrollRect> _activeScrolls = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, GameObject> _workspaceRoots = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _workspaceRootFingerprints = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<string, ScrollRect>> _workspaceScrolls = new(StringComparer.Ordinal);
     private readonly HashSet<string> _expandedRaidMaps = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _scrollsToForceTop = new(StringComparer.Ordinal);
 
@@ -61,7 +64,8 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         image.raycastTarget = true;
 
         _forceRebuild = true;
-        Rebuild();
+        _lastFingerprint = _state.BuildFingerprint();
+        Rebuild(force: true);
     }
 
     private void OnEnable()
@@ -81,13 +85,14 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         var fingerprint = _state.BuildFingerprint();
         if (_forceRebuild || !string.Equals(fingerprint, _lastFingerprint, StringComparison.Ordinal))
         {
+            var force = _forceRebuild;
             _lastFingerprint = fingerprint;
             _forceRebuild = false;
-            Rebuild();
+            Rebuild(force);
         }
     }
 
-    private void Rebuild()
+    private void Rebuild(bool force)
     {
         if (_state is null || _root is null)
         {
@@ -124,11 +129,43 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         if (_contentRoot != null)
         {
             _contentRoot.SetActive(false);
-            Destroy(_contentRoot);
         }
 
         _activeScrolls.Clear();
-        _contentRoot = new GameObject("NativeWorkspaceContent", typeof(RectTransform));
+        if (!force
+            && _workspaceRoots.TryGetValue(activeTab, out var cachedRoot)
+            && cachedRoot != null
+            && _workspaceRootFingerprints.TryGetValue(activeTab, out var cachedFingerprint)
+            && string.Equals(cachedFingerprint, _lastFingerprint, StringComparison.Ordinal))
+        {
+            _contentRoot = cachedRoot;
+            _contentRoot.SetActive(true);
+            if (_workspaceScrolls.TryGetValue(activeTab, out var cachedScrolls))
+            {
+                foreach (var pair in cachedScrolls)
+                {
+                    if (pair.Value != null)
+                    {
+                        _activeScrolls[pair.Key] = pair.Value;
+                    }
+                }
+            }
+
+            StartCoroutine(RestoreScrollPositionsNextFrame());
+            return;
+        }
+
+        if (_workspaceRoots.TryGetValue(activeTab, out var previousRoot) && previousRoot != null)
+        {
+            previousRoot.SetActive(false);
+            Destroy(previousRoot);
+        }
+
+        _workspaceRoots.Remove(activeTab);
+        _workspaceRootFingerprints.Remove(activeTab);
+        _workspaceScrolls.Remove(activeTab);
+
+        _contentRoot = new GameObject($"NativeWorkspaceContent_{activeTab}", typeof(RectTransform));
         _contentRoot.transform.SetParent(_root, false);
         var contentRect = (RectTransform)_contentRoot.transform;
         HermesNativeUiFramework.Stretch(contentRect, 6f, 6f, 6f, 6f);
@@ -168,6 +205,10 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             AddCard(fallback, "Rendering failed", ex.Message, "ERROR");
         }
 
+        _workspaceRoots[activeTab] = _contentRoot;
+        _workspaceRootFingerprints[activeTab] = _lastFingerprint;
+        _workspaceScrolls[activeTab] = new Dictionary<string, ScrollRect>(_activeScrolls, StringComparer.Ordinal);
+
         StartCoroutine(RestoreScrollPositionsNextFrame());
     }
 
@@ -175,65 +216,230 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
     private void RenderAssistant(RectTransform parent)
     {
+        var state = _state!;
         var root = CreateVerticalRoot(parent);
-        AddStatusStrip(root, _state!.AssistantStatus, _state.AssistantLoading, _state.RefreshActive);
+        var assistantBusy = state.AssistantLoading
+                            || state.NoticesLoading
+                            || state.WorkspaceInitialLoading;
 
-        var activeNotices = _state.Notices.Where(notice => !notice.Dismissed).Take(4).ToList();
-        var noticePanel = CreatePanel(root, "AssistantNotices", HermesNativeUiFramework.PanelColor);
-        var noticePanelElement = noticePanel.gameObject.AddComponent<LayoutElement>();
-        noticePanelElement.minHeight = activeNotices.Count == 0 ? 78f : 136f;
-        noticePanelElement.preferredHeight = activeNotices.Count == 0
-            ? 78f
-            : Mathf.Min(208f, 94f + activeNotices.Count * 54f);
-        noticePanelElement.flexibleHeight = 0f;
-        AddVerticalLayout(noticePanel, 5, 5, 4, 4, 3f);
+        AddStatusStrip(
+            root,
+            state.AssistantOverviewStatus,
+            assistantBusy,
+            state.RefreshAssistantFromCache,
+            "REFRESH");
 
-        var noticeHeader = CreateToolbar(noticePanel);
-        AddToolbarLabel(noticeHeader, _state.Notices.Count == 0 ? "ALERTS" : $"ALERTS  {_state.Notices.Count:N0}");
-        AddFlexibleSpace(noticeHeader);
-        AddButton(noticeHeader, _state.NoticesLoading ? "CHECKING" : "CHECK", _state.RefreshNotices, 82f, !_state.NoticesLoading);
-        AddButton(noticeHeader, "CLEAR", _state.ClearNotices, 64f, _state.Notices.Count > 0);
+        AddAssistantSummary(root, state);
 
-        var noticeScroll = CreateScroll(noticePanel, "assistant-notices", true);
-        noticeScroll.Root.GetComponent<LayoutElement>().minHeight = 34f;
+        var split = HermesNativeUiFramework.CreateSplitView(root, 334f);
+        var splitElement = split.Root.gameObject.AddComponent<LayoutElement>();
+        splitElement.minHeight = 210f;
+        splitElement.flexibleHeight = 1f;
+        splitElement.flexibleWidth = 1f;
 
-        var noticePreview = _state.NoticesLoading
-            ? "Checking the active PMC profile..."
-            : _state.NoticeStatus;
-        if (!string.IsNullOrWhiteSpace(noticePreview))
+        RenderAssistantNotices(split.Left, state);
+        RenderAssistantConversation(split.Right, state);
+        RenderAssistantComposer(root, state);
+    }
+
+    private void AddAssistantSummary(Transform parent, HermesNativeWorkspaceState state)
+    {
+        AddMetricGrid(
+            parent,
+            ("PROFILE DATA", state.WorkspaceReady ? "READY" : state.WorkspaceInitialLoading ? "PREPARING" : "WAITING"),
+            ("ACTIVE ALERTS", state.ActiveNoticeCount.ToString("N0")),
+            ("CONVERSATION", state.AssistantMessages.Count.ToString("N0")),
+            ("CONTEXT", state.AssistantContextLabel));
+
+        var quickActions = CreateToolbar(parent);
+        AddToolbarLabel(quickActions, "QUICK OPEN");
+        AddButton(
+            quickActions,
+            "LOADOUT",
+            () => state.Navigate("Loadout"),
+            82f,
+            height: 28f,
+            fontSize: 11.5f);
+        AddButton(
+            quickActions,
+            "RAID PLAN",
+            () => state.Navigate("RaidPlanner"),
+            88f,
+            height: 28f,
+            fontSize: 11.5f);
+        AddButton(
+            quickActions,
+            "CRAFTS",
+            () => state.Navigate("Crafts"),
+            76f,
+            height: 28f,
+            fontSize: 11.5f);
+        AddButton(
+            quickActions,
+            "HIDEOUT",
+            () => state.Navigate("Hideout"),
+            82f,
+            height: 28f,
+            fontSize: 11.5f);
+        AddButton(
+            quickActions,
+            "STASH",
+            () => state.Navigate("Stash"),
+            70f,
+            height: 28f,
+            fontSize: 11.5f);
+        AddFlexibleSpace(quickActions);
+    }
+
+    private void RenderAssistantNotices(RectTransform parent, HermesNativeWorkspaceState state)
+    {
+        AddVerticalLayout(parent, 6, 6, 6, 6, 4f);
+
+        var activeNotices = state.Notices
+            .Where(notice => !notice.Dismissed)
+            .Take(6)
+            .ToList();
+
+        var header = CreateToolbar(parent);
+        AddToolbarLabel(
+            header,
+            activeNotices.Count == 0
+                ? "ACTIONABLE ALERTS"
+                : $"ACTIONABLE ALERTS  {state.ActiveNoticeCount:N0}");
+        AddFlexibleSpace(header);
+        AddButton(
+            header,
+            state.NoticesLoading ? "CHECKING" : "CHECK",
+            state.CheckPreparedAssistantFeed,
+            76f,
+            !state.NoticesLoading,
+            height: 28f,
+            fontSize: 11.5f);
+        AddButton(
+            header,
+            "CLEAR",
+            state.ClearNotices,
+            58f,
+            state.ActiveNoticeCount > 0,
+            height: 28f,
+            fontSize: 11.5f);
+
+        var scroll = CreateScroll(parent, "assistant-notices", true);
+        scroll.Root.GetComponent<LayoutElement>().minHeight = 150f;
+
+        if (activeNotices.Count == 0)
+        {
+            AddEmptyState(
+                scroll.Content,
+                state.NoticesLoading ? "Checking the active PMC profile..." : "No actionable alerts.",
+                string.IsNullOrWhiteSpace(state.NoticeStatus)
+                    ? "HERMES will surface profile conditions that need attention here."
+                    : state.NoticeStatus);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(state.NoticeStatus))
         {
             AddText(
-                noticeScroll.Content,
-                noticePreview,
-                12.5f,
+                scroll.Content,
+                state.NoticeStatus,
+                12f,
                 false,
                 HermesNativeUiFramework.MutedTextColor);
         }
 
-        if (activeNotices.Count > 0)
+        foreach (var notice in activeNotices)
         {
-            foreach (var notice in activeNotices)
-            {
-                var row = AddCard(
-                    noticeScroll.Content,
-                    notice.Title,
-                    notice.Message,
-                    $"{notice.Severity.ToUpperInvariant()} • {notice.Category.ToUpperInvariant()}",
-                    () => _state.OpenNotice(notice));
-                var actions = CreateToolbar(row);
-                AddFlexibleSpace(actions);
-                AddButton(actions, "OPEN", () => _state.OpenNotice(notice), 62f);
-                AddButton(actions, "DISMISS", () =>
+            var card = AddCard(
+                scroll.Content,
+                notice.Title,
+                AssistantPreview(notice.Message, 210),
+                $"{notice.Severity.ToUpperInvariant()} • {notice.Category.ToUpperInvariant()}",
+                () => state.OpenNotice(notice),
+                AssistantSeverityCardColor(notice.Severity));
+
+            var actions = CreateToolbar(card);
+            AddFlexibleSpace(actions);
+            AddButton(
+                actions,
+                "OPEN",
+                () => state.OpenNotice(notice),
+                58f,
+                height: 28f,
+                fontSize: 11.5f);
+            AddButton(
+                actions,
+                "DISMISS",
+                () =>
                 {
-                    _state.DismissNotice(notice);
+                    state.DismissNotice(notice);
                     Invalidate();
-                }, 76f);
-            }
+                },
+                72f,
+                height: 28f,
+                fontSize: 11.5f);
         }
 
-        var conversation = CreateScroll(root, "assistant-conversation", true);
-        AddSectionHeader(conversation.Content, "CONVERSATION");
-        foreach (var message in _state.AssistantMessages)
+        var hiddenCount = Math.Max(0, state.ActiveNoticeCount - activeNotices.Count);
+        if (hiddenCount > 0)
+        {
+            AddText(
+                scroll.Content,
+                $"+{hiddenCount:N0} more active alert(s). Use the Assistant page after dismissing or opening the highest-priority items.",
+                11.5f,
+                false,
+                HermesNativeUiFramework.MutedTextColor);
+        }
+    }
+
+    private void RenderAssistantConversation(RectTransform parent, HermesNativeWorkspaceState state)
+    {
+        AddVerticalLayout(parent, 6, 6, 6, 6, 4f);
+
+        var header = CreateToolbar(parent);
+        AddToolbarLabel(header, "CONVERSATION");
+        AddFlexibleSpace(header);
+        AddButton(
+            header,
+            "CLEAR CHAT",
+            () =>
+            {
+                state.ClearAssistant();
+                _assistantDraft = string.Empty;
+                Invalidate();
+            },
+            88f,
+            state.AssistantMessages.Count > 0,
+            height: 28f,
+            fontSize: 11.5f);
+
+        var conversation = CreateScroll(parent, "assistant-conversation", true);
+        conversation.Root.GetComponent<LayoutElement>().minHeight = 150f;
+
+        if (state.AssistantLoading)
+        {
+            AddCard(
+                conversation.Content,
+                "HERMES IS WORKING",
+                string.IsNullOrWhiteSpace(state.AssistantStatus)
+                    ? "Preparing a response from the current profile context..."
+                    : state.AssistantStatus,
+                "CURRENT REQUEST",
+                null,
+                new Color(0.12f, 0.14f, 0.13f, 0.86f));
+        }
+        else if (LooksLikeAssistantFailure(state.AssistantStatus))
+        {
+            AddCard(
+                conversation.Content,
+                "ASSISTANT NEEDS ATTENTION",
+                state.AssistantStatus,
+                "THE EXISTING PROFILE SNAPSHOT REMAINS AVAILABLE",
+                null,
+                new Color(0.20f, 0.08f, 0.07f, 0.80f));
+        }
+
+        foreach (var message in state.AssistantMessages)
         {
             var card = AddCard(
                 conversation.Content,
@@ -241,52 +447,87 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 message.Text,
                 message.Source,
                 null,
-                message.IsUser ? new Color(0.08f, 0.10f, 0.10f, 0.78f) : HermesNativeUiFramework.RowColor);
-            if (message.Actions.Count > 0)
-            {
-                var actions = CreateToolbar(card);
-                foreach (var action in message.Actions)
-                {
-                    var label = action.Label.ToUpperInvariant();
-                    AddButton(
-                        actions,
-                        label,
-                        () => _state.Navigate(action.TabName),
-                        AssistantActionButtonWidth(label));
-                }
-                AddFlexibleSpace(actions);
-            }
+                message.IsUser
+                    ? new Color(0.08f, 0.10f, 0.10f, 0.78f)
+                    : HermesNativeUiFramework.RowColor);
+
+            AddAssistantActionRows(card, state, message.Actions);
         }
 
-        if (_state.AssistantMessages.Count == 0)
+        if (state.AssistantMessages.Count == 0 && !state.AssistantLoading)
         {
-            AddEmptyState(conversation.Content, "No conversation yet.", "Ask HERMES about the active profile, stash, loadout, hideout, crafts, or selected item.");
+            AddEmptyState(
+                conversation.Content,
+                "No conversation yet.",
+                "Ask about the active PMC profile, selected item, loadout, raid plan, hideout, crafts, or stash.");
+        }
+    }
+
+    private void AddAssistantActionRows(
+        Transform parent,
+        HermesNativeWorkspaceState state,
+        IReadOnlyList<HermesNativeAssistantActionData> actions)
+    {
+        if (actions.Count == 0)
+        {
+            return;
         }
 
-        var composer = CreatePanel(root, "AssistantComposer", HermesNativeUiFramework.HeaderColor);
+        const int actionsPerRow = 3;
+        for (var offset = 0; offset < actions.Count; offset += actionsPerRow)
+        {
+            var row = CreateToolbar(parent);
+            var count = Math.Min(actionsPerRow, actions.Count - offset);
+            for (var index = 0; index < count; index++)
+            {
+                var action = actions[offset + index];
+                var label = NormalizeAssistantActionLabel(action.Label);
+                AddButton(
+                    row,
+                    label,
+                    () => state.Navigate(action.TabName),
+                    AssistantActionButtonWidth(label),
+                    height: 28f,
+                    fontSize: 11.5f);
+            }
+
+            AddFlexibleSpace(row);
+        }
+    }
+
+    private void RenderAssistantComposer(Transform parent, HermesNativeWorkspaceState state)
+    {
+        var composer = CreatePanel(parent, "AssistantComposer", HermesNativeUiFramework.HeaderColor);
         var composerLayout = composer.gameObject.AddComponent<HorizontalLayoutGroup>();
-        composerLayout.padding = new RectOffset(7, 7, 5, 5);
+        composerLayout.padding = new RectOffset(7, 7, 4, 4);
         composerLayout.spacing = 6f;
         composerLayout.childControlWidth = true;
         composerLayout.childControlHeight = true;
         composerLayout.childForceExpandWidth = false;
         composerLayout.childForceExpandHeight = false;
+
         var composerElement = composer.gameObject.AddComponent<LayoutElement>();
-        composerElement.minHeight = 44f;
-        composerElement.preferredHeight = 44f;
+        composerElement.minHeight = 40f;
+        composerElement.preferredHeight = 40f;
         composerElement.flexibleHeight = 0f;
 
-        var input = AddInput(composer, "ASK HERMES ABOUT THE CURRENT PROFILE", _assistantDraft, 120f);
+        var placeholder = state.SelectedItem is null
+            ? "ASK HERMES ABOUT THE CURRENT PROFILE"
+            : $"ASK ABOUT {state.SelectedItem.Name.ToUpperInvariant()}";
+
+        var input = AddInput(composer, placeholder, _assistantDraft, 120f);
         input.gameObject.GetComponent<LayoutElement>().flexibleWidth = 1f;
         input.onValueChanged.AddListener(value => _assistantDraft = value);
         input.onSubmit.AddListener(_ => SubmitAssistant(input));
-        AddButton(composer, _state.AssistantLoading ? "WORKING" : "ASK", () => SubmitAssistant(input), 72f, !_state.AssistantLoading);
-        AddButton(composer, "CLEAR CHAT", () =>
-        {
-            _state.ClearAssistant();
-            _assistantDraft = string.Empty;
-            Invalidate();
-        }, 100f);
+
+        AddButton(
+            composer,
+            state.AssistantLoading ? "WORKING" : "ASK",
+            () => SubmitAssistant(input),
+            66f,
+            !state.AssistantLoading,
+            height: 28f,
+            fontSize: 11.5f);
     }
 
     private void SubmitAssistant(TMP_InputField input)
@@ -301,6 +542,67 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         input.SetTextWithoutNotify(string.Empty);
         _state.SubmitAssistant(prompt);
         Invalidate(0.25f);
+    }
+
+    private static string AssistantPreview(string value, int maximumCharacters)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return "No additional detail was supplied.";
+        }
+
+        var compact = string.Join(
+            " ",
+            value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return compact.Length <= maximumCharacters
+            ? compact
+            : compact[..Math.Max(1, maximumCharacters - 1)].TrimEnd() + "…";
+    }
+
+    private static string NormalizeAssistantActionLabel(string label)
+    {
+        var normalized = string.IsNullOrWhiteSpace(label)
+            ? "OPEN"
+            : string.Join(" ", label.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+                .Trim()
+                .TrimEnd('.', '…')
+                .ToUpperInvariant();
+
+        return normalized switch
+        {
+            "OPEN RAIDPLANNER" => "OPEN RAID PLAN",
+            "OPEN RAID PLANNER" => "OPEN RAID PLAN",
+            _ => normalized
+        };
+    }
+
+    private static bool LooksLikeAssistantFailure(string status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return false;
+        }
+
+        return status.IndexOf("fail", StringComparison.OrdinalIgnoreCase) >= 0
+               || status.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0
+               || status.IndexOf("timeout", StringComparison.OrdinalIgnoreCase) >= 0
+               || status.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0
+               || status.IndexOf("unavailable", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    private static Color AssistantSeverityCardColor(string severity)
+    {
+        if (severity.Equals("Critical", StringComparison.OrdinalIgnoreCase))
+        {
+            return new Color(0.23f, 0.075f, 0.065f, 0.84f);
+        }
+
+        if (severity.Equals("Warning", StringComparison.OrdinalIgnoreCase))
+        {
+            return new Color(0.22f, 0.145f, 0.055f, 0.82f);
+        }
+
+        return HermesNativeUiFramework.RowColor;
     }
 
     #endregion
@@ -422,8 +724,13 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         AddMetricGrid(parent,
             ("BEST SALE", best is null ? "NO BUYER" : $"{best.TraderName} • {Money(best.RoubleEquivalent)}"),
             ("REFERENCE", Money(summary.ReferencePrice)),
-            ("SALE BASIS", summary.SalePriceBasis),
             ("PURCHASE OFFERS", summary.PurchaseOffers.Count.ToString("N0")));
+
+        AddCard(
+            parent,
+            "SALE ESTIMATE",
+            summary.SalePriceBasis,
+            summary.UsesSelectedStashInstance ? "SELECTED STASH COPY" : "FULL-CONDITION BASE ITEM");
 
         foreach (var offer in summary.SellOffers.Take(12))
         {
@@ -1457,7 +1764,12 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         return layout;
     }
 
-    private void AddStatusStrip(Transform parent, string status, bool loading, Action refresh)
+    private void AddStatusStrip(
+        Transform parent,
+        string status,
+        bool loading,
+        Action refresh,
+        string refreshLabel = "REFRESH")
     {
         var strip = CreatePanel(parent, "StatusStrip", new Color(0f, 0f, 0f, 0.22f));
         var layout = strip.gameObject.AddComponent<HorizontalLayoutGroup>();
@@ -1478,7 +1790,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         {
             AddText(strip, "WORKING", 11.5f, true, HermesNativeUiFramework.AccentTextColor, TextAlignmentOptions.Center, 76f);
         }
-        AddButton(strip, "REFRESH", () => refresh(), 76f, !loading);
+        AddButton(strip, refreshLabel, () => refresh(), 76f, !loading);
         AddAnchoredBottomRule(strip);
     }
 
@@ -1563,7 +1875,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
     private static float AssistantActionButtonWidth(string label)
     {
         var normalized = string.IsNullOrWhiteSpace(label) ? "OPEN" : label.Trim();
-        return Mathf.Clamp(72f + normalized.Length * 5.4f, 106f, 176f);
+        return Mathf.Clamp(68f + normalized.Length * 5.8f, 96f, 210f);
     }
 
     private static string BuildHideoutRequirementPreview(HermesHideoutAreaSummary area)
@@ -1870,7 +2182,9 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         UnityAction action,
         float width,
         bool interactable = true,
-        bool selected = false)
+        bool selected = false,
+        float height = CompactControlHeight,
+        float fontSize = 12.5f)
     {
         var root = new GameObject("Button", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(LayoutElement));
         root.transform.SetParent(parent, false);
@@ -1894,10 +2208,10 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         layout.minWidth = width;
         layout.preferredWidth = width;
         layout.flexibleWidth = 0f;
-        layout.minHeight = CompactControlHeight;
-        layout.preferredHeight = CompactControlHeight;
+        layout.minHeight = height;
+        layout.preferredHeight = height;
         layout.flexibleHeight = 0f;
-        var label = HermesNativeUiFramework.CreateText("Label", root.transform, 12.5f, true, TextAlignmentOptions.Center);
+        var label = HermesNativeUiFramework.CreateText("Label", root.transform, fontSize, true, TextAlignmentOptions.Center);
         label.text = text;
         label.color = selected ? new Color32(26, 28, 27, 255) : HermesNativeUiFramework.NormalTextColor;
         HermesNativeUiFramework.Stretch(label.rectTransform, 7f, 2f, 7f, 2f);

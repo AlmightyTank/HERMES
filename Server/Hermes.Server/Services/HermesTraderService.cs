@@ -13,7 +13,7 @@ namespace Hermes.Server.Services;
 [Injectable(InjectionType.Singleton)]
 public sealed class HermesTraderService(
     DatabaseService databaseService,
-    ProfileHelper profileHelper,
+    HermesPreparedProfileSnapshotService preparedProfiles,
     TraderAssortHelper traderAssortHelper,
     HandbookHelper handbookHelper,
     ItemHelper itemHelper,
@@ -52,13 +52,13 @@ public sealed class HermesTraderService(
             return NotFound(itemKey, "The selected HERMES item is no longer available. Search for it again.");
         }
 
-        var pmcProfile = profileHelper.GetPmcProfile(sessionId);
-        if (pmcProfile is null)
+        var preparedProfile = preparedProfiles.Get(sessionId);
+        if (preparedProfile is null)
         {
             return NotFound(item.ItemKey, "HERMES could not read the active PMC profile.");
         }
 
-        var profileJson = jsonUtil.Serialize(pmcProfile) ?? "{}";
+        var profileJson = preparedProfile.ProfileJson;
         var referencePrice = catalogService.GetReferencePrice(item.TemplateId);
         var selectedInstance = stashService.ResolveSelectedInstance(item.ItemKey, instanceKey, sessionId);
         IReadOnlyList<HermesTraderSaleComponent> saleComponents = selectedInstance?.Components
@@ -82,8 +82,8 @@ public sealed class HermesTraderService(
 
         var instanceSummary = selectedInstance?.Summary;
         var salePriceBasis = instanceSummary is null
-            ? "Full-condition base item estimate. Select a matching stash copy to value its root condition and installed equipment separately."
-            : $"Selected stash copy: {instanceSummary.Label}. Root basis ₽{instanceSummary.RootConditionAdjustedReferenceValue:N0} + installed basis ₽{instanceSummary.InstalledComponentReferenceValue:N0}. Each trader values only installed components it accepts.";
+            ? "This estimate assumes a full-condition base item. Select one of your stash copies above to include its current condition and installed parts."
+            : $"Using {instanceSummary.Label}: root ₽{instanceSummary.RootConditionAdjustedReferenceValue:N0} plus installed parts ₽{instanceSummary.InstalledComponentReferenceValue:N0}. Each trader only pays for installed parts it accepts.";
 
         return new HermesTraderSummaryResponse(
             true,
@@ -110,6 +110,29 @@ public sealed class HermesTraderService(
             best,
             sellOffers,
             purchaseOffers);
+    }
+
+    internal HermesSellOffer? GetBestBaseItemSellOffer(
+        MongoId itemTpl,
+        MongoId sessionId)
+    {
+        var preparedProfile = preparedProfiles.Get(sessionId);
+        var referencePrice = catalogService.GetReferencePrice(itemTpl);
+        if (preparedProfile is null || referencePrice is null or <= 0)
+        {
+            return null;
+        }
+
+        // Craft profitability only needs the best trader purchase value for a pristine base
+        // output. Avoid building trader purchase assortments, stash instances, and item-detail
+        // view models for every unique craft output.
+        return GetBestSellOfferForComponents(
+            itemTpl,
+            [new HermesTraderSaleComponent(
+                itemTpl,
+                referencePrice.Value,
+                HermesSaleComponentKind.Root)],
+            preparedProfile.ProfileJson);
     }
 
     internal HermesSellOffer? GetBestSellOfferForComponents(

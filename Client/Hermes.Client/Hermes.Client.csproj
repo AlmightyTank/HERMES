@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <RootNamespace>Hermes.Client</RootNamespace>
@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0-alpha13.0.10</Version>
+    <Version>0.1.0-alpha14.0.8</Version>
     <OutputType>Library</OutputType>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <GenerateDependencyFile>false</GenerateDependencyFile>
@@ -34,6 +34,10 @@
     </Reference>
     <Reference Include="Assembly-CSharp">
       <HintPath>$(EftManaged)\Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Comfort">
+      <HintPath>$(EftManaged)\Comfort.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Newtonsoft.Json">
@@ -84,10 +88,6 @@
 		<HintPath>$(EftManaged)\Sirenix.Serialization.dll</HintPath>
 		<Private>false</Private>
 	</Reference>
-	<Reference Include="Comfort">
-		<HintPath>$(EftManaged)\Comfort.dll</HintPath>
-		<Private>false</Private>
-	</Reference>
   </ItemGroup>
 
   <ItemGroup>
@@ -105,6 +105,8 @@
            Text="Missing spt-reflection.dll at '$(SptClientPlugins)\spt-reflection.dll'. Check SptRoot and your SPT 4.0.13 installation." />
     <Error Condition="!Exists('$(EftManaged)\Assembly-CSharp.dll')"
            Text="Missing Assembly-CSharp.dll at '$(EftManaged)\Assembly-CSharp.dll'." />
+    <Error Condition="!Exists('$(EftManaged)\Comfort.dll')"
+           Text="Missing Comfort.dll at '$(EftManaged)\Comfort.dll'." />
     <Error Condition="!Exists('$(EftManaged)\Newtonsoft.Json.dll')"
            Text="Missing Newtonsoft.Json.dll at '$(EftManaged)\Newtonsoft.Json.dll'." />
     <Error Condition="!Exists('$(EftManaged)\UnityEngine.CoreModule.dll')"

@@ -1108,17 +1108,22 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
 
     private static bool MapMatches(string candidate, string selected)
     {
-        if (string.IsNullOrWhiteSpace(candidate) || string.IsNullOrWhiteSpace(selected))
+        if (string.IsNullOrWhiteSpace(candidate) ||
+            string.IsNullOrWhiteSpace(selected))
         {
             return false;
         }
 
         static string Normalize(string value)
-            => new string(value.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray())
+            => new string(
+                    value.Where(char.IsLetterOrDigit)
+                        .Select(char.ToLowerInvariant)
+                        .ToArray())
                 .Replace("thelab", "labs");
 
         var left = Normalize(candidate);
         var right = Normalize(selected);
+
         return left.Equals(right, StringComparison.Ordinal)
                || left.IndexOf(right, StringComparison.Ordinal) >= 0
                || right.IndexOf(left, StringComparison.Ordinal) >= 0;

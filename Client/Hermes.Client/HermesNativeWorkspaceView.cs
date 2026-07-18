@@ -122,7 +122,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
 
         ApplyResponsiveLayout(true);
         _built = true;
-        Plugin.Log?.LogInfo($"HERMES Alpha13.0 native workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
+        Plugin.Log?.LogInfo($"HERMES Alpha14.0.8 request-coalescing performance workspace built. Ragfair templates ready: {HermesRagfairNativeAssets.Ready}.");
     }
 
     private void BuildHeader()
@@ -177,9 +177,9 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         _activitySpinner = activitySpinner;
         _activityBadgeRect.gameObject.SetActive(false);
 
-        _resetButton = CreateNativeButton("Reset", actions, "RESET", 78f);
-        _refreshButton = CreateNativeButton("Refresh", actions, "REFRESH", 96f);
-        _backButton = CreateNativeButton("Back", actions, "BACK", 78f);
+        _resetButton = CreateNativeButton("Reset", actions, "RESET", 72f);
+        _refreshButton = CreateNativeButton("Refresh", actions, "REFRESH", 88f);
+        _backButton = CreateNativeButton("Back", actions, "BACK", 72f);
 
         _resetButton.AddListener(() =>
         {
@@ -188,13 +188,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
                 HermesEftWindowReflection.Clear(_window);
             }
         });
-        _refreshButton.AddListener(() =>
-        {
-            if (_window != null)
-            {
-                HermesEftWindowReflection.Refresh(_window);
-            }
-        });
+        _refreshButton.AddListener(RefreshActiveWorkspace);
         _backButton.AddListener(() => HermesNativeScreenRegistry.TryReturnToInventory());
 
         var separator = CreatePanel("BottomSeparator", _headerRect, HermesNativeUiFramework.SeparatorColor);
@@ -204,6 +198,18 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         separator.offsetMin = Vector2.zero;
         separator.offsetMax = new Vector2(0f, 1f);
         separator.gameObject.GetComponent<Image>().raycastTarget = false;
+    }
+
+    private void RefreshActiveWorkspace()
+    {
+        if (_window is null)
+        {
+            return;
+        }
+
+        // The window routes every profile workspace through the coordinator. The server performs
+        // one explicit source recheck first, then only the selected workspace is downloaded.
+        HermesEftWindowReflection.Refresh(_window);
     }
 
     private void BuildNavigation()
@@ -451,7 +457,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
             _activitySpinner.enabled = active;
         }
 
-        if (force || refreshing != _lastRefreshing)
+        if (force || refreshing != _lastRefreshing || tabChanged)
         {
             _lastRefreshing = refreshing;
             if (_refreshButton != null)

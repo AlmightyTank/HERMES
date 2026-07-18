@@ -17,9 +17,18 @@ namespace Hermes.Server.Services;
 [Injectable(InjectionType.Singleton)]
 public sealed class HermesProfileScopeService(
     ProfileHelper profileHelper,
-    JsonUtil jsonUtil)
+    HermesPreparedProfileSnapshotService preparedProfiles)
 {
-    public HermesProfileScope? Resolve(MongoId sessionId)
+    private readonly object _identitySync = new();
+    private readonly Dictionary<string, CachedIdentity> _identityBySession =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Resolves profile identity without serializing the complete mutable PMC profile when the
+    /// active profile object has not changed. Prepared-cache routes such as Assistant alerts use
+    /// this path because they do not need inventory, quest, or hideout JSON.
+    /// </summary>
+    public HermesProfileScope? ResolveIdentity(MongoId sessionId)
     {
         var profile = profileHelper.GetPmcProfile(sessionId);
         if (profile is null)
@@ -27,16 +36,50 @@ public sealed class HermesProfileScopeService(
             return null;
         }
 
-        var profileJson = jsonUtil.Serialize(profile) ?? "{}";
-        JsonObject? root;
-        try
+        var sessionKey = sessionId.ToString();
+        lock (_identitySync)
         {
-            root = JsonNode.Parse(profileJson) as JsonObject;
+            if (_identityBySession.TryGetValue(sessionKey, out var cached)
+                && ReferenceEquals(cached.Profile, profile))
+            {
+                return cached.Scope;
+            }
         }
-        catch
-        {
-            root = null;
-        }
+
+        var prepared = preparedProfiles.Get(sessionId);
+        return prepared is null
+            ? null
+            : ResolveCore(
+                sessionId,
+                prepared.Profile,
+                prepared.ProfileJson,
+                prepared.Root,
+                cacheIdentity: true);
+    }
+
+    public HermesProfileScope? Resolve(MongoId sessionId)
+    {
+        var prepared = preparedProfiles.Get(sessionId);
+        return prepared is null
+            ? null
+            : ResolveCore(
+                sessionId,
+                prepared.Profile,
+                prepared.ProfileJson,
+                prepared.Root,
+                cacheIdentity: true);
+    }
+
+    public void InvalidatePrepared(MongoId sessionId)
+        => preparedProfiles.Invalidate(sessionId);
+
+    private HermesProfileScope ResolveCore(
+        MongoId sessionId,
+        object profile,
+        string profileJson,
+        JsonObject root,
+        bool cacheIdentity)
+    {
 
         var info = GetObject(root, "Info", "info");
         var profileId = FirstNonEmpty(
@@ -68,13 +111,23 @@ public sealed class HermesProfileScopeService(
         var scopeKey = Hash(identitySeed);
         var contextToken = Hash("HERMES_CONTEXT|" + identitySeed);
 
-        return new HermesProfileScope(
+        var scope = new HermesProfileScope(
             sessionId,
             profileId,
             accountId ?? string.Empty,
             scopeKey,
             contextToken,
             profileJson);
+
+        if (cacheIdentity)
+        {
+            lock (_identitySync)
+            {
+                _identityBySession[sessionId.ToString()] = new CachedIdentity(profile, scope);
+            }
+        }
+
+        return scope;
     }
 
     private static JsonObject? GetObject(JsonObject? root, params string[] names)
@@ -126,6 +179,9 @@ public sealed class HermesProfileScopeService(
 
     private static string Hash(string value)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private sealed record CachedIdentity(object Profile, HermesProfileScope Scope);
+
 }
 
 public sealed record HermesProfileScope(

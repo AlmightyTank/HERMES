@@ -22,6 +22,13 @@ public sealed record HermesWorkspaceSnapshotResponse(
     HermesStashSummaryResponse Stash,
     HermesLoadoutSummaryResponse Loadout);
 
+public sealed record HermesAssistantPrepareResponse(
+    bool Prepared,
+    string? Message,
+    string ContextToken,
+    long Revision,
+    HermesDomainRevisions Domains);
+
 public sealed record HermesChangesResponse(
     bool Found,
     string? Message,

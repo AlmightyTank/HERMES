@@ -36,6 +36,7 @@ public sealed class Plugin : BaseUnityPlugin
         TryEnable("Character and in-raid inventory tab injection", () => new HermesNativeInventoryScreenPatch().Enable());
         TryEnable("InventoryScreen close lifecycle cleanup", () => new HermesNativeInventoryScreenClosePatch().Enable());
         TryEnable("native inventory-tab icon correction and click preservation", () => new HermesNativeTabIconFixPatch().Enable());
+        TryEnable("native inventory-tab exclusive header state", () => new HermesNativeTabHeaderFixPatch().Enable());
 
         // Alpha12.7.4.4 improves native text inset/readability and pins new item-search results to the top.
         // Legacy controller methods remain request/state owners only; every visible workspace is
@@ -58,7 +59,7 @@ public sealed class Plugin : BaseUnityPlugin
         HermesRagfairNativeAssets.TryResolve();
 
         Logger.LogInfo(
-            $"HERMES 0.1.0-alpha13.0.10 map-prefetched readiness and best trader/flea craft profit loaded. "
+            $"HERMES 0.1.0-alpha14.0.8 request coalescing and lightweight craft valuation loaded. "
             + $"Native Ragfair templates ready: {HermesRagfairNativeAssets.Ready}. "
             + $"Inventory-only workspace: {Settings.UseNativeInventoryTabs.Value}. "
             + $"Toggle shortcut: {Settings.ToggleWindowShortcut.Value}.");

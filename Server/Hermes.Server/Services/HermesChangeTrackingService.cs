@@ -22,6 +22,7 @@ namespace Hermes.Server.Services;
 public sealed class HermesChangeTrackingService(
     DatabaseService databaseService,
     HermesProfileScopeService profileScopeService,
+    HermesPreparedProfileSnapshotService preparedProfiles,
     RagfairOfferService ragfairOfferService,
     JsonUtil jsonUtil,
     HermesCatalogService catalogService,
@@ -50,43 +51,47 @@ public sealed class HermesChangeTrackingService(
 
     private static readonly string[] InventoryDomains =
     [
-        "profile", "stash", "loadout", "raidPlanner", "hideout", "crafts"
+        "profile", "stash", "loadout", "raidPlanner", "hideout", "crafts", "assistant"
     ];
 
     private static readonly string[] QuestDomains =
     [
-        "profile", "hideout", "crafts", "raidPlanner"
+        "profile", "hideout", "crafts", "raidPlanner", "assistant"
     ];
 
     private static readonly string[] HideoutDomains =
     [
-        "profile", "hideout", "crafts"
+        "profile", "hideout", "crafts", "assistant"
     ];
 
     private static readonly string[] VitalsDomains =
     [
-        "profile", "loadout", "raidPlanner"
+        "profile", "loadout", "raidPlanner", "assistant"
     ];
 
     private static readonly string[] ProgressionDomains =
     [
-        "profile", "market", "hideout", "crafts", "loadout", "raidPlanner"
+        "profile", "market", "hideout", "crafts", "loadout", "raidPlanner", "assistant"
     ];
 
     private static readonly string[] ProfileMarketDomains =
     [
-        "market", "stash", "loadout"
+        "market", "stash", "loadout", "assistant"
     ];
 
     private static readonly string[] LiveMarketDomains =
     [
-        "market"
+        "market", "stash", "crafts", "loadout", "assistant"
     ];
 
     private readonly ConcurrentDictionary<string, SessionState> _sessions =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _activeScopeBySession =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, PreparedAssistantFeed> _preparedAssistantSnapshots =
+        new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _staticFingerprintSync = new();
+    private string? _staticDatabaseFingerprint;
 
     public HermesWorkspaceSnapshotResponse GetSnapshot(
         MongoId sessionId,
@@ -118,7 +123,7 @@ public sealed class HermesChangeTrackingService(
                 && string.Equals(confirmedScope.ContextToken, scope.ContextToken, StringComparison.Ordinal))
             {
                 var revision = ReadRevision(state);
-                return new HermesWorkspaceSnapshotResponse(
+                var response = new HermesWorkspaceSnapshotResponse(
                     true,
                     null,
                     scope.ContextToken,
@@ -128,6 +133,8 @@ public sealed class HermesChangeTrackingService(
                     crafts,
                     stash,
                     loadout);
+                StorePreparedAssistantFeed(scope.ScopeKey, response);
+                return response;
             }
 
             RetireScope(scope, "Active PMC profile changed while HERMES was building a snapshot");
@@ -144,6 +151,365 @@ public sealed class HermesChangeTrackingService(
             stashAnalysisService.GetSummary(sessionId, stashSettings),
             loadoutService.GetSummary(sessionId, loadoutSettings));
     }
+
+    public HermesAssistantPrepareResponse PrepareAssistantFeed(
+        MongoId sessionId,
+        HermesStashAnalysisSettings stashSettings,
+        HermesLoadoutAnalysisSettings loadoutSettings)
+    {
+        // The four workspace routes have already materialized these responses during startup,
+        // post-raid preparation, or a strong manual Refresh. This route only joins those server
+        // caches and stores the display-ready Assistant feed; it does not return the four large
+        // workspace payloads to Unity a second time.
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var scope = profileScopeService.Resolve(sessionId);
+            if (scope is null)
+            {
+                return new HermesAssistantPrepareResponse(
+                    false,
+                    "HERMES could not read the active PMC profile.",
+                    string.Empty,
+                    0,
+                    EmptyDomains());
+            }
+
+            var state = RefreshState(scope, forceSlowSources: false);
+            var revision = ReadRevision(state);
+            var hideout = hideoutService.GetSummary(sessionId);
+            var crafts = hideoutService.GetCrafts(sessionId);
+            var stash = stashAnalysisService.GetSummary(sessionId, stashSettings);
+            var loadout = loadoutService.GetSummary(sessionId, loadoutSettings);
+
+            // This route is also the server-side join point for materializations that outlive a
+            // client timeout. Never publish a prepared Assistant feed until every source model
+            // is complete; otherwise profitable-craft or readiness alerts can silently disappear.
+            if (!hideout.Found || !crafts.Found || !stash.Found || !loadout.Found)
+            {
+                var missing = new List<string>();
+                if (!hideout.Found) missing.Add("Hideout");
+                if (!crafts.Found) missing.Add("Crafts");
+                if (!stash.Found) missing.Add("Stash");
+                if (!loadout.Found) missing.Add("Loadout");
+                return new HermesAssistantPrepareResponse(
+                    false,
+                    "The prepared Assistant feed is waiting for: " + string.Join(", ", missing) + ".",
+                    scope.ContextToken,
+                    revision.Revision,
+                    revision.Domains);
+            }
+
+            var response = new HermesWorkspaceSnapshotResponse(
+                true,
+                null,
+                scope.ContextToken,
+                revision.Revision,
+                revision.Domains,
+                hideout,
+                crafts,
+                stash,
+                loadout);
+
+            var confirmedScope = profileScopeService.Resolve(sessionId);
+            if (confirmedScope is not null
+                && string.Equals(confirmedScope.ContextToken, scope.ContextToken, StringComparison.Ordinal))
+            {
+                StorePreparedAssistantFeed(scope.ScopeKey, response);
+                return new HermesAssistantPrepareResponse(
+                    true,
+                    null,
+                    response.ContextToken,
+                    response.Revision,
+                    response.Domains);
+            }
+
+            RetireScope(scope, "Active PMC profile changed while HERMES was preparing Assistant alerts");
+        }
+
+        return new HermesAssistantPrepareResponse(
+            false,
+            "The active PMC profile changed while HERMES was preparing Assistant alerts.",
+            profileScopeService.Resolve(sessionId)?.ContextToken ?? string.Empty,
+            0,
+            EmptyDomains());
+    }
+
+    private void StorePreparedAssistantFeed(
+        string scopeKey,
+        HermesWorkspaceSnapshotResponse response)
+    {
+        var preparedAlerts = BuildAssistantAlerts(response)
+            .OrderByDescending(alert => alert.SeverityRank)
+            .ThenByDescending(alert => alert.NumericValue)
+            .ThenBy(alert => alert.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+        _preparedAssistantSnapshots[scopeKey] = new PreparedAssistantFeed(response, preparedAlerts);
+    }
+
+    public HermesAssistantAlertsResponse GetAssistantAlerts(MongoId sessionId)
+    {
+        var scope = profileScopeService.ResolveIdentity(sessionId);
+        if (scope is null)
+        {
+            return new HermesAssistantAlertsResponse(
+                false,
+                "HERMES could not read the active PMC profile.",
+                string.Empty,
+                0,
+                false,
+                0,
+                []);
+        }
+
+        // Opening Assistant is a pure prepared-cache read. Source fingerprint scans happen during
+        // the one warmup or an explicit Refresh, never because the screen was opened.
+        var state = ResolveState(scope);
+        var currentRevision = ReadRevision(state);
+        if (!_preparedAssistantSnapshots.TryGetValue(scope.ScopeKey, out var prepared)
+            || !prepared.Snapshot.Found
+            || !string.Equals(prepared.Snapshot.ContextToken, scope.ContextToken, StringComparison.Ordinal))
+        {
+            return new HermesAssistantAlertsResponse(
+                false,
+                "The prepared Assistant feed is waiting for the one-time workspace warmup.",
+                scope.ContextToken,
+                currentRevision.Revision,
+                false,
+                0,
+                []);
+        }
+
+        var snapshot = prepared.Snapshot;
+        var alerts = prepared.Alerts;
+
+        return new HermesAssistantAlertsResponse(
+            true,
+            alerts.Count == 0
+                ? "No actionable conditions were found in the prepared workspace snapshot."
+                : null,
+            scope.ContextToken,
+            snapshot.Revision,
+            currentRevision.Domains.Assistant > snapshot.Domains.Assistant,
+            alerts.Count,
+            alerts);
+    }
+
+    private static IReadOnlyList<HermesAssistantAlertSummary> BuildAssistantAlerts(
+        HermesWorkspaceSnapshotResponse snapshot)
+    {
+        var alerts = new List<HermesAssistantAlertSummary>();
+        AddLoadoutAlerts(snapshot.Loadout, alerts);
+        AddHideoutAlerts(snapshot.Hideout, alerts);
+        AddCraftAlerts(snapshot.Crafts, alerts);
+        AddStashAlerts(snapshot.Stash, alerts);
+
+        return alerts
+            .GroupBy(alert => alert.Fingerprint, StringComparer.Ordinal)
+            .Select(group => group
+                .OrderByDescending(alert => alert.SeverityRank)
+                .ThenByDescending(alert => alert.NumericValue)
+                .First())
+            .ToList();
+    }
+
+    private static void AddLoadoutAlerts(
+        HermesLoadoutSummaryResponse loadout,
+        ICollection<HermesAssistantAlertSummary> output)
+    {
+        if (!loadout.Found)
+        {
+            return;
+        }
+
+        if (loadout.CriticalCount > 0)
+        {
+            var warnings = loadout.Warnings
+                .Where(warning => !warning.Category.Equals("Insurance", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(warning => AssistantSeverityRank(warning.Severity))
+                .Take(2)
+                .Select(warning => warning.Message)
+                .ToList();
+            if (warnings.Count > 0)
+            {
+                output.Add(new HermesAssistantAlertSummary(
+                    "loadout-critical|" + string.Join("|", warnings),
+                    "loadout-critical",
+                    "Critical",
+                    "Loadout",
+                    $"Loadout: {loadout.CriticalCount:N0} critical issue(s)",
+                    $"Readiness {loadout.ReadinessScore}% • {string.Join(" • ", warnings)}",
+                    "Loadout/Overview",
+                    loadout.CriticalCount,
+                    3));
+            }
+        }
+
+        if (loadout.ValueSummary.Found
+            && loadout.ValueSummary.UninsuredItemCount > 0
+            && loadout.ValueSummary.UninsuredReplacementValue > 0)
+        {
+            var top = loadout.ValueSummary.Items
+                .Where(item => item.InsuranceStatus.Equals("Uninsured", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(item => item.BestReplacementValue ?? 0L)
+                .FirstOrDefault();
+            var detail = top is null
+                ? $"{loadout.ValueSummary.UninsuredItemCount:N0} uninsured item(s)"
+                : $"Highest-value item: {top.Name} (₽{(top.BestReplacementValue ?? 0L):N0})";
+            output.Add(new HermesAssistantAlertSummary(
+                $"uninsured|{top?.ProfileItemId}|{loadout.ValueSummary.UninsuredItemCount}",
+                "uninsured",
+                "Warning",
+                "Insurance",
+                $"Insurance: ₽{loadout.ValueSummary.UninsuredReplacementValue:N0} uninsured",
+                $"At-risk uninsured value: ₽{loadout.ValueSummary.UninsuredReplacementValue:N0}. {detail}.",
+                "Loadout/Value & Insurance",
+                loadout.ValueSummary.UninsuredReplacementValue,
+                2));
+        }
+    }
+
+    private static void AddHideoutAlerts(
+        HermesHideoutSummaryResponse hideout,
+        ICollection<HermesAssistantAlertSummary> output)
+    {
+        if (!hideout.Found)
+        {
+            return;
+        }
+
+        var completed = hideout.ActiveProductions
+            .Where(production => production.IsComplete)
+            .OrderBy(production => production.StationName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (completed.Count > 0)
+        {
+            var names = string.Join(", ", completed.Take(3).Select(production =>
+                $"{production.OutputName} ×{production.OutputQuantity:N0}"));
+            output.Add(new HermesAssistantAlertSummary(
+                "production-complete|" + string.Join("|", completed.Select(production =>
+                    $"{production.StationName}:{production.OutputTemplateId}:{production.OutputQuantity}")),
+                "production-complete",
+                "Information",
+                "Hideout",
+                $"Hideout: {completed.Count:N0} production(s) ready",
+                $"{completed.Count:N0} completed production(s) can be collected: {names}.",
+                "Hideout",
+                completed.Count,
+                1));
+        }
+
+        if (hideout.ReadyAreaCount > 0)
+        {
+            var readyAreas = hideout.Areas
+                .Where(area => area.Status.Contains("ready", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(area => area.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .Select(area => area.TargetLevel.HasValue
+                    ? $"{area.Name} level {area.TargetLevel.Value}"
+                    : area.Name)
+                .ToList();
+            output.Add(new HermesAssistantAlertSummary(
+                "hideout-ready|" + string.Join("|", readyAreas),
+                "hideout-ready",
+                "Information",
+                "Hideout",
+                $"Hideout: {hideout.ReadyAreaCount:N0} upgrade(s) ready",
+                readyAreas.Count > 0
+                    ? $"{hideout.ReadyAreaCount:N0} area(s) are ready: {string.Join(", ", readyAreas)}."
+                    : $"{hideout.ReadyAreaCount:N0} hideout area(s) are ready to upgrade.",
+                "Hideout",
+                hideout.ReadyAreaCount,
+                1));
+        }
+    }
+
+    private static void AddCraftAlerts(
+        HermesCraftsResponse crafts,
+        ICollection<HermesAssistantAlertSummary> output)
+    {
+        if (!crafts.Found)
+        {
+            return;
+        }
+
+        var best = crafts.Crafts
+            .Where(craft => craft.CanStartNow
+                            && !craft.IsActive
+                            && !craft.IsComplete
+                            && craft.EstimatedBestSaleProfit > 0)
+            .OrderByDescending(craft => craft.EstimatedBestSaleProfitPerHour)
+            .ThenByDescending(craft => craft.EstimatedBestSaleProfit)
+            .FirstOrDefault();
+        if (best is null)
+        {
+            return;
+        }
+
+        var sale = string.Equals(best.BestSaleSource, "Flea Market", StringComparison.OrdinalIgnoreCase)
+            ? "sell on Flea"
+            : string.IsNullOrWhiteSpace(best.BestSaleSource)
+              || string.Equals(best.BestSaleSource, "No available buyer", StringComparison.OrdinalIgnoreCase)
+                ? "no available buyer"
+                : $"sell to {best.BestSaleSource}";
+        output.Add(new HermesAssistantAlertSummary(
+            $"craft-ready|{best.CraftKey}",
+            "craft-ready",
+            "Information",
+            "Crafts",
+            $"Craft ready: {best.OutputName}",
+            $"{best.StationName} • {sale} • estimated profit ₽{best.EstimatedBestSaleProfit:N0} (₽{best.EstimatedBestSaleProfitPerHour:N0}/h).",
+            "Crafts",
+            best.EstimatedBestSaleProfit,
+            1));
+    }
+
+    private static void AddStashAlerts(
+        HermesStashSummaryResponse stash,
+        ICollection<HermesAssistantAlertSummary> output)
+    {
+        if (!stash.Found)
+        {
+            return;
+        }
+
+        if (stash.CleanupCandidateInstanceCount > 0 && stash.CleanupBestSaleValue > 0)
+        {
+            output.Add(new HermesAssistantAlertSummary(
+                $"stash-cleanup|{stash.CleanupCandidateInstanceCount}|{stash.RecoverableCells}",
+                "stash-cleanup",
+                "Information",
+                "Stash",
+                $"Stash: {stash.CleanupCandidateInstanceCount:N0} cleanup item(s)",
+                $"{stash.CleanupCandidateInstanceCount:N0} cleanup candidate(s) could recover {stash.RecoverableCells:N0} cells and about ₽{stash.CleanupBestSaleValue:N0}.",
+                "Stash",
+                stash.CleanupBestSaleValue,
+                1));
+            return;
+        }
+
+        if (stash.SafeToSellInstanceCount > 0 && stash.PotentialBestSaleValue > 0)
+        {
+            output.Add(new HermesAssistantAlertSummary(
+                $"stash-surplus|{stash.SafeToSellInstanceCount}|{Math.Round(stash.PotentiallySellQuantity, 2)}",
+                "stash-surplus",
+                "Information",
+                "Stash",
+                $"Stash: {stash.SafeToSellInstanceCount:N0} surplus item(s)",
+                $"{stash.SafeToSellInstanceCount:N0} item instance(s) are potentially sellable for about ₽{stash.PotentialBestSaleValue:N0} after reservations.",
+                "Stash",
+                stash.PotentialBestSaleValue,
+                1));
+        }
+    }
+
+    private static int AssistantSeverityRank(string severity)
+        => severity.Trim().ToLowerInvariant() switch
+        {
+            "critical" or "error" => 3,
+            "warning" => 2,
+            _ => 1
+        };
 
     public HermesChangesResponse GetChanges(MongoId sessionId, long knownRevision)
     {
@@ -257,6 +623,7 @@ public sealed class HermesChangeTrackingService(
 
             if (_activeScopeBySession.TryUpdate(sessionKey, scope.ScopeKey, previousScopeKey))
             {
+                _preparedAssistantSnapshots.TryRemove(previousScopeKey, out _);
                 if (_sessions.TryRemove(previousScopeKey, out var previousState))
                 {
                     lock (previousState.Sync)
@@ -274,6 +641,7 @@ public sealed class HermesChangeTrackingService(
 
     private void RetireScope(HermesProfileScope scope, string reason)
     {
+        _preparedAssistantSnapshots.TryRemove(scope.ScopeKey, out _);
         if (_sessions.TryRemove(scope.ScopeKey, out var state))
         {
             lock (state.Sync)
@@ -292,9 +660,17 @@ public sealed class HermesChangeTrackingService(
 
     public void MarkAllSessionsDirty(string? reason = null)
     {
+        preparedProfiles.Clear();
+        _preparedAssistantSnapshots.Clear();
         var normalizedReason = string.IsNullOrWhiteSpace(reason)
             ? "Manual HERMES refresh"
             : reason.Trim();
+
+        hideoutService.InvalidateMaterializedSummaries(
+            reason: normalizedReason);
+        stashAnalysisService.Clear(normalizedReason);
+        loadoutService.Clear(normalizedReason);
+        cacheService.Clear(normalizedReason);
 
         foreach (var state in _sessions.Values)
         {
@@ -307,8 +683,69 @@ public sealed class HermesChangeTrackingService(
         }
     }
 
+    public HermesRecheckResponse InvalidatePreparedWorkspace(
+        MongoId sessionId,
+        string workspace,
+        string? reason = null)
+    {
+        var scope = profileScopeService.ResolveIdentity(sessionId);
+        if (scope is null)
+        {
+            return new HermesRecheckResponse(
+                false,
+                "HERMES could not resolve the active PMC profile scope.",
+                string.Empty);
+        }
+
+        var normalized = (workspace ?? string.Empty).Trim().ToLowerInvariant();
+        var normalizedReason = string.IsNullOrWhiteSpace(reason)
+            ? $"Manual {workspace} workspace refresh"
+            : reason.Trim();
+
+        switch (normalized)
+        {
+            case "craft":
+            case "crafts":
+                hideoutService.InvalidateMaterializedSummaries(
+                    hideout: false,
+                    crafts: true,
+                    reason: normalizedReason);
+                break;
+            case "stash":
+                stashAnalysisService.Clear(normalizedReason);
+                break;
+            case "loadout":
+            case "raidplanner":
+            case "raid planner":
+                loadoutService.Clear(normalizedReason);
+                break;
+            case "assistant":
+            case "chat":
+                hideoutService.InvalidateMaterializedSummaries(
+                    hideout: true,
+                    crafts: true,
+                    reason: normalizedReason);
+                stashAnalysisService.Clear(normalizedReason);
+                loadoutService.Clear(normalizedReason);
+                break;
+            default:
+                hideoutService.InvalidateMaterializedSummaries(
+                    hideout: true,
+                    crafts: false,
+                    reason: normalizedReason);
+                break;
+        }
+
+        _preparedAssistantSnapshots.TryRemove(scope.ScopeKey, out _);
+        return new HermesRecheckResponse(
+            true,
+            $"The prepared {workspace} workspace response was invalidated.",
+            scope.ContextToken);
+    }
+
     public HermesRecheckResponse RequestRecheck(MongoId sessionId, string? reason = null)
     {
+        profileScopeService.InvalidatePrepared(sessionId);
         var scope = profileScopeService.Resolve(sessionId);
         if (scope is null)
         {
@@ -338,9 +775,13 @@ public sealed class HermesChangeTrackingService(
 
     public void RequestRecheckAllSessions(string? reason = null)
     {
+        preparedProfiles.Clear();
+        _preparedAssistantSnapshots.Clear();
         var normalizedReason = string.IsNullOrWhiteSpace(reason)
             ? "Manual HERMES source recheck"
             : reason.Trim();
+
+        hideoutService.InvalidateMaterializedSummaries(reason: normalizedReason);
 
         foreach (var state in _sessions.Values)
         {
@@ -357,13 +798,16 @@ public sealed class HermesChangeTrackingService(
     private SessionState RefreshState(HermesProfileScope scope, bool forceSlowSources)
     {
         var state = ResolveState(scope);
-        var profileRoot = ParseObject(scope.ProfileJson);
+        var profileRoot = preparedProfiles.Get(scope.SessionId)?.Root
+                          ?? ParseObject(scope.ProfileJson);
         var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var changedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var reasons = new List<string>();
         var clearMarketCache = false;
         var clearStashCache = false;
         var clearLoadoutCache = false;
+        var clearHideoutSummaryCache = false;
+        var clearCraftsSummaryCache = false;
         var resetStaticIndexes = false;
 
         lock (state.Sync)
@@ -438,6 +882,11 @@ public sealed class HermesChangeTrackingService(
 
             clearStashCache = changedDomains.Contains("stash");
             clearLoadoutCache = changedDomains.Contains("loadout") || changedDomains.Contains("raidPlanner");
+            clearHideoutSummaryCache = changedDomains.Contains("hideout");
+            clearCraftsSummaryCache = changedDomains.Contains("crafts")
+                                      || liveMarketChanged
+                                      || staticChanged
+                                      || changedDomains.Contains("market");
             clearMarketCache = liveMarketChanged || staticChanged || changedDomains.Contains("market");
             resetStaticIndexes = staticChanged;
             Advance(state, changedDomains, string.Join("; ", reasons.Distinct(StringComparer.OrdinalIgnoreCase)));
@@ -445,6 +894,14 @@ public sealed class HermesChangeTrackingService(
 
         // Clear derived response caches after the source revision has advanced. These operations do
         // not create a new source revision, so they cannot form an invalidation loop.
+        if (clearHideoutSummaryCache || clearCraftsSummaryCache)
+        {
+            hideoutService.InvalidateMaterializedSummaries(
+                hideout: clearHideoutSummaryCache,
+                crafts: clearCraftsSummaryCache,
+                reason: "HERMES source revision changed");
+        }
+
         if (clearStashCache)
         {
             stashAnalysisService.Clear("HERMES source revision changed");
@@ -501,28 +958,45 @@ public sealed class HermesChangeTrackingService(
 
     private string BuildStaticDatabaseFingerprint()
     {
-        var builder = new StringBuilder(4096);
-        AppendSerialized(builder, "items", databaseService.GetItems());
-        AppendSerialized(builder, "traders", databaseService.GetTraders());
-
-        object? tables = null;
-        try
+        // EFT database tables are immutable after SPT finishes loading mods. Serializing every
+        // item, trader, quest, handbook row, and hideout table on each recheck was one of the
+        // largest avoidable server costs. Compute this fingerprint once for the server lifetime.
+        if (!string.IsNullOrWhiteSpace(_staticDatabaseFingerprint))
         {
-            tables = databaseService.GetTables();
-        }
-        catch
-        {
-            // Individual service accessors above remain sufficient for a safe fallback.
+            return _staticDatabaseFingerprint;
         }
 
-        if (tables is not null)
+        lock (_staticFingerprintSync)
         {
-            AppendSerialized(builder, "handbook", ReadPath(tables, "Templates.Handbook"));
-            AppendSerialized(builder, "quests", ReadPath(tables, "Templates.Quests"));
-            AppendSerialized(builder, "hideout", ReadPath(tables, "Hideout"));
-        }
+            if (!string.IsNullOrWhiteSpace(_staticDatabaseFingerprint))
+            {
+                return _staticDatabaseFingerprint;
+            }
 
-        return Hash(builder.ToString());
+            var builder = new StringBuilder(4096);
+            AppendSerialized(builder, "items", databaseService.GetItems());
+            AppendSerialized(builder, "traders", databaseService.GetTraders());
+
+            object? tables = null;
+            try
+            {
+                tables = databaseService.GetTables();
+            }
+            catch
+            {
+                // Individual service accessors above remain sufficient for a safe fallback.
+            }
+
+            if (tables is not null)
+            {
+                AppendSerialized(builder, "handbook", ReadPath(tables, "Templates.Handbook"));
+                AppendSerialized(builder, "quests", ReadPath(tables, "Templates.Quests"));
+                AppendSerialized(builder, "hideout", ReadPath(tables, "Hideout"));
+            }
+
+            _staticDatabaseFingerprint = Hash(builder.ToString());
+            return _staticDatabaseFingerprint;
+        }
     }
 
     private string BuildLiveMarketFingerprint()
@@ -1134,6 +1608,10 @@ public sealed class HermesChangeTrackingService(
         public bool Initialized { get; set; }
         public TaskCompletionSource<bool> ChangeSignal { get; set; } = CreateChangeSignal();
     }
+
+    private sealed record PreparedAssistantFeed(
+        HermesWorkspaceSnapshotResponse Snapshot,
+        IReadOnlyList<HermesAssistantAlertSummary> Alerts);
 
     private sealed record RevisionSnapshot(
         long Revision,
