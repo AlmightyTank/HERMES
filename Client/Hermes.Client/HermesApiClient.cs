@@ -98,7 +98,7 @@ internal static class HermesApiClient
             () => new HermesStashInstancesResponse
             {
                 Found = false,
-                Message = "HERMES returned no stash instances for this item."
+                Message = "HERMES returned no owned copies for this item."
             });
     }
 
@@ -121,9 +121,16 @@ internal static class HermesApiClient
             });
     }
 
-    public static Task<HermesMarketSummaryResponse> GetMarketSummaryAsync(string itemKey)
+    public static Task<HermesMarketSummaryResponse> GetMarketSummaryAsync(
+        string itemKey,
+        string? instanceKey = null)
     {
         var route = "/hermes/market/" + Uri.EscapeDataString(itemKey);
+        if (!string.IsNullOrWhiteSpace(instanceKey))
+        {
+            route += "/" + Uri.EscapeDataString(instanceKey);
+        }
+
         return GetDataAsync(
             route,
             () => new HermesMarketSummaryResponse

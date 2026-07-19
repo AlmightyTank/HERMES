@@ -49,6 +49,20 @@ internal sealed class HermesAssistantPanel
         public int Score { get; init; }
     }
 
+    private sealed class QuestionCategory
+    {
+        public QuestionCategory(string name, string guidance, params string[] examples)
+        {
+            Name = name;
+            Guidance = guidance;
+            Examples = examples;
+        }
+
+        public string Name { get; }
+        public string Guidance { get; }
+        public IReadOnlyList<string> Examples { get; }
+    }
+
     private static readonly string[] SuggestedPrompts =
     [
         "What should I do next?",
@@ -58,6 +72,30 @@ internal sealed class HermesAssistantPanel
         "What items can I safely sell?",
         "What crafts are ready now?",
         "What hideout upgrades need attention?"
+    ];
+
+    private static readonly QuestionCategory[] QuestionCategories =
+    [
+        new("NEXT STEPS", "Ask HERMES to compare systems and rank what matters now.",
+            "What should I do next?",
+            "Should I craft or raid?",
+            "How should I prepare for Ground Zero?"),
+        new("RAIDS & LOADOUT", "Name a map or ask about a specific readiness concern.",
+            "What is the best raid for me right now?",
+            "Am I ready for Customs?",
+            "What should I fix in my loadout first?"),
+        new("STASH & ITEMS", "Use an exact item name, or select an item and say ‘this item’.",
+            "What items can I safely sell?",
+            "What is this item worth?",
+            "Do I need this item for quests or hideout?"),
+        new("CRAFTS & HIDEOUT", "Name an output, station, or hideout area for a focused answer.",
+            "What crafts are ready now?",
+            "What can I craft at the workbench?",
+            "What hideout upgrades need attention?"),
+        new("FOLLOW-UPS", "After HERMES resolves a subject, short follow-ups keep that context.",
+            "Why?",
+            "What key do I need?",
+            "Where do I use it?")
     ];
 
     private static GUIStyle? _messageStyle;
@@ -72,6 +110,8 @@ internal sealed class HermesAssistantPanel
     private int _requestVersion;
     private bool _scrollToBottom;
     private string _profileContextToken = string.Empty;
+    private bool _showQuestionGuide;
+    private int _questionCategoryIndex;
 
     public HermesAssistantPanel()
     {
@@ -245,6 +285,25 @@ internal sealed class HermesAssistantPanel
         }
 
         GUILayout.BeginHorizontal();
+        if (GUILayout.Button(
+                _showQuestionGuide ? "Hide question guide" : "What can I ask?",
+                GUILayout.Width(145f),
+                GUILayout.Height(HermesUi.ToolbarHeight)))
+        {
+            _showQuestionGuide = !_showQuestionGuide;
+        }
+        GUILayout.Label(
+            "Ask naturally; include the item, map, quest, craft, station, or hideout area when you want a specific answer.",
+            GUILayout.ExpandWidth(true));
+        GUILayout.EndHorizontal();
+
+        if (_showQuestionGuide)
+        {
+            DrawQuestionGuide();
+            GUILayout.Space(HermesUi.SmallSpace);
+        }
+
+        GUILayout.BeginHorizontal();
         GUI.SetNextControlName("HermesAssistantInput");
         _input = GUILayout.TextField(
             _input,
@@ -277,6 +336,39 @@ internal sealed class HermesAssistantPanel
             Event.current.Use();
             _ = SubmitPromptAsync(prompt, selectedItem, selectedInstanceKey, true);
         }
+    }
+
+    private void DrawQuestionGuide()
+    {
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.Label("QUESTION GUIDE — choose a category, then click an example to edit or ask it");
+
+        GUILayout.BeginHorizontal();
+        for (var index = 0; index < QuestionCategories.Length; index++)
+        {
+            var category = QuestionCategories[index];
+            GUI.enabled = index != _questionCategoryIndex;
+            if (GUILayout.Button(category.Name, GUILayout.Height(HermesUi.ToolbarHeight), GUILayout.ExpandWidth(true)))
+            {
+                _questionCategoryIndex = index;
+            }
+        }
+        GUI.enabled = true;
+        GUILayout.EndHorizontal();
+
+        var selectedCategory = QuestionCategories[_questionCategoryIndex];
+        GUILayout.Label(selectedCategory.Guidance);
+        GUILayout.BeginHorizontal();
+        foreach (var example in selectedCategory.Examples)
+        {
+            if (GUILayout.Button(example, GUILayout.Height(HermesUi.ToolbarHeight), GUILayout.ExpandWidth(true)))
+            {
+                _input = example;
+                GUI.FocusControl("HermesAssistantInput");
+            }
+        }
+        GUILayout.EndHorizontal();
+        GUILayout.EndVertical();
     }
 
     private static IEnumerable<string> GetSuggestedPrompts(HermesItemSummary? selectedItem)
@@ -477,7 +569,9 @@ internal sealed class HermesAssistantPanel
             "• Hideout upgrades, missing materials, active production, and available crafts",
             "• Selected-item trader, flea, quest, hideout, and crafting use",
             string.Empty,
-            "HERMES also remembers resolved items, quests, maps, crafts, stations, and hideout areas for follow-up questions. You can ask \"why?\", \"what key?\", \"where do I use it?\", or choose an ambiguity result with \"the second one\". It does not buy, sell, insure, equip, move, craft, or complete anything."
+            "How to ask: use natural questions. Include an exact item, map, quest, craft, station, or hideout-area name when you want a focused answer. Select an item before asking about \"this item\".",
+            string.Empty,
+            "HERMES remembers resolved items, quests, maps, crafts, stations, and hideout areas for follow-up questions. You can ask \"why?\", \"what key?\", \"where do I use it?\", or choose an ambiguity result with \"the second one\". Open the question guide below the conversation for categorized examples. HERMES does not buy, sell, insure, equip, move, craft, or complete anything."
         ]);
 
         return new AssistantMessage(
@@ -1562,7 +1656,9 @@ internal sealed class HermesAssistantPanel
         var traderTask = HermesApiClient.GetTraderSummaryAsync(
             item.ItemKey,
             useSelectedInstance ? selectedInstanceKey : null);
-        var marketTask = HermesApiClient.GetMarketSummaryAsync(item.ItemKey);
+        var marketTask = HermesApiClient.GetMarketSummaryAsync(
+            item.ItemKey,
+            useSelectedInstance ? selectedInstanceKey : null);
         var usageTask = HermesApiClient.GetItemHideoutUsageAsync(item.ItemKey);
         await Task.WhenAll(traderTask, marketTask, usageTask);
 

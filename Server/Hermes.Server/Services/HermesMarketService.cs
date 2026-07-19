@@ -34,6 +34,7 @@ public sealed class HermesMarketService(
     ItemHelper itemHelper,
     HermesCatalogService catalogService,
     HermesTraderService traderService,
+    HermesStashService stashService,
     HermesMarketPriceService marketPriceService,
     HermesCacheService cacheService)
 {
@@ -46,7 +47,10 @@ public sealed class HermesMarketService(
     private static readonly MongoId DollarsTpl = new("5696686a4bdc2da3298b456a");
     private static readonly MongoId EurosTpl = new("569668774bdc2da2298b4568");
 
-    public HermesMarketSummaryResponse GetSummary(string? itemKey, MongoId sessionId)
+    public HermesMarketSummaryResponse GetSummary(
+        string? itemKey,
+        MongoId sessionId,
+        string? instanceKey = null)
     {
         var item = catalogService.ResolveItem(itemKey);
         if (item is null)
@@ -60,7 +64,11 @@ public sealed class HermesMarketService(
             return NotFound(item.ItemKey, "HERMES could not read the active PMC profile.");
         }
 
-        if (cacheService.TryGetMarketSummary(item.ItemKey, sessionId, out var cachedSummary))
+        var selectedInstance = stashService.ResolveSelectedInstance(item.ItemKey, instanceKey, sessionId);
+        var useSelectedInstance = selectedInstance is not null;
+
+        if (!useSelectedInstance
+            && cacheService.TryGetMarketSummary(item.ItemKey, sessionId, out var cachedSummary))
         {
             return cachedSummary;
         }
@@ -78,7 +86,7 @@ public sealed class HermesMarketService(
             requiredPlayerLevel,
             canSellOnFlea);
 
-        var traderSummary = traderService.GetSummary(item.ItemKey, null, sessionId);
+        var traderSummary = traderService.GetSummary(item.ItemKey, instanceKey, sessionId);
         var bestTraderSell = traderSummary.BestSellOffer;
         var cheapestTraderBuy = FindCheapestAvailableCashTraderOffer(traderSummary.PurchaseOffers);
 
@@ -259,6 +267,10 @@ public sealed class HermesMarketService(
             ? Math.Max(1L, lowestPrice.Value - SuggestedUndercutAmount)
             : null;
 
+        long? selectedRootValue = null;
+        long? selectedChildValue = null;
+        long? selectedReferenceValue = null;
+
         long? estimatedFee = null;
         long? estimatedNet = null;
         if (suggestedListPrice.HasValue && withoutOutliers.Count > 0 && canSellOnFlea && fleaUnlocked)
@@ -278,6 +290,31 @@ public sealed class HermesMarketService(
             {
                 // Keep the market statistics even if a fee estimate cannot be produced.
             }
+        }
+
+        if (selectedInstance is not null
+            && suggestedListPrice.HasValue
+            && estimatedFee.HasValue
+            && canSellOnFlea
+            && fleaUnlocked)
+        {
+            var selectedFleaEstimate = BuildSelectedOwnedCopyFleaEstimate(
+                selectedInstance.Components,
+                suggestedListPrice.Value,
+                estimatedFee.Value);
+            if (selectedFleaEstimate is not null)
+            {
+                suggestedListPrice = selectedFleaEstimate.Value.SuggestedListPrice;
+                estimatedFee = selectedFleaEstimate.Value.EstimatedListingFee;
+                estimatedNet = selectedFleaEstimate.Value.EstimatedNetSale;
+            }
+        }
+
+        if (selectedInstance is not null)
+        {
+            selectedRootValue = selectedInstance.Summary.RootConditionAdjustedReferenceValue;
+            selectedChildValue = selectedInstance.Summary.InstalledComponentReferenceValue;
+            selectedReferenceValue = selectedInstance.Summary.ConditionAdjustedReferenceValue;
         }
 
         var buyRecommendation = BuildBuyRecommendation(
@@ -355,12 +392,72 @@ public sealed class HermesMarketService(
             cheapestTraderBuy?.TraderName,
             bestTraderSell?.RoubleEquivalent,
             bestTraderSell?.TraderName,
+            useSelectedInstance,
+            selectedInstance?.Summary.InstanceKey,
+            selectedInstance?.Summary.Label,
+            selectedInstance?.Summary.Location,
+            selectedRootValue,
+            selectedChildValue,
+            selectedReferenceValue,
             buyRecommendation,
             sellRecommendation,
             samples);
 
-        cacheService.SetMarketSummary(item.ItemKey, sessionId, response, cacheGeneration);
+        if (!useSelectedInstance)
+        {
+            cacheService.SetMarketSummary(item.ItemKey, sessionId, response, cacheGeneration);
+        }
+
         return response;
+    }
+
+    private (long SuggestedListPrice, long EstimatedListingFee, long EstimatedNetSale)? BuildSelectedOwnedCopyFleaEstimate(
+        IReadOnlyList<HermesTraderSaleComponent> components,
+        long baseSuggestedListPrice,
+        long baseEstimatedListingFee)
+    {
+        var root = components.FirstOrDefault(component => component.Kind == HermesSaleComponentKind.Root);
+        if (root is null)
+        {
+            return null;
+        }
+
+        var rootReference = catalogService.GetReferencePrice(root.TemplateId);
+        if (rootReference is null or <= 0)
+        {
+            return null;
+        }
+
+        var estimatedListValue = baseSuggestedListPrice
+                                 * Math.Max(0d, root.ConditionAdjustedReferenceValue / (double)rootReference.Value);
+        var componentCache = new Dictionary<string, HermesMarketUnitValuation>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var component in components.Where(component => component.Kind != HermesSaleComponentKind.Root))
+        {
+            var referencePrice = catalogService.GetReferencePrice(component.TemplateId);
+            if (referencePrice is null or <= 0)
+            {
+                continue;
+            }
+
+            var marketValue = marketPriceService.GetBestUnitValue(component.TemplateId, componentCache);
+            if (marketValue.UnitValue <= 0L)
+            {
+                continue;
+            }
+
+            var conditionMultiplier = Math.Max(0d, component.ConditionAdjustedReferenceValue / (double)referencePrice.Value);
+            estimatedListValue += marketValue.UnitValue * conditionMultiplier;
+        }
+
+        var suggestedListPrice = Math.Max(1L, Convert.ToInt64(Math.Round(estimatedListValue)));
+        var baseFeeRatio = baseSuggestedListPrice > 0L
+            ? Math.Clamp(baseEstimatedListingFee / (double)baseSuggestedListPrice, 0d, 0.95d)
+            : 0d;
+        var estimatedFee = Math.Max(0L, Convert.ToInt64(Math.Round(suggestedListPrice * baseFeeRatio)));
+        var estimatedNet = Math.Max(0L, suggestedListPrice - estimatedFee);
+
+        return (suggestedListPrice, estimatedFee, estimatedNet);
     }
 
     internal HermesCraftFleaValuation GetCraftEstimate(
@@ -1068,6 +1165,13 @@ public sealed class HermesMarketService(
             null,
             null,
             null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            false,
             null,
             null,
             null,

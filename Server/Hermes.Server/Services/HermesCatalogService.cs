@@ -70,6 +70,7 @@ public sealed class HermesCatalogService(
                 "handbook-reference-price",
                 "trader-buy-and-sell-intelligence",
                 "selected-stash-instance-trader-valuation",
+                "assembled-item-search-reference-valuation",
                 "ask-hermes-inventory-context-action",
                 "ask-hermes-trader-and-flea-preview-context-action",
                 "player-loyalty-awareness",

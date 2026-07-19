@@ -82,13 +82,13 @@ public sealed class HermesTraderService(
 
         var instanceSummary = selectedInstance?.Summary;
         var salePriceBasis = instanceSummary is null
-            ? "This estimate assumes a full-condition base item. Select one of your stash copies above to include its current condition and installed parts."
-            : $"Using {instanceSummary.Label}: root ₽{instanceSummary.RootConditionAdjustedReferenceValue:N0} plus installed parts ₽{instanceSummary.InstalledComponentReferenceValue:N0}. Each trader only pays for installed parts it accepts.";
+            ? "This estimate assumes a full-condition base item. Select one of your owned copies above to include its current condition and installed child-item value."
+            : $"Using {instanceSummary.Label} from {instanceSummary.Location}: root RUB {instanceSummary.RootConditionAdjustedReferenceValue:N0} plus child items RUB {instanceSummary.InstalledComponentReferenceValue:N0}. Each trader only pays for child items it accepts.";
 
         return new HermesTraderSummaryResponse(
             true,
             selectedInstance is null && !string.IsNullOrWhiteSpace(instanceKey)
-                ? "The selected stash copy is no longer available. HERMES returned the base-item estimate instead."
+                ? "The selected owned copy is no longer available. HERMES returned the base-item estimate instead."
                 : null,
             item.ItemKey,
             item.Name,
@@ -124,7 +124,7 @@ public sealed class HermesTraderService(
         }
 
         // Craft profitability only needs the best trader purchase value for a pristine base
-        // output. Avoid building trader purchase assortments, stash instances, and item-detail
+        // output. Avoid building trader purchase assortments, owned-copy models, and item-detail
         // view models for every unique craft output.
         return GetBestSellOfferForComponents(
             itemTpl,

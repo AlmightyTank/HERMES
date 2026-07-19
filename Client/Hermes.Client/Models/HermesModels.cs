@@ -90,6 +90,7 @@ public sealed class HermesStashInstanceSummary
 {
     public string InstanceKey { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
+    public string Location { get; set; } = string.Empty;
     public double Quantity { get; set; }
     public int ConditionPercent { get; set; }
     public string ConditionDescription { get; set; } = string.Empty;
@@ -228,6 +229,13 @@ public sealed class HermesMarketSummaryResponse
     public string? CheapestAvailableTraderName { get; set; }
     public long? BestTraderSellPrice { get; set; }
     public string? BestTraderSellName { get; set; }
+    public bool UsesSelectedOwnedCopy { get; set; }
+    public string? SelectedOwnedCopyKey { get; set; }
+    public string? SelectedOwnedCopyLabel { get; set; }
+    public string? SelectedOwnedCopyLocation { get; set; }
+    public long? SelectedOwnedCopyRootValue { get; set; }
+    public long? SelectedOwnedCopyChildValue { get; set; }
+    public long? SelectedOwnedCopyReferenceValue { get; set; }
     public string BuyRecommendation { get; set; } = string.Empty;
     public string SellRecommendation { get; set; } = string.Empty;
     public List<HermesFleaOfferSample> LowestOffers { get; set; } = [];

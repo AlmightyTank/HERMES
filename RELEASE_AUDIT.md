@@ -56,7 +56,7 @@ The audit checked project XML, source delimiter structure, unfinished markers, s
 
 ## RC.2.4.1 Items & Market information-density review
 
-- Confirmed Stash Instance Pricing is collapsible in both native and legacy presentations.
+- Confirmed Owned Copy Pricing is collapsible in both native and legacy presentations.
 - Confirmed no-owned-copy, no-offer, no-market-value, completed-only quest/key, and no-current-use sections start collapsed.
 - Confirmed compact headers preserve the most useful conclusion while expanded content remains available on demand.
 - Confirmed useful sections continue to respect the existing F12 expansion defaults.

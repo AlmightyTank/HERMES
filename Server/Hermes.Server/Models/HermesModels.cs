@@ -80,6 +80,7 @@ public sealed record HermesStashInstanceSelectionResponse(
 public sealed record HermesStashInstanceSummary(
     string InstanceKey,
     string Label,
+    string Location,
     double Quantity,
     int ConditionPercent,
     string ConditionDescription,
@@ -206,6 +207,13 @@ public sealed record HermesMarketSummaryResponse(
     string? CheapestAvailableTraderName,
     long? BestTraderSellPrice,
     string? BestTraderSellName,
+    bool UsesSelectedOwnedCopy,
+    string? SelectedOwnedCopyKey,
+    string? SelectedOwnedCopyLabel,
+    string? SelectedOwnedCopyLocation,
+    long? SelectedOwnedCopyRootValue,
+    long? SelectedOwnedCopyChildValue,
+    long? SelectedOwnedCopyReferenceValue,
     string BuyRecommendation,
     string SellRecommendation,
     IReadOnlyList<HermesFleaOfferSample> LowestOffers);

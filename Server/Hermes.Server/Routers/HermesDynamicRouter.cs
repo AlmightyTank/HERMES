@@ -160,8 +160,11 @@ public sealed class HermesDynamicRouter(
                 "/hermes/market/",
                 (url, _, sessionId, _) =>
                 {
-                    var itemKey = GetTail(url, "/hermes/market/");
-                    var response = marketService.GetSummary(itemKey, sessionId);
+                    var tail = GetTail(url, "/hermes/market/");
+                    var segments = tail.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var itemKey = segments.ElementAtOrDefault(0);
+                    var instanceKey = segments.ElementAtOrDefault(1);
+                    var response = marketService.GetSummary(itemKey, sessionId, instanceKey);
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(

@@ -246,7 +246,7 @@ internal sealed class HermesWindow
             _query = response.Item.Name;
             _results = [response.Item];
             _status = $"Selected {sourceLabel} preview: {response.Item.Name}.";
-            await SelectItemAsync(response.Item, null, false);
+            await SelectItemAsync(response.Item);
         }
         catch (Exception ex)
         {
@@ -800,15 +800,25 @@ internal sealed class HermesWindow
     private void DrawResultButton(HermesItemSummary item)
     {
         var selected = _selectedItem?.ItemKey == item.ItemKey;
+        var selectedInstance = selected ? GetSelectedStashInstance() : null;
+        var displayedValue = selectedInstance is { ConditionAdjustedReferenceValue: > 0 }
+            ? selectedInstance.ConditionAdjustedReferenceValue
+            : item.ReferencePrice;
+        var displayedLabel = selectedInstance switch
+        {
+            { ChildItemCount: > 0 } => "Assembled",
+            not null => "Instance",
+            _ => "Handbook"
+        };
         var lines = new List<string> { (selected ? "▶ " : string.Empty) + item.Name };
         if (Plugin.Settings.ShowItemShortNames.Value
             && !string.Equals(item.Name, item.ShortName, StringComparison.OrdinalIgnoreCase))
         {
             lines.Add(item.ShortName);
         }
-        if (Plugin.Settings.ShowItemReferencePrices.Value && item.ReferencePrice.HasValue)
+        if (Plugin.Settings.ShowItemReferencePrices.Value && displayedValue.HasValue)
         {
-            lines.Add($"Handbook ₽{item.ReferencePrice.Value:N0}");
+            lines.Add($"{displayedLabel} ₽{displayedValue.Value:N0}");
         }
 
         if (GUILayout.Button(string.Join("\n", lines), GUILayout.MinHeight(lines.Count >= 3 ? 62f : 48f), GUILayout.ExpandWidth(true)))
@@ -866,7 +876,7 @@ internal sealed class HermesWindow
         GUILayout.EndVertical();
     }
 
-    private static void DrawSelectedItemOverview(HermesItemSummary item)
+    private void DrawSelectedItemOverview(HermesItemSummary item)
     {
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.Label(item.Name);
@@ -879,12 +889,36 @@ internal sealed class HermesWindow
 
         if (Plugin.Settings.ShowItemReferencePrices.Value)
         {
-            GUILayout.Label(item.ReferencePrice.HasValue
-                ? $"Handbook reference: ₽{item.ReferencePrice.Value:N0}"
-                : "Handbook reference: unavailable");
+            var selectedInstance = GetSelectedStashInstance();
+            if (selectedInstance is { ChildItemCount: > 0 })
+            {
+                GUILayout.Label($"Assembled reference value: ₽{selectedInstance.ConditionAdjustedReferenceValue:N0}");
+                GUILayout.Label($"Root ₽{selectedInstance.RootConditionAdjustedReferenceValue:N0} + child items ₽{selectedInstance.InstalledComponentReferenceValue:N0} ({selectedInstance.ChildItemCount:N0} child item(s)).");
+            }
+            else if (selectedInstance is not null)
+            {
+                GUILayout.Label($"Selected-instance reference value: ₽{selectedInstance.ConditionAdjustedReferenceValue:N0}");
+            }
+            else
+            {
+                GUILayout.Label(item.ReferencePrice.HasValue
+                    ? $"Handbook reference: ₽{item.ReferencePrice.Value:N0}"
+                    : "Handbook reference: unavailable");
+            }
         }
         GUILayout.Label("Current quest, hideout, and crafting progress is shown below from the active PMC profile.");
         GUILayout.EndVertical();
+    }
+
+    private HermesStashInstanceSummary? GetSelectedStashInstance()
+    {
+        if (string.IsNullOrWhiteSpace(_selectedStashInstanceKey))
+        {
+            return null;
+        }
+
+        return _stashInstances.FirstOrDefault(instance =>
+            string.Equals(instance.InstanceKey, _selectedStashInstanceKey, StringComparison.OrdinalIgnoreCase));
     }
 
     private void DrawStashInstanceSection()
@@ -896,10 +930,10 @@ internal sealed class HermesWindow
         var selectedLabel = _selectedStashInstanceKey is null
             ? "Base item estimate"
             : _stashInstances.FirstOrDefault(instance => instance.InstanceKey == _selectedStashInstanceKey)?.Label
-              ?? "Selected stash copy";
+              ?? "Selected owned copy";
 
         if (GUILayout.Button(
-                $"{arrow}  STASH COPY FOR TRADER SALE — {selectedLabel}",
+                $"{arrow}  OWNED COPY FOR TRADER SALE — {selectedLabel}",
                 GUILayout.Height(30f),
                 GUILayout.ExpandWidth(true)))
         {
@@ -908,13 +942,13 @@ internal sealed class HermesWindow
 
         if (_loadingInstancePrice)
         {
-            GUILayout.Label("Recalculating trader prices for the selected stash copy...");
+            GUILayout.Label("Recalculating trader prices for the selected owned copy...");
         }
 
         if (_stashInstancesExpanded)
         {
             GUILayout.Space(4f);
-            GUILayout.Label("Select the exact stash copy HERMES should value.");
+            GUILayout.Label("Select the exact owned copy HERMES should value. Root and child-item value are included in trader sale estimates.");
 
             GUI.enabled = !_loadingInstancePrice && !_loadingDetails;
             var baseSelected = _selectedStashInstanceKey is null;
@@ -933,7 +967,7 @@ internal sealed class HermesWindow
                     _selectedStashInstanceKey,
                     StringComparison.OrdinalIgnoreCase);
                 var valueText = instance.ConditionAdjustedReferenceValue > 0
-                    ? $" • root ₽{instance.RootConditionAdjustedReferenceValue:N0} + installed ₽{instance.InstalledComponentReferenceValue:N0}"
+                    ? $" - {instance.Location} - root RUB {instance.RootConditionAdjustedReferenceValue:N0} + child items RUB {instance.InstalledComponentReferenceValue:N0}"
                     : string.Empty;
 
                 if (GUILayout.Button(
@@ -950,8 +984,8 @@ internal sealed class HermesWindow
             if (_stashInstances.Count == 0)
             {
                 GUILayout.Label(_loadingDetails
-                    ? "Loading matching stash copies..."
-                    : "No matching copy is currently stored in the PMC stash. The base-item estimate is being used.");
+                    ? "Loading matching owned copies..."
+                    : "No matching owned copy is currently in the active PMC inventory. The base-item estimate is being used.");
             }
         }
 
@@ -1027,7 +1061,7 @@ internal sealed class HermesWindow
     {
         GUILayout.BeginVertical(GUI.skin.box);
         GUILayout.Label(summary.UsesSelectedStashInstance
-            ? "BEST SALE — SELECTED STASH COPY"
+            ? "BEST SALE — SELECTED OWNED COPY"
             : "BEST SALE — BASE ITEM");
 
         var best = summary.BestSellOffer;
@@ -1206,7 +1240,8 @@ internal sealed class HermesWindow
             var net = summary.EstimatedNetSale.HasValue
                 ? $"₽{summary.EstimatedNetSale.Value:N0}"
                 : "unavailable";
-            GUILayout.Label($"Suggested list: {suggested} • Fee: {fee} • Net: {net}");
+            var basis = summary.UsesSelectedOwnedCopy ? "selected copy" : "base item";
+            GUILayout.Label($"Suggested {basis} list: {suggested} - Fee: {fee} - Net: {net}");
         }
 
         GUILayout.Label(summary.LowestPrice.HasValue
@@ -1332,15 +1367,20 @@ internal sealed class HermesWindow
         }
         else
         {
-            GUILayout.Label($"Suggested base-item listing price: ₽{summary.SuggestedListPrice.Value:N0}");
+            var saleBasis = summary.UsesSelectedOwnedCopy ? "selected-copy" : "base-item";
+            GUILayout.Label($"Suggested {saleBasis} listing price: RUB {summary.SuggestedListPrice.Value:N0}");
+            if (summary.UsesSelectedOwnedCopy)
+            {
+                GUILayout.Label($"Selected copy: {summary.SelectedOwnedCopyLabel} - {summary.SelectedOwnedCopyLocation} - root RUB {summary.SelectedOwnedCopyRootValue.GetValueOrDefault():N0} + child items RUB {summary.SelectedOwnedCopyChildValue.GetValueOrDefault():N0}");
+            }
             if (Plugin.Settings.ShowListingFeeEstimates.Value)
             {
                 GUILayout.Label(summary.EstimatedListingFee.HasValue
                     ? $"Estimated listing fee: ₽{summary.EstimatedListingFee.Value:N0}"
                     : "Estimated listing fee: unavailable");
                 GUILayout.Label(summary.EstimatedNetSale.HasValue
-                    ? $"Estimated base-item net sale: ₽{summary.EstimatedNetSale.Value:N0}"
-                    : "Estimated base-item net sale: unavailable");
+                    ? $"Estimated {saleBasis} net sale: ₽{summary.EstimatedNetSale.Value:N0}"
+                    : $"Estimated {saleBasis} net sale: unavailable");
             }
         }
 
@@ -2163,7 +2203,9 @@ internal sealed class HermesWindow
             var traderTask = HermesApiClient.GetTraderSummaryAsync(
                 item.ItemKey,
                 _selectedStashInstanceKey);
-            var marketTask = HermesApiClient.GetMarketSummaryAsync(item.ItemKey);
+            var marketTask = HermesApiClient.GetMarketSummaryAsync(
+                item.ItemKey,
+                _selectedStashInstanceKey);
             var usageTask = HermesApiClient.GetItemHideoutUsageAsync(item.ItemKey);
 
             try
@@ -2234,11 +2276,11 @@ internal sealed class HermesWindow
                 ApplySmartItemSectionCollapse();
                 _detailStatus = !selectFirstMatchingStashInstance
                     ? _stashInstances.Count > 0
-                        ? "Preview analysis uses the full-condition base item. Matching stash copies are available in the selector below."
-                        : "Preview analysis uses the full-condition base item. No matching stash copy is currently owned."
+                        ? "Preview analysis uses the full-condition base item. Matching owned copies are available in the selector below."
+                        : "Preview analysis uses the full-condition base item. No matching owned copy is currently in the active PMC inventory."
                     : _stashInstances.Count > 0
-                        ? "Current profile loaded. Trader sale prices use the selected stash copy; flea data remains a local market comparison."
-                        : "Current profile loaded. No matching stash copy was found, so trader sale prices use the base-item estimate.";
+                        ? "Current profile loaded. Trader sale prices use the selected owned copy; flea data remains a local market comparison."
+                        : "Current profile loaded. No matching owned copy was found, so trader sale prices use the base-item estimate.";
             }
         }
         finally
@@ -2265,11 +2307,14 @@ internal sealed class HermesWindow
         _loadingInstancePrice = true;
         _detailStatus = instanceKey is null
             ? "Restoring the full-condition base-item trader estimate..."
-            : "Calculating trader sale prices for the selected stash copy...";
+            : "Calculating trader sale prices for the selected owned copy...";
 
         try
         {
-            var response = await HermesApiClient.GetTraderSummaryAsync(item.ItemKey, instanceKey);
+            var traderTask = HermesApiClient.GetTraderSummaryAsync(item.ItemKey, instanceKey);
+            var marketTask = HermesApiClient.GetMarketSummaryAsync(item.ItemKey, instanceKey);
+
+            var traderResponse = await traderTask;
             if (requestVersion != _instanceRequestVersion
                 || _selectedItem?.ItemKey != item.ItemKey
                 || !string.Equals(_selectedStashInstanceKey, instanceKey, StringComparison.OrdinalIgnoreCase))
@@ -2277,9 +2322,34 @@ internal sealed class HermesWindow
                 return;
             }
 
-            _traderSummary = response;
-            _detailStatus = response.UsesSelectedStashInstance
-                ? "Trader sale prices now use the selected stash copy."
+            _traderSummary = traderResponse;
+
+            try
+            {
+                var marketResponse = await marketTask;
+                if (requestVersion == _instanceRequestVersion
+                    && _selectedItem?.ItemKey == item.ItemKey
+                    && string.Equals(_selectedStashInstanceKey, instanceKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    _marketSummary = marketResponse;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.Log.LogError(ex);
+                if (requestVersion == _instanceRequestVersion
+                    && _selectedItem?.ItemKey == item.ItemKey)
+                {
+                    _marketSummary = new HermesMarketSummaryResponse
+                    {
+                        Found = false,
+                        Message = HermesApiClient.DescribeFailure(ex, "Selected owned-copy flea pricing")
+                    };
+                }
+            }
+
+            _detailStatus = traderResponse.UsesSelectedStashInstance
+                ? "Trader sale prices now use the selected owned copy."
                 : "Trader sale prices now use the full-condition base-item estimate.";
         }
         catch (Exception ex)
@@ -2288,7 +2358,7 @@ internal sealed class HermesWindow
             if (requestVersion == _instanceRequestVersion
                 && _selectedItem?.ItemKey == item.ItemKey)
             {
-                _detailStatus = HermesApiClient.DescribeFailure(ex, "Selected stash-copy pricing");
+                _detailStatus = HermesApiClient.DescribeFailure(ex, "Selected owned-copy pricing");
             }
         }
         finally

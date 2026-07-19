@@ -662,10 +662,20 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             foreach (var item in _state.SearchResults.Take(MaximumRowsPerSection))
             {
                 var selected = string.Equals(_state.SelectedItem?.ItemKey, item.ItemKey, StringComparison.OrdinalIgnoreCase);
+                var selectedInstance = selected ? _state.SelectedStashInstance : null;
+                var displayedValue = selectedInstance is { ConditionAdjustedReferenceValue: > 0 }
+                    ? selectedInstance.ConditionAdjustedReferenceValue
+                    : item.ReferencePrice;
+                var displayedLabel = selectedInstance switch
+                {
+                    { ChildItemCount: > 0 } => "Assembly",
+                    not null => "Instance",
+                    _ => "Reference"
+                };
                 AddCard(
                     results.Content,
                     item.Name,
-                    $"{item.ShortName} • Reference {Money(item.ReferencePrice)}",
+                    $"{item.ShortName} • {displayedLabel} {Money(displayedValue)}",
                     string.Join(" • ", new[]
                     {
                         item.AppearsInTraderData ? "TRADER" : null,
@@ -695,27 +705,29 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             return;
         }
 
+        var selectedStashInstance = _state.SelectedStashInstance;
         AddSectionHeader(parent, item.Name);
         AddMetricGrid(parent,
             ("SHORT NAME", item.ShortName),
-            ("REFERENCE", Money(item.ReferencePrice)),
-            ("STASH COPIES", _state.StashInstances.Count.ToString("N0")),
+            (_state.DisplayedItemReferenceLabel, Money(_state.DisplayedItemReferenceValue)),
+            ("CHILD VALUE", selectedStashInstance is { ChildItemCount: > 0 }
+                ? Money(selectedStashInstance.InstalledComponentReferenceValue)
+                : "—"),
+            ("OWNED COPIES", _state.StashInstances.Count.ToString("N0")),
             ("PROFILE", _state.StashInstances.Count > 0 ? "OWNED" : "NOT OWNED"));
 
-        var selectedStashInstance = _state.StashInstances.FirstOrDefault(instance =>
-            string.Equals(_state.SelectedStashInstanceKey, instance.InstanceKey, StringComparison.OrdinalIgnoreCase));
         var stashSummary = _state.StashInstances.Count == 0
-            ? "No matching stash copy is owned. Trader pricing uses the full-condition base-item estimate."
+            ? "No matching owned copy is in the active PMC inventory. Trader pricing uses the full-condition base-item estimate."
             : selectedStashInstance is not null
-                ? $"Selected: {selectedStashInstance.Label} • {selectedStashInstance.ConditionPercent}% {selectedStashInstance.ConditionDescription}"
-                : $"{_state.StashInstances.Count:N0} matching stash copy/copies available • base-item estimate selected";
+                ? $"Selected: {selectedStashInstance.Label} • {selectedStashInstance.Location} • {selectedStashInstance.ConditionPercent}% {selectedStashInstance.ConditionDescription}"
+                : $"{_state.StashInstances.Count:N0} matching owned copy/copies available • base-item estimate selected";
         var stashMeta = _state.StashInstances.Count == 0
             ? "NOT OWNED"
             : $"{_state.StashInstances.Count:N0} COPY/COPIES";
         var stashExpanded = AddItemDetailCollapsibleSection(
             parent,
             "stash-pricing",
-            "STASH INSTANCE PRICING",
+            "OWNED COPY PRICING",
             stashSummary,
             stashMeta,
             _state.StashInstances.Count > 0 && !Plugin.Settings.CollapseSectionsByDefault.Value);
@@ -732,7 +744,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 AddCard(
                     parent,
                     instance.Label,
-                    $"{FormatCount(instance.Quantity)} unit(s) • {instance.ConditionPercent}% {instance.ConditionDescription} • {instance.ChildItemCount} installed/contained",
+                    $"{instance.Location} • {FormatCount(instance.Quantity)} unit(s) • {instance.ConditionPercent}% {instance.ConditionDescription} • {instance.ChildItemCount} child item(s)",
                     $"REFERENCE {Money(instance.ConditionAdjustedReferenceValue)}{(instance.FoundInRaid ? " • FIR" : string.Empty)}",
                     () =>
                     {
@@ -786,7 +798,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         var traderMeta = (HasUsefulTraderInfo(summary)
                 ? $"{summary.SellOffers.Count:N0} sale option(s) • {summary.PurchaseOffers.Count:N0} purchase offer(s)"
                 : "NO CURRENT TRADER OFFER")
-                         + (summary.UsesSelectedStashInstance ? " • SELECTED STASH COPY" : " • BASE ITEM");
+                         + (summary.UsesSelectedStashInstance ? " • SELECTED OWNED COPY" : " • BASE ITEM");
 
         var expanded = AddItemDetailCollapsibleSection(
             parent,
@@ -802,14 +814,14 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
         AddMetricGrid(parent,
             ("BEST SALE", bestSale is null ? "NO BUYER" : $"{bestSale.TraderName} • {Money(bestSale.RoubleEquivalent)}"),
-            ("REFERENCE", Money(summary.ReferencePrice)),
+            ("BASE REFERENCE", Money(summary.ReferencePrice)),
             ("PURCHASE OFFERS", summary.PurchaseOffers.Count.ToString("N0")));
 
         AddCard(
             parent,
             "SALE ESTIMATE",
             summary.SalePriceBasis,
-            summary.UsesSelectedStashInstance ? "SELECTED STASH COPY" : "FULL-CONDITION BASE ITEM");
+            summary.UsesSelectedStashInstance ? "SELECTED OWNED COPY" : "FULL-CONDITION BASE ITEM");
 
         AddSectionHeader(parent, "SELL TO TRADERS");
         if (summary.SellOffers.Count == 0)
@@ -871,7 +883,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             ? $"Locked until player level {market.RequiredPlayerLevel}."
             : !market.CanSellOnFlea
                 ? $"Cannot list: {market.SellUnavailableReason ?? "listing unavailable"}."
-                : $"Net sale {Money(market.EstimatedNetSale)} after fee {Money(market.EstimatedListingFee)} • suggested list {Money(market.SuggestedListPrice)}";
+                : $"Net {(market.UsesSelectedOwnedCopy ? "selected-copy" : "base-item")} sale {Money(market.EstimatedNetSale)} after fee {Money(market.EstimatedListingFee)} - suggested list {Money(market.SuggestedListPrice)}";
         var buySummary = market.LowestPrice.HasValue
             ? $"Lowest comparable offer {Money(market.LowestPrice)} • median {Money(market.MedianPrice)}"
             : "No comparable Flea offer is currently available.";
@@ -898,6 +910,14 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             ("NET SALE", Money(market.EstimatedNetSale)),
             ("COMPARABLE", market.ComparableOfferCount.ToString("N0")),
             ("SOURCE", market.MarketPriceSource));
+        if (market.UsesSelectedOwnedCopy)
+        {
+            AddCard(
+                parent,
+                "SELECTED COPY FLEA BASIS",
+                $"{market.SelectedOwnedCopyLabel} - {market.SelectedOwnedCopyLocation}\nRoot {Money(market.SelectedOwnedCopyRootValue)} - child items {Money(market.SelectedOwnedCopyChildValue)}",
+                "OWNED COPY");
+        }
         AddCard(parent, "BUY RECOMMENDATION", market.BuyRecommendation, market.FleaUnlocked ? "FLEA UNLOCKED" : $"UNLOCKS AT LEVEL {market.RequiredPlayerLevel}");
         AddCard(parent, "SELL RECOMMENDATION", market.SellRecommendation, market.CanSellOnFlea ? "CAN LIST" : market.SellUnavailableReason ?? "CANNOT LIST");
 

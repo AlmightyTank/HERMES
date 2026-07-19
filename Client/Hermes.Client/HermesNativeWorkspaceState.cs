@@ -67,6 +67,17 @@ internal sealed class HermesNativeWorkspaceState
     internal HermesItemHideoutUsageResponse? ItemUsage => GetField<HermesItemHideoutUsageResponse>(_window, "_hideoutUsage");
     internal IReadOnlyList<HermesStashInstanceSummary> StashInstances => GetField<IReadOnlyList<HermesStashInstanceSummary>>(_window, "_stashInstances") ?? [];
     internal string? SelectedStashInstanceKey => GetField<string>(_window, "_selectedStashInstanceKey");
+    internal HermesStashInstanceSummary? SelectedStashInstance => StashInstances.FirstOrDefault(instance =>
+        string.Equals(instance.InstanceKey, SelectedStashInstanceKey, StringComparison.OrdinalIgnoreCase));
+    internal long? DisplayedItemReferenceValue => SelectedStashInstance is { ConditionAdjustedReferenceValue: > 0 } selected
+        ? selected.ConditionAdjustedReferenceValue
+        : SelectedItem?.ReferencePrice;
+    internal string DisplayedItemReferenceLabel => SelectedStashInstance switch
+    {
+        { ChildItemCount: > 0 } => "ASSEMBLED VALUE",
+        not null => "INSTANCE VALUE",
+        _ => "REFERENCE"
+    };
 
     internal string AssistantStatus => GetField<string>(_assistant, "_status") ?? string.Empty;
     internal bool AssistantLoading => GetField<bool>(_assistant, "_loading");

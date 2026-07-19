@@ -15,7 +15,7 @@ public sealed record HermesAnalysisCacheDiagnostics(
 
 /// <summary>
 /// Short-lived shared cache for market valuations and market summaries.
-/// Profile inventory, quests, hideout state, and selected stash instances are never cached here.
+/// Profile inventory, quests, hideout state, and selected owned-copy selections are never cached here.
 /// </summary>
 [Injectable(InjectionType.Singleton)]
 public sealed class HermesCacheService

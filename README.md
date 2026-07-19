@@ -7,6 +7,7 @@ This source is prepared as **0.1.0-rc.2.4.1**. The final `0.1.0` tag should be c
 ## Main features
 
 - Local conversational Assistant with selected-item context and prepared alerts
+- Categorized in-game question guide with editable examples for next steps, raids, loadouts, items, stash, crafts, hideout, and contextual follow-ups
 - Trader purchase and sale comparison using the active profile
 - Local Flea Market pricing, listing-fee estimates, and trader-versus-Flea recommendations
 - Hideout upgrade requirements and active production status
@@ -40,10 +41,11 @@ Items & Market now uses smart section defaults. Sections with no owned copy, no 
 
 ## Installation
 
-Extract the release ZIP into the SPT root. The final layout is:
+The build stages the install payload under `dist` and creates the release ZIP from that folder. Extract the release ZIP into the SPT root. The final layout is:
 
 ```text
 BepInEx/plugins/HERMES/Hermes.Client.dll
+BepInEx/plugins/HERMES/ask_hermes.png
 SPT/user/mods/HERMES/Hermes.Server.dll
 ```
 

@@ -106,18 +106,6 @@ public sealed class HermesStashService(
                 null);
         }
 
-        var isInStash = IsInStash(item, snapshot);
-        var isEquipped = IsEquipped(item, snapshot);
-        if (!isInStash && !isEquipped)
-        {
-            return new HermesStashInstanceSelectionResponse(
-                false,
-                "This item is not currently stored in the PMC stash or carried on the PMC.",
-                null,
-                null,
-                null);
-        }
-
         if (!MongoId.IsValidMongoId(item.TemplateId))
         {
             return new HermesStashInstanceSelectionResponse(
@@ -142,10 +130,8 @@ public sealed class HermesStashService(
 
         var tree = GetItemTree(item, snapshot);
         var components = BuildSaleComponents(tree);
-        var instance = BuildInstanceSummary(item, tree, components, sessionId);
-        var location = isInStash
-            ? "PMC stash"
-            : DescribeEquipmentLocation(item, snapshot);
+        var location = DescribeInventoryLocation(item, snapshot);
+        var instance = BuildInstanceSummary(item, tree, components, sessionId, location);
 
         return new HermesStashInstanceSelectionResponse(
             true,
@@ -173,7 +159,7 @@ public sealed class HermesStashService(
         {
             return new HermesStashInstancesResponse(
                 false,
-                "HERMES could not read the active PMC stash.",
+                "HERMES could not read the active PMC inventory.",
                 catalogItem.ItemKey,
                 catalogItem.Name,
                 []);
@@ -181,21 +167,21 @@ public sealed class HermesStashService(
 
         var instances = snapshot.Items
             .Where(item => item.TemplateId.Equals(catalogItem.TemplateId.ToString(), StringComparison.OrdinalIgnoreCase))
-            .Where(item => IsInStash(item, snapshot))
             .Select(item =>
             {
                 var tree = GetItemTree(item, snapshot);
                 var components = BuildSaleComponents(tree);
-                return BuildInstanceSummary(item, tree, components, sessionId);
+                return BuildInstanceSummary(item, tree, components, sessionId, DescribeInventoryLocation(item, snapshot));
             })
             .OrderByDescending(instance => instance.ConditionPercent)
             .ThenByDescending(instance => instance.Quantity)
+            .ThenBy(instance => instance.Location, StringComparer.OrdinalIgnoreCase)
             .ThenBy(instance => instance.Label, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         return new HermesStashInstancesResponse(
             true,
-            instances.Count == 0 ? "No matching copy is currently stored in the PMC stash." : null,
+            instances.Count == 0 ? "No matching owned copy is currently in the active PMC inventory." : null,
             catalogItem.ItemKey,
             catalogItem.Name,
             instances);
@@ -221,7 +207,6 @@ public sealed class HermesStashService(
         foreach (var item in snapshot.Items)
         {
             if (!item.TemplateId.Equals(catalogItem.TemplateId.ToString(), StringComparison.OrdinalIgnoreCase)
-                || (!IsInStash(item, snapshot) && !IsEquipped(item, snapshot))
                 || !CreateInstanceKey(sessionId, item.Id).Equals(instanceKey, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
@@ -229,7 +214,7 @@ public sealed class HermesStashService(
 
             var tree = GetItemTree(item, snapshot);
             var components = BuildSaleComponents(tree);
-            var summary = BuildInstanceSummary(item, tree, components, sessionId);
+            var summary = BuildInstanceSummary(item, tree, components, sessionId, DescribeInventoryLocation(item, snapshot));
             return new HermesSelectedStashInstance(summary, components);
         }
 
@@ -281,7 +266,7 @@ public sealed class HermesStashService(
                 continue;
             }
 
-            var instance = BuildInstanceSummary(item, tree, components, sessionId);
+            var instance = BuildInstanceSummary(item, tree, components, sessionId, "PMC stash");
             var isProtectedCurrency = ProtectedCurrencyTemplates.Contains(item.TemplateId);
             entries.Add(new HermesStashAnalysisEntry(
                 templateId,
@@ -363,7 +348,8 @@ public sealed class HermesStashService(
         InventoryItemNode root,
         IReadOnlyList<InventoryItemNode> tree,
         IReadOnlyList<HermesTraderSaleComponent> components,
-        MongoId sessionId)
+        MongoId sessionId,
+        string location)
     {
         var quantity = Math.Max(1d, ReadDouble(root.Upd, 1d, "StackObjectsCount", "stackObjectsCount"));
         var condition = GetCondition(root);
@@ -389,6 +375,7 @@ public sealed class HermesStashService(
         return new HermesStashInstanceSummary(
             CreateInstanceKey(sessionId, root.Id),
             label,
+            location,
             quantity,
             condition.DisplayPercent,
             condition.Description,
@@ -786,6 +773,25 @@ public sealed class HermesStashService(
         }
 
         return false;
+    }
+
+    private static string DescribeInventoryLocation(
+        InventoryItemNode item,
+        InventorySnapshot snapshot)
+    {
+        if (IsInStash(item, snapshot))
+        {
+            return "PMC stash";
+        }
+
+        if (IsEquipped(item, snapshot))
+        {
+            return DescribeEquipmentLocation(item, snapshot);
+        }
+
+        return string.IsNullOrWhiteSpace(item.SlotId)
+            ? "PMC inventory"
+            : $"PMC inventory - {FriendlyEquipmentSlot(item.SlotId)}";
     }
 
     private static string DescribeEquipmentLocation(

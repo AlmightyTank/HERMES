@@ -1,9 +1,17 @@
 # Changelog
 
+## 0.1.0-rc.2.4.2
+
+- Item search now values the selected owned copy as one assembled item: condition-adjusted root value plus every priced child item.
+- Weapons, armor, containers, and other parent items now show child-item value rolled into the visible total.
+- Preview and search selections now auto-use the matching owned copy so trader and flea sale estimates include installed child parts immediately.
+- The selected search result and item overview update immediately when switching between the base item and a specific owned copy.
+- Added a separate child-value metric and relabeled trader reference pricing as the base reference to keep the two valuation bases clear.
+
 ## 0.1.0-rc.2.4.1
 
 - Added smart Items & Market section defaults so low-value or empty detail groups stay collapsed initially.
-- Stash Instance Pricing is now collapsible and stays closed when the profile owns no matching copy.
+- Owned Copy Pricing is now collapsible and stays closed when the profile owns no matching copy.
 - Traders stays closed when there is no supported sale or currently available purchase offer.
 - Flea Market stays closed when no usable price, comparable offer, or net-sale estimate exists.
 - Quest Requirements and Quest Key Knowledge stay closed when every known use is completed or no use exists.

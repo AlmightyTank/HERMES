@@ -26,7 +26,7 @@ Build and test against a clean SPT 4.0.13 installation before changing `Version.
 - [ ] Confirm each transition rebuilds the client presentation without a full source invalidation.
 - [ ] Confirm scroll state is restored and no old workspace blocks input.
 - [ ] Confirm the top Refresh button performs a source recheck and completes.
-- [ ] Confirm Items & Market search, stash-copy selection, and the sale-estimate card display correctly.
+- [ ] Confirm Items & Market search, owned-copy selection, and the sale-estimate card display correctly.
 - [ ] Confirm empty, completed-only, and unavailable Items & Market sections start collapsed while their summary remains visible and manual expansion still works.
 - [ ] Click items from every Stash view and confirm Items & Market opens with the exact clicked copy already selected.
 
@@ -104,4 +104,3 @@ Build and test against a clean SPT 4.0.13 installation before changing `Version.
 - [ ] Confirm `/hermes/watch/` is absent from the client log and no server-held watch request remains registered.
 - [ ] Compare first-load Crafts, Loadout, and Items & Market timings with RC.2.3 and record the results.
 - [ ] Leave Character open for several minutes and confirm native screen discovery does not continuously scan every few seconds once the HERMES host is active.
-

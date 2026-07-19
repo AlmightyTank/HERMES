@@ -28,9 +28,6 @@
 
     <ServerOutput>$(HermesRoot)\Server\Hermes.Server\bin\$(Configuration)\Hermes.Server.dll</ServerOutput>
     <ClientOutput>$(HermesRoot)\Client\Hermes.Client\bin\$(Configuration)\Hermes.Client.dll</ClientOutput>
-    <ReadmeFile>$(HermesRoot)\README.md</ReadmeFile>
-    <LicenseFile>$(HermesRoot)\LICENSE</LicenseFile>
-    <ChangelogFile>$(HermesRoot)\CHANGELOG.md</ChangelogFile>
   </PropertyGroup>
 
   <ItemGroup>
@@ -41,14 +38,17 @@
                       AdditionalProperties="SptRoot=$(SptRoot)" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ClientIconFiles Include="$(HermesRoot)\Client\Hermes.Client\Assets\*.png" />
+  </ItemGroup>
+
   <Target Name="ValidateHermesOutputs" AfterTargets="Build" BeforeTargets="PackageHermes">
     <Error Condition="!Exists('$(ServerOutput)')"
            Text="Hermes.Server.dll was not found at '$(ServerOutput)'." />
     <Error Condition="!Exists('$(ClientOutput)')"
            Text="Hermes.Client.dll was not found at '$(ClientOutput)'." />
-    <Error Condition="!Exists('$(ReadmeFile)')" Text="README.md is missing." />
-    <Error Condition="!Exists('$(LicenseFile)')" Text="LICENSE is missing." />
-    <Error Condition="!Exists('$(ChangelogFile)')" Text="CHANGELOG.md is missing." />
+    <Error Condition="'@(ClientIconFiles)' == ''"
+           Text="No client icon PNG files were found under '$(HermesRoot)\Client\Hermes.Client\Assets'." />
   </Target>
 
   <Target Name="PackageHermes" AfterTargets="ValidateHermesOutputs">
@@ -62,8 +62,8 @@
           DestinationFolder="$(ClientDist)"
           SkipUnchangedFiles="true" />
 
-    <Copy SourceFiles="$(ReadmeFile);$(LicenseFile);$(ChangelogFile)"
-          DestinationFolder="$(DistRoot)"
+    <Copy SourceFiles="@(ClientIconFiles)"
+          DestinationFolder="$(ClientDist)"
           SkipUnchangedFiles="true" />
 
     <Delete Files="$(PackagePath)" Condition="Exists('$(PackagePath)')" />
