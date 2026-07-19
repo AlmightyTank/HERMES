@@ -1871,7 +1871,7 @@ internal sealed class HermesAssistantPanel
                 }
                 foreach (var use in activeKeys)
                 {
-                    builder.AppendLine($"- {use.QuestName}: key use on {use.MapName} - {use.Opens}");
+                    builder.AppendLine($"- {use.QuestName}");
                 }
                 if (future.Count > 0 || futureKeys.Count > 0)
                 {
@@ -1883,7 +1883,7 @@ internal sealed class HermesAssistantPanel
                     }
                     foreach (var use in futureKeys)
                     {
-                        builder.AppendLine($"- {use.QuestName}: key use on {use.MapName} - {use.Opens}");
+                        builder.AppendLine($"- {use.QuestName}");
                     }
                 }
                 if (upgrades.Count > 0)
