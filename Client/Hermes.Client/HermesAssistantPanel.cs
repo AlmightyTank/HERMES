@@ -1825,8 +1825,10 @@ internal sealed class HermesAssistantPanel
 
         if (usage.Found)
         {
-            var activeQuestUses = usage.QuestUses.Count(use => use.IsActive && !use.ConditionCompleted);
-            var futureQuestUses = usage.QuestUses.Count(use => !use.IsActive && !use.QuestCompleted);
+            var activeQuestUses = usage.QuestUses.Count(use => use.IsActive && !use.ConditionCompleted)
+                                  + usage.QuestKeyUses.Count(use => use.IsActive && !use.QuestCompleted);
+            var futureQuestUses = usage.QuestUses.Count(use => !use.IsActive && !use.QuestCompleted)
+                                  + usage.QuestKeyUses.Count(use => !use.IsActive && !use.QuestCompleted);
             var nextUpgrades = usage.UpgradeUses.Count(use => use.IsNextUpgrade && !use.IsMet);
             builder.AppendLine();
             builder.AppendLine("Progression use:");
@@ -1841,18 +1843,47 @@ internal sealed class HermesAssistantPanel
                     .Where(use => use.IsActive && !use.ConditionCompleted)
                     .Take(5)
                     .ToList();
+                var activeKeys = usage.QuestKeyUses
+                    .Where(use => use.IsActive && !use.QuestCompleted)
+                    .Take(5)
+                    .ToList();
+                var future = usage.QuestUses
+                    .Where(use => !use.IsActive && !use.QuestCompleted)
+                    .Take(5)
+                    .ToList();
+                var futureKeys = usage.QuestKeyUses
+                    .Where(use => !use.IsActive && !use.QuestCompleted)
+                    .Take(5)
+                    .ToList();
                 var upgrades = usage.UpgradeUses
                     .Where(use => !use.IsMet)
                     .OrderByDescending(use => use.IsNextUpgrade)
                     .Take(5)
                     .ToList();
-                if (active.Count > 0)
+                if (active.Count > 0 || activeKeys.Count > 0)
                 {
                     builder.AppendLine();
                     builder.AppendLine("Active quest uses:");
                     foreach (var use in active)
                     {
                         builder.AppendLine($"• {use.QuestName}: {use.ProgressText}");
+                    }
+                }
+                foreach (var use in activeKeys)
+                {
+                    builder.AppendLine($"- {use.QuestName}: key use on {use.MapName} - {use.Opens}");
+                }
+                if (future.Count > 0 || futureKeys.Count > 0)
+                {
+                    builder.AppendLine();
+                    builder.AppendLine("Future quest uses:");
+                    foreach (var use in future)
+                    {
+                        builder.AppendLine($"- {use.QuestName}: {use.ProgressText}");
+                    }
+                    foreach (var use in futureKeys)
+                    {
+                        builder.AppendLine($"- {use.QuestName}: key use on {use.MapName} - {use.Opens}");
                     }
                 }
                 if (upgrades.Count > 0)

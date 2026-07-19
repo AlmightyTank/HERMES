@@ -1438,10 +1438,50 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 requirement.Name,
                 description,
                 requirement.IsMet ? "MET" : $"MISSING • {Money(requirement.EstimatedMissingCost)}",
-                string.IsNullOrWhiteSpace(requirement.ItemTemplateId)
-                    ? null
-                    : () => _state.Window.OpenForPreviewItem(requirement.ItemTemplateId!, "Hideout requirement"));
+                GetHideoutRequirementAction(summary, requirement));
         }
+    }
+
+    private Action? GetHideoutRequirementAction(
+        HermesHideoutSummaryResponse summary,
+        HermesHideoutRequirement requirement)
+    {
+        var linkedArea = FindHideoutArea(summary, requirement);
+        if (linkedArea is not null)
+        {
+            return () =>
+            {
+                _state!.SelectHideoutArea(linkedArea);
+                Invalidate(0.20f);
+            };
+        }
+
+        return string.IsNullOrWhiteSpace(requirement.ItemTemplateId)
+            ? null
+            : () => _state!.Window.OpenForPreviewItem(requirement.ItemTemplateId!, "Hideout requirement");
+    }
+
+    private static HermesHideoutAreaSummary? FindHideoutArea(
+        HermesHideoutSummaryResponse summary,
+        HermesHideoutRequirement requirement)
+    {
+        if (!requirement.Type.Equals("Area", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(requirement.AreaKey))
+        {
+            var keyed = summary.Areas.FirstOrDefault(area =>
+                string.Equals(area.AreaKey, requirement.AreaKey, StringComparison.OrdinalIgnoreCase));
+            if (keyed is not null)
+            {
+                return keyed;
+            }
+        }
+
+        return summary.Areas.FirstOrDefault(area =>
+            string.Equals(area.Name, requirement.Name, StringComparison.OrdinalIgnoreCase));
     }
 
     #endregion

@@ -1018,6 +1018,7 @@ public sealed class HermesHideoutService(
                 "Item",
                 catalogItem.Name,
                 requirement.TemplateId,
+                null,
                 required,
                 owned,
                 missing,
@@ -1039,11 +1040,16 @@ public sealed class HermesHideoutService(
             var areaName = requirement.AreaType.HasValue
                 ? GetAreaName(requirement.AreaType.Value)
                 : "Hideout area";
+            var areaKey = requirement.AreaType.HasValue
+                          && _areasByType!.TryGetValue(requirement.AreaType.Value, out var requiredArea)
+                ? requiredArea.Key
+                : null;
 
             return new HermesHideoutRequirement(
                 "Area",
                 areaName,
                 null,
+                areaKey,
                 requiredLevel,
                 ownedLevel,
                 Math.Max(0, requiredLevel - ownedLevel),
@@ -1070,6 +1076,7 @@ public sealed class HermesHideoutService(
                 "Trader",
                 traderName,
                 null,
+                null,
                 requiredLevel,
                 ownedLevel,
                 Math.Max(0, requiredLevel - ownedLevel),
@@ -1091,6 +1098,7 @@ public sealed class HermesHideoutService(
             return new HermesHideoutRequirement(
                 "Skill",
                 skillName,
+                null,
                 null,
                 requiredLevel,
                 ownedLevel,
@@ -1117,6 +1125,7 @@ public sealed class HermesHideoutService(
                 "Quest",
                 questName,
                 null,
+                null,
                 1,
                 complete ? 1 : 0,
                 complete ? 0 : 1,
@@ -1131,6 +1140,7 @@ public sealed class HermesHideoutService(
         return new HermesHideoutRequirement(
             string.IsNullOrWhiteSpace(type) ? "Requirement" : FormatDisplayName(type),
             string.IsNullOrWhiteSpace(type) ? "Additional requirement" : FormatDisplayName(type),
+            null,
             null,
             1,
             1,

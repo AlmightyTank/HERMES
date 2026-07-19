@@ -320,6 +320,7 @@ public sealed class HermesHideoutRequirement
     public string Type { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string? ItemTemplateId { get; set; }
+    public string? AreaKey { get; set; }
     public double Required { get; set; }
     public double Owned { get; set; }
     public double Missing { get; set; }

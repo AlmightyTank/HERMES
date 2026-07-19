@@ -286,6 +286,7 @@ public sealed record HermesHideoutRequirement(
     string Type,
     string Name,
     string? ItemTemplateId,
+    string? AreaKey,
     double Required,
     double Owned,
     double Missing,
