@@ -6,3 +6,4 @@ dist/
 .vs/
 HERMES-*.zip
 *.binlog
+*.zip
