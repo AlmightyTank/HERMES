@@ -24,6 +24,18 @@ internal static class HermesApiClient
             });
     }
 
+    public static Task<HermesProfileSaveResponse> SaveProfileAsync()
+    {
+        return GetDataAsync(
+            "/hermes/profile/save",
+            () => new HermesProfileSaveResponse
+            {
+                Saved = false,
+                Message = "HERMES could not save the active profile."
+            },
+            TimeSpan.FromSeconds(Plugin.Settings.GetLongRequestTimeoutSeconds()));
+    }
+
     public static Task<HermesSearchResponse> SearchAsync(string query, int maximumResults)
     {
         var boundedMaximum = Math.Clamp(maximumResults, 5, 50);

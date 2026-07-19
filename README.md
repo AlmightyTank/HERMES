@@ -1,47 +1,79 @@
 # HERMES
 
-HERMES is a read-only in-game assistant for SPT 4.0.13. It adds a native **HERMES** tab to the Character and in-raid inventory screens and analyzes the active PMC profile without changing inventory, quests, traders, crafts, or hideout state.
+HERMES stands for **Hideout, Economy, Resource, Market, and Equipment System**.
 
-This source is prepared as **0.1.0-rc.2.4.1**. The final `0.1.0` tag should be created only after the runtime checklist in `RELEASE_CHECKLIST.md` passes.
+It is a read-only in-game assistant for SPT **4.0.13**. HERMES adds a native **HERMES** tab to the Character screen and in-raid inventory screen, then analyzes the active PMC profile using local SPT data.
 
-## Main features
+HERMES does not use an external AI service, does not send your profile anywhere, and does not perform game actions. It reads local profile, trader, item, quest, Hideout, craft, and Flea data, then presents the results inside the game.
 
-- Local conversational Assistant with selected-item context and prepared alerts
-- Categorized in-game question guide with editable examples for next steps, raids, loadouts, items, stash, crafts, hideout, and contextual follow-ups
-- Trader purchase and sale comparison using the active profile
-- Local Flea Market pricing, listing-fee estimates, and trader-versus-Flea recommendations
-- Hideout upgrade requirements and active production status
-- Craft readiness, acquisition cost, profit, and availability filtering
-- Stash reservation, cleanup, duplicate, condition, and sale-destination analysis
-- Loadout readiness, ammunition, armor, medical, insurance, and value analysis
-- Raid Planner and map-specific pre-raid readiness that invalidates and rereads Loadout data after the selected map stabilizes
-- Embedded quest-key knowledge catalog that links active quests to their required access keys and exact raid maps while using the installed SPT database for key IDs and objective progress
-- Configurable pre-raid food-and-water requirement using carried item Hydration/Energy effects, including custom consumables
-- **Ask HERMES** item context action that always opens Items & Market with the selected item already resolved
-- Stash-row navigation resolves the exact session-scoped item instance and opens Items & Market with it selected
-- Native EFT tab, controls, notifications, and Ragfair-derived UI assets
+## What HERMES Does
 
-HERMES does not use an external AI service and does not perform game actions.
+- Adds a native **HERMES** workspace inside EFT's Character and inventory UI
+- Provides a local, rule-based Assistant with selected-item context
+- Adds **Ask HERMES** item actions for stash, equipment, traders, Flea previews, crafts, and Hideout items
+- Compares trader purchase and sale options for the active profile
+- Estimates Flea Market values, listing fees, and trader-versus-Flea sale choices
+- Reviews Hideout upgrade requirements and active production status
+- Checks craft readiness, missing ingredients, acquisition costs, output value, profit, and availability
+- Finds stash cleanup opportunities, duplicates, damaged gear, valuables, reserved items, and sale destinations
+- Reviews loadout readiness, ammo, armor, medical coverage, insurance, provisions, and carried value
+- Includes a Raid Planner with map-specific pre-raid readiness
+- Connects active quests to required access keys and maps through embedded quest-key knowledge
+- Supports a configurable pre-raid food-and-water requirement, including custom consumables when item data exposes hydration or energy effects
 
+## Main Workspaces
 
-### Final polish and performance pass
+### Assistant
 
-RC.2.4 keeps the current feature set and removes avoidable work before the final release decision. Immutable SPT quest, Hideout, locale, and trader data is materialized once; item-usage and quest-key associations are indexed; immediate duplicate read requests are reused; native Unity discovery and synchronization are throttled; and large lists use a release-safe row cap. Manual Refresh still clears the short client reuse window before reading changed server data.
+Ask local, profile-aware questions about next steps, raids, items, stash, crafts, Hideout, and loadout. The Assistant is rule-based and runs locally.
 
-Food and drink classification now takes precedence over generic buff detection. An MRE ration pack and other buff-bearing provisions count toward carried energy or hydration but are never counted as medical items or bleed/surgery coverage.
+### Items & Market
 
-Items & Market now uses smart section defaults. Sections with no owned copy, no current trader or Flea value, no remaining quest/key requirement, and no current Hideout or craft use stay collapsed initially while their compact header still explains the result. Players can expand any section to inspect completed or unavailable details.
+Look up an item and see owned-copy value, installed child-part value, trader prices, Flea estimates, quest usage, quest-key knowledge, Hideout needs, and craft associations. HERMES tries to resolve the exact owned item instance when opened from stash or equipment.
+
+### Stash
+
+Review cleanup ideas, sale candidates, duplicate items, condition warnings, valuable items, and reserved items you may want to keep.
+
+### Loadout
+
+Check raid readiness, including ammo, armor, medical coverage, insurance, value at risk, food, drink, and practical warnings.
+
+### Crafts & Hideout
+
+See craft readiness, missing ingredients, output value, estimated profit, active production, and Hideout upgrade requirements.
+
+### Raid Planner
+
+Select a map and review readiness, likely quest requirements, relevant quest keys, and warnings for that location.
 
 ## Requirements
 
+For players:
+
 - SPT **4.0.13**
-- .NET **9 SDK** for source builds
-- Visual Studio 2022 or another MSBuild-compatible IDE
-- A valid SPT installation containing the managed EFT and BepInEx assemblies
+- BepInEx, as included with SPT
+- A normal SPT installation with both the server and client available
+
+For source builds:
+
+- .NET **9 SDK**
+- Visual Studio 2022 or another MSBuild-compatible environment
+- A local SPT **4.0.13** installation
+- EFT, BepInEx, and SPT managed assemblies available under that SPT install
+
+The client project resolves game references from your SPT folder, including:
+
+- `EscapeFromTarkov_Data/Managed`
+- `BepInEx/core`
+- `BepInEx/plugins/spt`
 
 ## Installation
 
-The build stages the install payload under `dist` and creates the release ZIP from that folder. Extract the release ZIP into the SPT root. The final layout is:
+1. Download the HERMES release ZIP.
+2. Remove older HERMES files if you installed a previous version.
+3. Extract the ZIP into your SPT root folder.
+4. Confirm the files end up here:
 
 ```text
 BepInEx/plugins/HERMES/Hermes.Client.dll
@@ -49,71 +81,113 @@ BepInEx/plugins/HERMES/ask_hermes.png
 SPT/user/mods/HERMES/Hermes.Server.dll
 ```
 
-Remove older HERMES DLLs before installing a new version. Start the SPT server, then launch the game. Open the Character screen and select **HERMES**, or press **F8**.
+5. Start the SPT server.
+6. Launch the game.
+7. Open the Character screen and select **HERMES**, or press **F8**.
+
+## Recompiling From Source
+
+Clone the repository, install the .NET 9 SDK, and point the build at a valid SPT 4.0.13 installation.
+
+The build defaults to:
+
+```text
+C:\RealSPT
+```
+
+You can override that path with the `SPT_ROOT` environment variable:
+
+```powershell
+$env:SPT_ROOT = "D:\Games\SPT"
+dotnet build .\Hermes.Build.csproj -c Release
+```
+
+Or pass the path directly as an MSBuild property:
+
+```powershell
+dotnet build .\Hermes.Build.csproj -c Release -p:SptRoot="D:\Games\SPT"
+```
+
+The build creates the release package at the repository root. The package name uses the value in `Version.props`; with the current source it is:
+
+```text
+HERMES-1.0.0.zip
+```
+
+It also stages the install payload under:
+
+```text
+dist/
+```
+
+By default, `Hermes.Build.csproj` also deploys the built DLLs and assets into the test SPT root so you can launch SPT and validate the mod immediately.
+
+To build the ZIP without deploying into your SPT folder:
+
+```powershell
+dotnet build .\Hermes.Build.csproj -c Release -p:SptRoot="D:\Games\SPT" -p:DeployToTestEnvironment=false
+```
+
+To use one SPT path for references and another for deployment:
+
+```powershell
+dotnet build .\Hermes.Build.csproj -c Release -p:SptRoot="D:\Games\SPT-References" -p:TestSptRoot="D:\Games\SPT-Test"
+```
+
+You can also build the solution directly:
+
+```powershell
+dotnet build .\HERMES.sln -c Release -p:SptRoot="D:\Games\SPT"
+```
+
+Use `Version.props` to change the package/version number before building a release.
+
+## Repository Layout
+
+```text
+Client/Hermes.Client/       BepInEx client plugin and native EFT UI
+Server/Hermes.Server/       SPT server mod, profile analysis, and API routes
+Server/Hermes.Server/Data/  Embedded quest-key knowledge
+Hermes.Build.csproj         Packaging and optional test deployment project
+Version.props               Shared HERMES version
+dist/                       Generated install payload
+```
 
 ## Configuration
 
-HERMES creates its BepInEx configuration after the first launch. Open the in-game Configuration Manager with **F12** to change Assistant, market, hideout, craft, stash, loadout, Raid Planner, notification, and interface settings.
+HERMES creates its BepInEx configuration after first launch. Open the in-game Configuration Manager with **F12** to adjust Assistant, market, Hideout, craft, stash, loadout, Raid Planner, notification, and interface settings.
 
-Normal tab changes rebuild the visible client presentation and read prepared server summaries. The top **Refresh** button performs the stronger source recheck. In **Pre-Raid Readiness**, **Require food and water** can require carried hydration and energy provisions.
+The top **Refresh** button performs a stronger source recheck when gear, stash contents, Hideout state, quest progress, or other profile data has changed and you want HERMES to reread it immediately.
 
-## Building from source
+## Important Notes
 
-The projects expect the SPT root at `C:\RealSPT` by default. Override it without editing project files by setting the `SPT_ROOT` environment variable or passing an MSBuild property:
-
-```text
-SptRoot=D:\Games\SPT
-```
-
-Build `HERMES.sln` or `Hermes.Build.csproj` in **Release**. The build project creates:
-
-```text
-HERMES-0.1.0-rc.2.4.1.zip
-```
-
-By default, building `Hermes.Build.csproj` also installs the generated server DLL, client DLL, and client assets into the test SPT root for local validation. The default test root is `C:\RealSPT`; override it with:
-
-```text
-TestSptRoot=C:\RealSPT
-```
-
-To package without installing into the test SPT root, set:
-
-```text
-DeployToTestEnvironment=false
-```
+- HERMES is read-only. It will not buy, sell, move, craft, repair, insure, accept quests, complete quests, or edit your profile.
+- HERMES uses the installed SPT database and active profile as the source of truth.
+- Flea and trader values are estimates based on available local SPT data and may not match every economy setup or heavily customized mod list.
+- Quest-key knowledge is embedded and resolved against installed SPT data. Entries that do not match SPT 4.0.13 are ignored safely.
+- If you use multiple profiles, HERMES scopes prepared data to the active profile.
 
 ## Troubleshooting
 
-- Confirm both HERMES DLLs are from the same version.
-- Remove duplicate HERMES DLLs from other plugin or server-mod folders.
-- Confirm the SPT server log reports the HERMES server mod and the BepInEx log reports the HERMES client.
-- Enable **Detailed logging** or the diagnostics panel in F12 when collecting a report.
-- Include `Player.log`, the BepInEx log, and the SPT server log when reporting a failure.
+- Make sure both the client and server HERMES DLLs are from the same release.
+- Remove duplicate HERMES DLLs from old install locations.
+- Confirm the SPT server log reports the HERMES server mod.
+- Confirm the BepInEx log reports the HERMES client plugin.
+- If something looks stale, press **Refresh** in HERMES.
+- For bug reports, include `Player.log`, the BepInEx log, and the SPT server log.
+
+## Compatibility
+
+Built for SPT **4.0.13**.
+
+HERMES is designed to be read-only and should avoid profile-writing conflicts with other mods. Mods that heavily alter item templates, trader offers, quests, Hideout data, or Flea pricing may affect the analysis HERMES displays.
+
+## Credits
+
+Created by **AMightyTank**.
+
+Quest-key knowledge is derived from public TarkovForge key-reference data and embedded locally so HERMES does not need web access during play.
 
 ## License
 
 MIT. See `LICENSE`.
-
-
-### Ask HERMES item routing
-
-Every item-facing **Ask HERMES** action opens **Items & Market**. Owned stash and equipped items resolve the exact item instance when possible; trader, Flea, craft, and Hideout previews resolve the selected template and show the full-condition base-item estimate. Hideout requirement and production items no longer redirect to Crafts.
-
-
-### Carried food and drink
-
-When **Require food and water** is enabled, HERMES examines every item carried through equipped rigs, pockets, backpacks, and the secure container. A provision counts only when its template provides a positive Hydration or Energy effect and its remaining consumable resource is usable. Template-name fallbacks cover common vanilla provisions while data-driven effect parsing supports custom food and drink.
-
-
-### F12 dropdown settings
-
-Settings that choose a workspace, filter, view, or sorting mode now use validated dropdowns instead of free-form text fields. Existing normalization remains in place for compatible values from older configuration files.
-
-### Quest-key knowledge
-
-HERMES embeds a versioned quest-key association catalog derived from the public TarkovForge key directory. The catalog supplies quest-to-key, map, access-purpose, and acquisition guidance without making web requests while SPT is running. HERMES resolves each entry against the installed SPT locale and template database, so keys or quests that do not exist in SPT 4.0.13 are ignored. Pre-raid warnings are emitted only when EFT provides a recognized selected map and the requirement map matches it.
-
-Runtime catalog status is available from `/hermes/quest-keys/status`. The source data is embedded into `Hermes.Server.dll` from `Server/Hermes.Server/Data/quest_key_knowledge.json`.
-
-When a cataloged key is selected in **Items & Market**, the detail panel displays a **QUEST KEY** card for each associated quest. Each card includes the quest name, map, what the key opens, acquisition guidance when available, and the active profile's current quest status.

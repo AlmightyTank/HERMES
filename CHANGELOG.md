@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.0.0
+
+First full public release.
+
+- Promoted the client plugin and shared package version to **1.0.0**.
+- Added live background refresh so HERMES checks server revisions on a shared interval, refreshes only changed workspace summaries, and keeps Assistant alerts current even when the HERMES workspace is not selected.
+- Added F12 controls for live background refresh and its interval.
+- Added active-profile saving while HERMES is open, including a server `/hermes/profile/save` route and F12 controls for the save interval.
+- Assistant alert polling now follows the live refresh cadence, retries quickly while the server feed is warming up or stale, and asks live sync to rematerialize the prepared feed automatically.
+- Native HERMES notifications can now be right-clicked to dismiss without opening HERMES, and dismissals are remembered by the Assistant notice list.
+- Opening an Assistant notice now consistently routes to the Assistant workspace.
+- Suggested Assistant prompt buttons now submit immediately and stay disabled while an Assistant request is already loading.
+- Loadout armor warnings now specifically require body armor or an armored rig and report missing torso armor as a critical readiness issue.
+- Reworked the README into player-facing 1.0.0 documentation with clearer installation, source-build, configuration, compatibility, troubleshooting, and feature sections.
+- Added a standalone mod-page draft for release distribution text.
+
 ## 0.1.0-rc.2.4.2
 
 - Item search now values the selected owned copy as one assembled item: condition-adjusted root value plus every priced child item.

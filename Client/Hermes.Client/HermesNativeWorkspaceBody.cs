@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using Hermes.Client.Models;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.Events;
 using UnityEngine.UI;
 
@@ -386,7 +387,12 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 AssistantPreview(notice.Message, 210),
                 $"{notice.Severity.ToUpperInvariant()} • {notice.Category.ToUpperInvariant()}",
                 () => state.OpenNotice(notice),
-                AssistantSeverityCardColor(notice.Severity));
+                AssistantSeverityCardColor(notice.Severity),
+                () =>
+                {
+                    state.DismissNotice(notice);
+                    Invalidate();
+                });
 
             var actions = CreateToolbar(card);
             AddFlexibleSpace(actions);
@@ -541,8 +547,9 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                         prompt,
                         () =>
                         {
-                            _assistantDraft = prompt;
-                            Invalidate(0.05f);
+                            _assistantDraft = string.Empty;
+                            state.SubmitAssistant(prompt);
+                            Invalidate(0.25f);
                         },
                         246f,
                         !state.AssistantLoading,
@@ -2722,9 +2729,10 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         string body,
         string meta,
         Action? onClick = null,
-        Color? color = null)
+        Color? color = null,
+        Action? onRightClick = null)
     {
-        var types = onClick is null
+        var types = onClick is null && onRightClick is null
             ? new[] { typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter), typeof(LayoutElement) }
             : new[] { typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter), typeof(LayoutElement) };
         var root = new GameObject("Card", types);
@@ -2732,7 +2740,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         var rect = (RectTransform)root.transform;
         var image = root.GetComponent<Image>();
         image.color = color ?? HermesNativeUiFramework.RowColor;
-        image.raycastTarget = onClick is not null;
+        image.raycastTarget = onClick is not null || onRightClick is not null;
         var layout = root.GetComponent<VerticalLayoutGroup>();
         layout.padding = new RectOffset(9, 9, 6, 6);
         layout.spacing = 2f;
@@ -2757,6 +2765,11 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             colors.pressedColor = new Color(0.12f, 0.13f, 0.13f, 0.92f);
             button.colors = colors;
         }
+        if (onRightClick is not null)
+        {
+            var relay = root.AddComponent<RightClickRelay>();
+            relay.Initialize(onRightClick);
+        }
 
         AddText(root.transform, title, 15f, true, HermesNativeUiFramework.NormalTextColor);
         if (!string.IsNullOrWhiteSpace(body))
@@ -2769,6 +2782,24 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         }
         AddBottomSeparator(root.transform);
         return rect;
+    }
+
+    private sealed class RightClickRelay : MonoBehaviour, IPointerClickHandler
+    {
+        private Action? _onRightClick;
+
+        public void Initialize(Action onRightClick)
+        {
+            _onRightClick = onRightClick;
+        }
+
+        public void OnPointerClick(PointerEventData eventData)
+        {
+            if (eventData.button == PointerEventData.InputButton.Right)
+            {
+                _onRightClick?.Invoke();
+            }
+        }
     }
 
     private static void AddSectionHeader(Transform parent, string title)

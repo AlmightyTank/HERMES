@@ -12,6 +12,11 @@ public sealed record HermesProfileContextResponse(
     string? Message,
     string ContextToken);
 
+public sealed record HermesProfileSaveResponse(
+    bool Saved,
+    string? Message,
+    double DurationSeconds);
+
 
 public sealed record HermesCacheStatusResponse(
     bool Found,

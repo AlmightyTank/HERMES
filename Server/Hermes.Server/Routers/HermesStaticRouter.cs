@@ -2,6 +2,7 @@ using Hermes.Server.Models;
 using Hermes.Server.Services;
 using SPTarkov.DI.Annotations;
 using SPTarkov.Server.Core.DI;
+using SPTarkov.Server.Core.Servers;
 using SPTarkov.Server.Core.Utils;
 
 namespace Hermes.Server.Routers;
@@ -15,7 +16,8 @@ public sealed class HermesStaticRouter(
     HermesStashAnalysisService stashAnalysisService,
     HermesLoadoutService loadoutService,
     HermesQuestKeyKnowledgeService questKeyKnowledgeService,
-    HermesChangeTrackingService changeTrackingService)
+    HermesChangeTrackingService changeTrackingService,
+    SaveServer saveServer)
     : StaticRouter(
         jsonUtil,
         [
@@ -27,6 +29,17 @@ public sealed class HermesStaticRouter(
                 "/hermes/assistant/alerts",
                 (_, _, sessionId, _) => ValueTask.FromResult<object>(
                     httpResponseUtil.GetBody(changeTrackingService.GetAssistantAlerts(sessionId)))),
+            new RouteAction(
+                "/hermes/profile/save",
+                async (_, _, sessionId, _) =>
+                {
+                    var durationSeconds = await saveServer.SaveProfileAsync(sessionId);
+                    var response = new HermesProfileSaveResponse(
+                        true,
+                        $"HERMES saved the active profile in {durationSeconds:N3}s.",
+                        durationSeconds);
+                    return httpResponseUtil.GetBody(response);
+                }),
             new RouteAction(
                 "/hermes/quest-keys/status",
                 (_, _, _, _) => ValueTask.FromResult<object>(

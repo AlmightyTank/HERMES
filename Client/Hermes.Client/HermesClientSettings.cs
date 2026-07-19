@@ -11,6 +11,10 @@ internal sealed class HermesClientSettings
     public ConfigEntry<string> DefaultOpeningTab { get; private set; } = null!;
     public ConfigEntry<bool> RememberLastSelectedTab { get; private set; } = null!;
     public ConfigEntry<bool> AutomaticallyRefreshWhenOpened { get; private set; } = null!;
+    public ConfigEntry<bool> EnableLiveBackgroundRefresh { get; private set; } = null!;
+    public ConfigEntry<int> LiveBackgroundRefreshSeconds { get; private set; } = null!;
+    public ConfigEntry<bool> SaveProfileWhileHermesOpen { get; private set; } = null!;
+    public ConfigEntry<int> ProfileSaveWhileHermesOpenSeconds { get; private set; } = null!;
     public ConfigEntry<int> RequestTimeoutSeconds { get; private set; } = null!;
     public ConfigEntry<bool> DetailedLogging { get; private set; } = null!;
     public ConfigEntry<bool> ShareDuplicateRequests { get; private set; } = null!;
@@ -172,6 +176,26 @@ internal sealed class HermesClientSettings
             "Read prepared workspace when opened",
             true,
             "Legacy compatibility setting. HERMES now refreshes the active prepared workspace whenever it opens or the selected HERMES workspace changes.");
+        EnableLiveBackgroundRefresh = config.Bind(
+            "General",
+            "Live background refresh",
+            true,
+            "Keeps HERMES workspace data and Assistant alerts synchronized with the SPT server even when the HERMES tab or workspace is not open.");
+        LiveBackgroundRefreshSeconds = config.Bind(
+            "General",
+            "Live background refresh seconds",
+            15,
+            "Seconds between lightweight server revision checks. Changed domains are refreshed and the Assistant alert feed is rebuilt automatically. Range: 10-300.");
+        SaveProfileWhileHermesOpen = config.Bind(
+            "General",
+            "Save profile while HERMES is open",
+            true,
+            "Asks the SPT server to persist the active profile when HERMES opens and periodically while it remains visible, matching EFT screens that trigger profile persistence.");
+        ProfileSaveWhileHermesOpenSeconds = config.Bind(
+            "General",
+            "Profile save while HERMES is open seconds",
+            30,
+            "Seconds between HERMES-triggered active profile saves while the HERMES tab is visible. Range: 15-300.");
         RequestTimeoutSeconds = config.Bind(
             "General",
             "Request timeout seconds",
@@ -879,9 +903,11 @@ internal sealed class HermesClientSettings
             Math.Clamp(HighValueUninsuredThreshold.Value, 0, 10_000_000));
     }
 
-    // Continuous polling was removed. Client presentation refreshes on tab transitions, while
-    // server source refreshes remain explicit or lifecycle-driven.
+    // Legacy per-panel timers remain disabled. The coordinator owns one shared live background
+    // refresh loop so every workspace and the Assistant alert feed move together.
     public int GetAutomaticRefreshSeconds() => 0;
+    public int GetLiveBackgroundRefreshSeconds() => Math.Clamp(LiveBackgroundRefreshSeconds.Value, 10, 300);
+    public int GetProfileSaveWhileHermesOpenSeconds() => Math.Clamp(ProfileSaveWhileHermesOpenSeconds.Value, 15, 300);
     public int GetRequestTimeoutSeconds() => Math.Clamp(RequestTimeoutSeconds.Value, 5, 60);
     public int GetLongRequestTimeoutSeconds() => Math.Max(30, GetRequestTimeoutSeconds());
     public int GetSlowRequestWarningSeconds() => Math.Clamp(SlowRequestWarningSeconds.Value, 1, 30);

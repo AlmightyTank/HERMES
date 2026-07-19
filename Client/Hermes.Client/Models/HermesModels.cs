@@ -8,6 +8,13 @@ public sealed class HermesProfileContextResponse
     public string ContextToken { get; set; } = string.Empty;
 }
 
+public sealed class HermesProfileSaveResponse
+{
+    public bool Saved { get; set; }
+    public string? Message { get; set; }
+    public double DurationSeconds { get; set; }
+}
+
 public sealed class HermesCacheStatusResponse
 {
     public bool Found { get; set; }

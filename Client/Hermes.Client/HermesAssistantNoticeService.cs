@@ -8,6 +8,7 @@ internal sealed class HermesAssistantNoticeService
 {
     private const int MaximumRetainedNotices = 8;
     private const long PreparedFeedReuseMilliseconds = 2000;
+    private const float PreparedFeedWarmupRetrySeconds = 2f;
 
     private readonly List<HermesAssistantNotice> _notices = [];
     private readonly HashSet<string> _dismissedFingerprints = new(StringComparer.Ordinal);
@@ -25,12 +26,15 @@ internal sealed class HermesAssistantNoticeService
     private long _serverRevision;
     private bool _serverSnapshotStale;
     private long _lastPreparedFeedFetchUnixMilliseconds;
+    private float _nextPreparedFeedCheckAt;
 
     public int ActiveNoticeCount => _notices.Count(notice => !notice.Dismissed);
 
     public HermesAssistantNoticeService()
     {
-        HermesNativeNotificationBridge.Configure(HandleNativeNotificationClick);
+        HermesNativeNotificationBridge.Configure(
+            HandleNativeNotificationClick,
+            HandleNativeNotificationDismiss);
     }
 
     public string GetDiagnosticsSummary()
@@ -46,6 +50,7 @@ internal sealed class HermesAssistantNoticeService
     {
         _hermesVisible = hermesVisible;
         _assistantVisible = assistantVisible;
+        CheckPreparedServerFeed();
         PublishPendingNativeNotices();
     }
 
@@ -135,15 +140,18 @@ internal sealed class HermesAssistantNoticeService
         if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
         {
             _status = "Alerts are disabled in F12 configuration.";
+            _nextPreparedFeedCheckAt = Time.realtimeSinceStartup + GetPreparedFeedCheckIntervalSeconds();
             return;
         }
 
         _checking = true;
+        var nextCheckSeconds = GetPreparedFeedCheckIntervalSeconds();
         try
         {
             var response = await HermesRevisionApiClient.GetAssistantAlertsAsync();
             if (!response.Found)
             {
+                nextCheckSeconds = PreparedFeedWarmupRetrySeconds;
                 var hasFallback = HasCompleteFallbackSnapshot();
                 RefreshFromCachedWorkspaceData(manual);
                 if (!hasFallback && !string.IsNullOrWhiteSpace(response.Message))
@@ -173,8 +181,12 @@ internal sealed class HermesAssistantNoticeService
             _lastPreparedFeedFetchUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (response.IsStale && HasCompleteFallbackSnapshot())
             {
+                nextCheckSeconds = PreparedFeedWarmupRetrySeconds;
                 RefreshFromCachedWorkspaceData(manual);
                 _status += " • server feed will be rematerialized by the next full or manual Refresh";
+                _status = _status.Replace(
+                    "server feed will be rematerialized by the next full or manual Refresh",
+                    "server feed is being rematerialized by live sync");
                 return;
             }
 
@@ -193,6 +205,7 @@ internal sealed class HermesAssistantNoticeService
         }
         catch (Exception ex)
         {
+            nextCheckSeconds = PreparedFeedWarmupRetrySeconds;
             if (Plugin.Settings.DetailedLogging.Value)
             {
                 Plugin.Log.LogWarning($"HERMES prepared Assistant feed used the local fallback: {ex.Message}");
@@ -204,6 +217,7 @@ internal sealed class HermesAssistantNoticeService
         {
             _checking = false;
             _serverRefreshTask = null;
+            _nextPreparedFeedCheckAt = Time.realtimeSinceStartup + nextCheckSeconds;
         }
     }
 
@@ -221,6 +235,36 @@ internal sealed class HermesAssistantNoticeService
                                                     && alert.NumericValue >= Plugin.Settings.GetMinimumAssistantNoticeStashValue(),
             _ => true
         };
+
+    private void CheckPreparedServerFeed()
+    {
+        if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
+        {
+            return;
+        }
+
+        if (_checking
+            || _serverRefreshTask is { IsCompleted: false }
+            || Time.realtimeSinceStartup < _nextPreparedFeedCheckAt)
+        {
+            return;
+        }
+
+        if (!Plugin.Settings.ShowAssistantNoticesDuringRaid.Value && IsRaidActive())
+        {
+            return;
+        }
+
+        _ = RefreshFromPreparedServerAsync(manual: false);
+    }
+
+    private static float GetPreparedFeedCheckIntervalSeconds()
+    {
+        var noticeIntervalSeconds = Plugin.Settings.GetAssistantNoticeCheckIntervalMinutes() * 60f;
+        return Plugin.Settings.EnableLiveBackgroundRefresh.Value
+            ? Math.Min(noticeIntervalSeconds, Plugin.Settings.GetLiveBackgroundRefreshSeconds())
+            : noticeIntervalSeconds;
+    }
 
     private bool HasCompleteFallbackSnapshot()
         => _cachedLoadout is { Found: true }
@@ -608,7 +652,7 @@ internal sealed class HermesAssistantNoticeService
     private void PublishPendingNativeNotices()
     {
         if (!Plugin.Settings.EnableProactiveAssistantNotices.Value
-            || _assistantVisible
+            || (_hermesVisible && _assistantVisible)
             || (!Plugin.Settings.ShowAssistantNoticesDuringRaid.Value && IsRaidActive())
             || (!_hermesVisible && !Plugin.Settings.ShowAssistantNoticesWhenClosed.Value))
         {
@@ -654,13 +698,22 @@ internal sealed class HermesAssistantNoticeService
             RemoveNotice(notice, rememberDismissal: true);
         }
 
-        Plugin.Instance?.OpenNoticeTarget(targetTab);
+        Plugin.Instance?.OpenNoticeTarget("Assistant");
+    }
+
+    private void HandleNativeNotificationDismiss(string noticeId)
+    {
+        var notice = _notices.FirstOrDefault(candidate => candidate.Id == noticeId);
+        if (notice is not null)
+        {
+            RemoveNotice(notice, rememberDismissal: true);
+        }
     }
 
     private void OpenNotice(HermesAssistantNotice notice, Action<string> navigate)
     {
         DismissNotice(notice);
-        navigate(notice.TargetTab);
+        navigate("Assistant");
     }
 
     private void DismissNotice(HermesAssistantNotice notice)

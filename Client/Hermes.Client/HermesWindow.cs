@@ -64,7 +64,9 @@ internal sealed class HermesWindow
     private bool _refreshingCurrent;
     private bool _cacheStatusRequested;
     private bool _cacheStatusLoading;
+    private Task? _profileSaveTask;
     private float _nextCacheStatusRefresh;
+    private float _nextProfileSaveAt;
     private HermesCacheStatusResponse? _cacheStatus;
     private string? _refreshStatus;
 
@@ -94,8 +96,13 @@ internal sealed class HermesWindow
     {
         if (visible)
         {
+            var wasVisible = _visible;
             _nativeMode = true;
             _visible = true;
+            if (!wasVisible)
+            {
+                _nextProfileSaveAt = Time.realtimeSinceStartup;
+            }
             OnPresentationOpened();
             return;
         }
@@ -366,7 +373,47 @@ internal sealed class HermesWindow
 
     public void Tick()
     {
-        _noticeService.Tick(_visible, _activeTab == HermesTab.Assistant);
+        TickProfileSave();
+        _noticeService.Tick(_visible, _visible && _activeTab == HermesTab.Assistant);
+    }
+
+    private void TickProfileSave()
+    {
+        if (!_visible
+            || !Plugin.Settings.SaveProfileWhileHermesOpen.Value
+            || _profileSaveTask is { IsCompleted: false }
+            || Time.realtimeSinceStartup < _nextProfileSaveAt)
+        {
+            return;
+        }
+
+        _nextProfileSaveAt = Time.realtimeSinceStartup + Plugin.Settings.GetProfileSaveWhileHermesOpenSeconds();
+        _profileSaveTask = SaveActiveProfileAsync();
+    }
+
+    private async Task SaveActiveProfileAsync()
+    {
+        try
+        {
+            var response = await HermesApiClient.SaveProfileAsync();
+            if (Plugin.Settings.DetailedLogging.Value)
+            {
+                Plugin.Log?.LogDebug(response.Saved
+                    ? $"HERMES active profile save completed in {response.DurationSeconds:N3}s."
+                    : response.Message ?? "HERMES active profile save was not accepted.");
+            }
+        }
+        catch (Exception ex)
+        {
+            if (Plugin.Settings.DetailedLogging.Value)
+            {
+                Plugin.Log?.LogWarning($"HERMES active profile save failed: {ex.Message}");
+            }
+        }
+        finally
+        {
+            _profileSaveTask = null;
+        }
     }
 
     public void Draw()

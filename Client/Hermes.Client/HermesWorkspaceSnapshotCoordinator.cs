@@ -5,10 +5,9 @@ using UnityEngine;
 namespace Hermes.Client;
 
 /// <summary>
-/// Owns one automatic full workspace load during profile startup and one after each raid.
-/// Between those full loads, opening a workspace downloads that workspace's already-prepared
-/// server summary so the screen always reflects the server cache. The top Refresh button is the
-/// only path that first asks the server to recheck source data before downloading the active view.
+/// Owns the shared workspace snapshot pipeline. Startup and post-raid use full loads, while a
+/// lightweight live revision check keeps changed workspace summaries and Assistant alerts current
+/// even when the HERMES tab is not selected.
 /// </summary>
 internal sealed class HermesWorkspaceSnapshotCoordinator
 {
@@ -39,6 +38,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     private HermesLoadoutSummaryResponse? _cachedLoadout;
     private Task<HermesLoadoutSummaryResponse>? _sharedLoadoutTask;
     private Task<HermesLoadoutSummaryResponse>? _preRaidPrefetchTask;
+    private Task? _liveRefreshTask;
     private HermesLoadoutSummaryResponse? _preRaidPreparedLoadout;
     private long _preRaidPreparedUnixTime;
     private int _preRaidPrefetchGeneration;
@@ -50,6 +50,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     private bool _legacyRefreshSuppressed;
     private float _nextRaidStateCheckAt;
     private float _nextCheckAt;
+    private float _nextLiveRefreshAt;
     private long _revision;
     private string? _profileToken;
     private string _hideoutSemanticFingerprint = string.Empty;
@@ -60,10 +61,10 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     internal static HermesWorkspaceSnapshotCoordinator? Current { get; private set; }
 
     /// <summary>
-    /// True while the one automatic startup/post-raid full workspace load is running.
-    /// There is no continuous client-side workspace watch in the materialized workspace pipeline.
+    /// True while the automatic startup/post-raid full workspace load or live background sync is running.
     /// </summary>
-    internal static bool IsBackgroundCheckActive => Current?._loading == true;
+    internal static bool IsBackgroundCheckActive
+        => Current?._loading == true || Current?._liveRefreshTask is { IsCompleted: false };
 
     /// <summary>
     /// True after Hideout, Crafts, Stash, and Loadout have all been loaded for the active PMC.
@@ -243,6 +244,9 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     {
         _window = window;
         _nextCheckAt = Time.realtimeSinceStartup + InitialDelaySeconds;
+        _nextLiveRefreshAt = Time.realtimeSinceStartup
+                             + InitialDelaySeconds
+                             + Plugin.Settings.GetLiveBackgroundRefreshSeconds();
         InvalidateProfileBoundRequests();
         SuppressLegacyAutomaticRefresh();
     }
@@ -384,6 +388,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
     {
         ApplyPending();
         TrackRaidLifecycle();
+        QueueLiveBackgroundRefresh();
 
         if (_loading || !_automaticFullLoadPending || Time.realtimeSinceStartup < _nextCheckAt)
         {
@@ -526,6 +531,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         finally
         {
             _loading = false;
+            _nextLiveRefreshAt = Time.realtimeSinceStartup + Plugin.Settings.GetLiveBackgroundRefreshSeconds();
         }
     }
 
@@ -621,6 +627,171 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         }
 
         return await GetSharedLoadoutAsync(forceRefresh: true);
+    }
+
+    private void QueueLiveBackgroundRefresh()
+    {
+        if (!Plugin.Settings.EnableLiveBackgroundRefresh.Value
+            || !_initialized
+            || _automaticFullLoadPending
+            || _loading
+            || _liveRefreshTask is { IsCompleted: false })
+        {
+            return;
+        }
+
+        var now = Time.realtimeSinceStartup;
+        if (now < _nextLiveRefreshAt)
+        {
+            return;
+        }
+
+        _nextLiveRefreshAt = now + Plugin.Settings.GetLiveBackgroundRefreshSeconds();
+        _liveRefreshTask = RefreshChangedWorkspacesAsync();
+    }
+
+    private async Task RefreshChangedWorkspacesAsync()
+    {
+        try
+        {
+            var changes = await TryFetchAsync(
+                () => HermesRevisionApiClient.GetChangesAsync(_revision),
+                "live revision check");
+            if (changes is not { Found: true })
+            {
+                return;
+            }
+
+            var profileChanged = !string.IsNullOrWhiteSpace(_profileToken)
+                                 && !string.IsNullOrWhiteSpace(changes.ContextToken)
+                                 && !string.Equals(
+                                     _profileToken,
+                                     changes.ContextToken,
+                                     StringComparison.Ordinal);
+            var hasServerChanges = changes.Changed?.Count > 0;
+            if (!profileChanged && !hasServerChanges)
+            {
+                _revision = Math.Max(_revision, changes.Revision);
+                return;
+            }
+
+            if (profileChanged)
+            {
+                InvalidateProfileBoundRequests();
+                ClearProfileBoundWorkspaceData();
+                ClearSemanticFingerprints();
+            }
+
+            if (!string.IsNullOrWhiteSpace(changes.ContextToken))
+            {
+                _profileToken = changes.ContextToken;
+            }
+
+            _revision = Math.Max(_revision, changes.Revision);
+
+            var refreshAll = profileChanged;
+            var refreshHideout = refreshAll || HasChangedDomain(changes, "hideout");
+            var refreshCrafts = refreshAll
+                                || HasChangedDomain(changes, "crafts")
+                                || HasChangedDomain(changes, "market")
+                                || HasChangedDomain(changes, "catalog");
+            var refreshStash = refreshAll
+                               || HasChangedDomain(changes, "stash")
+                               || HasChangedDomain(changes, "market")
+                               || HasChangedDomain(changes, "catalog");
+            var refreshLoadout = refreshAll
+                                 || HasChangedDomain(changes, "loadout")
+                                 || HasChangedDomain(changes, "raidPlanner");
+
+            var hideoutTask = refreshHideout
+                ? TryFetchAsync(
+                    HermesWorkspaceSummaryApiClient.GetHideoutSummaryAsync,
+                    "live hideout refresh")
+                : Task.FromResult<HermesHideoutSummaryResponse?>(null);
+            var craftsTask = refreshCrafts
+                ? TryFetchAsync(
+                    HermesWorkspaceSummaryApiClient.GetCraftsAsync,
+                    "live crafts refresh")
+                : Task.FromResult<HermesCraftsResponse?>(null);
+            var stashTask = refreshStash
+                ? TryFetchAsync(
+                    () => HermesApiClient.GetStashSummaryAsync(Plugin.Settings.CreateStashRequestSettings()),
+                    "live stash refresh")
+                : Task.FromResult<HermesStashSummaryResponse?>(null);
+            var loadoutTask = refreshLoadout
+                ? TryFetchAsync(
+                    () => GetSharedLoadoutAsync(forceRefresh: true),
+                    "live loadout refresh")
+                : Task.FromResult<HermesLoadoutSummaryResponse?>(null);
+
+            await Task.WhenAll((Task)hideoutTask, craftsTask, stashTask, loadoutTask);
+
+            var hideout = hideoutTask.Result;
+            var crafts = craftsTask.Result;
+            var stash = stashTask.Result;
+            var loadout = loadoutTask.Result;
+            var preparedAssistantFeed = false;
+
+            var prepared = await TryFetchAsync(
+                () => HermesRevisionApiClient.PrepareAssistantFeedAsync(
+                    Plugin.Settings.CreateStashRequestSettings(),
+                    Plugin.Settings.CreateLoadoutRequestSettings()),
+                "live Assistant feed registration");
+            if (prepared is { Prepared: true })
+            {
+                preparedAssistantFeed = true;
+                if (refreshHideout && hideout is not { Found: true })
+                {
+                    hideout = await TryFetchAsync(
+                        HermesWorkspaceSummaryApiClient.GetHideoutSummaryAsync,
+                        "live cached hideout recovery");
+                }
+                if (refreshCrafts && crafts is not { Found: true })
+                {
+                    crafts = await TryFetchAsync(
+                        HermesWorkspaceSummaryApiClient.GetCraftsAsync,
+                        "live cached crafts recovery");
+                }
+                if (refreshStash && stash is not { Found: true })
+                {
+                    stash = await TryFetchAsync(
+                        () => HermesApiClient.GetStashSummaryAsync(Plugin.Settings.CreateStashRequestSettings()),
+                        "live cached stash recovery");
+                }
+                if (refreshLoadout && loadout is not { Found: true })
+                {
+                    loadout = await TryFetchAsync(
+                        () => GetSharedLoadoutAsync(forceRefresh: false),
+                        "live cached loadout recovery");
+                }
+
+                changes = new HermesChangesResponse
+                {
+                    Found = true,
+                    ContextToken = prepared.ContextToken,
+                    Revision = prepared.Revision,
+                    Domains = prepared.Domains,
+                    Changed = changes.Changed ?? []
+                };
+            }
+
+            lock (_pendingSync)
+            {
+                _pendingDeltas.Enqueue(new DeltaBundle(
+                    changes,
+                    hideout,
+                    crafts,
+                    stash,
+                    loadout,
+                    manual: false,
+                    preparedAssistantFeed: preparedAssistantFeed));
+            }
+        }
+        finally
+        {
+            _liveRefreshTask = null;
+            _nextLiveRefreshAt = Time.realtimeSinceStartup + Plugin.Settings.GetLiveBackgroundRefreshSeconds();
+        }
     }
 
     private async Task RefreshWorkspaceCoreAsync(string workspace, bool manual)
@@ -1193,15 +1364,20 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         // Background server revisions are intentionally silent. They update only the affected
         // workspace models and never replace the normal workspace subtitle with diagnostic text.
         RefreshStatusField.SetValue(_window, string.Empty);
-        if (changed.Count > 0 || delta.Manual)
+        if (changed.Count > 0 || delta.Manual || delta.PreparedAssistantFeed || delta.Changes.Changed?.Count > 0)
         {
             UpdateNoticeCandidates(manual: delta.Manual);
+        }
+        if (delta.PreparedAssistantFeed
+            && NoticeServiceField.GetValue(_window) is HermesAssistantNoticeService notices)
+        {
+            _ = notices.RefreshFromPreparedServerAsync(manual: false);
         }
         if (Plugin.Settings.DetailedLogging.Value)
         {
             var displayed = changed.Count > 0
                 ? string.Join(", ", changed)
-                : string.Join(", ", delta.Changes.Changed);
+                : string.Join(", ", delta.Changes.Changed ?? []);
             Plugin.Log.LogDebug(
                 $"HERMES applied server revision {_revision}: {displayed}."
                 + (string.IsNullOrWhiteSpace(delta.Changes.Reason)
@@ -1581,7 +1757,8 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             HermesCraftsResponse? crafts,
             HermesStashSummaryResponse? stash,
             HermesLoadoutSummaryResponse? loadout,
-            bool manual)
+            bool manual,
+            bool preparedAssistantFeed = false)
         {
             Changes = changes;
             Hideout = hideout;
@@ -1589,6 +1766,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             Stash = stash;
             Loadout = loadout;
             Manual = manual;
+            PreparedAssistantFeed = preparedAssistantFeed;
         }
 
         public HermesChangesResponse Changes { get; }
@@ -1597,5 +1775,6 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         public HermesStashSummaryResponse? Stash { get; }
         public HermesLoadoutSummaryResponse? Loadout { get; }
         public bool Manual { get; }
+        public bool PreparedAssistantFeed { get; }
     }
 }

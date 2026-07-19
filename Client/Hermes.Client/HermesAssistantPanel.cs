@@ -297,10 +297,13 @@ internal sealed class HermesAssistantPanel
             GUILayout.BeginHorizontal();
             foreach (var prompt in GetSuggestedPromptButtons(selectedItem))
             {
+                GUI.enabled = !_loading;
                 if (GUILayout.Button(prompt, GUILayout.Height(HermesUi.ToolbarHeight), GUILayout.ExpandWidth(true)))
                 {
-                    _input = prompt;
+                    _input = string.Empty;
+                    _ = SubmitPromptAsync(prompt, selectedItem, selectedInstanceKey, true);
                 }
+                GUI.enabled = true;
             }
             GUILayout.EndHorizontal();
             GUILayout.Space(HermesUi.SmallSpace);

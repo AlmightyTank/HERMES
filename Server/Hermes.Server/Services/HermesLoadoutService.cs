@@ -589,6 +589,7 @@ public sealed class HermesLoadoutService(
         HermesLoadoutAnalysisSettings settings)
     {
         var output = new List<HermesArmorReadiness>();
+        var hasTorsoArmor = false;
         foreach (var root in roots.Where(item => ArmorSlots.Contains(item.SlotId ?? string.Empty)))
         {
             var tree = CollectTree(root, children);
@@ -613,6 +614,13 @@ public sealed class HermesLoadoutService(
                 .Select(item => GetTemplate(item.TemplateId).ArmorClass)
                 .DefaultIfEmpty(0)
                 .Max();
+            if (maximumArmorClass > 0
+                && (string.Equals(root.SlotId, "ArmorVest", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(root.SlotId, "TacticalVest", StringComparison.OrdinalIgnoreCase)))
+            {
+                hasTorsoArmor = true;
+            }
+
             var plateSlots = new List<PlateSlotState>();
 
             foreach (var parent in tree)
@@ -672,12 +680,12 @@ public sealed class HermesLoadoutService(
                 localWarnings));
         }
 
-        if (output.Count == 0)
+        if (!hasTorsoArmor)
         {
             warnings.Add(new HermesLoadoutWarning(
-                "Warning",
+                "Critical",
                 "Armor",
-                "No body armor, armored rig, or armored headwear is equipped."));
+                "No body armor or armored rig is equipped."));
         }
 
         return output;

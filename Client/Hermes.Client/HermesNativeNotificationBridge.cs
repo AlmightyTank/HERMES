@@ -20,6 +20,7 @@ internal static class HermesNativeNotificationBridge
         BindingFlags.Instance | BindingFlags.NonPublic);
 
     private static Action<string, string>? _clicked;
+    private static Action<string>? _dismissed;
 
     public static int ActiveCount
     {
@@ -32,9 +33,10 @@ internal static class HermesNativeNotificationBridge
         }
     }
 
-    public static void Configure(Action<string, string> clicked)
+    public static void Configure(Action<string, string> clicked, Action<string>? dismissed = null)
     {
         _clicked = clicked;
+        _dismissed = dismissed;
     }
 
     public static bool TryShow(
@@ -116,6 +118,39 @@ internal static class HermesNativeNotificationBridge
         catch (Exception ex)
         {
             Plugin.Log?.LogError($"HERMES native notification click failed: {ex}");
+        }
+
+        return true;
+    }
+
+    public static bool TryDismissNativeClick(object? notification)
+    {
+        var description = TryReadDescription(notification);
+        if (string.IsNullOrWhiteSpace(description))
+        {
+            return false;
+        }
+
+        NativeRegistration? registration;
+        lock (Sync)
+        {
+            if (!ByDescription.TryGetValue(description, out registration))
+            {
+                return false;
+            }
+
+            ByDescription.Remove(description);
+            ById.Remove(registration.NoticeId);
+        }
+
+        HideNativeView(registration.Description);
+        try
+        {
+            _dismissed?.Invoke(registration.NoticeId);
+        }
+        catch (Exception ex)
+        {
+            Plugin.Log?.LogError($"HERMES native notification dismiss failed: {ex}");
         }
 
         return true;
