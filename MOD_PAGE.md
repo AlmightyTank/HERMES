@@ -74,9 +74,19 @@ SPT/user/mods/HERMES/Hermes.Server.dll
 
 ## Configuration
 
-HERMES creates its BepInEx configuration after first launch. Open the in-game Configuration Manager with **F12** to adjust Assistant, market, Hideout, craft, stash, loadout, Raid Planner, notification, and interface settings.
+HERMES creates its BepInEx configuration after first launch. Open the in-game Configuration Manager with **F12** to adjust Assistant, market, Hideout, craft, stash, loadout, Raid Planner, notification, and interface settings, including **Interface -> Font size percent**.
 
 The top **Refresh** button performs a stronger source recheck when you have changed gear, stash contents, Hideout state, quest progress, or other profile data and want HERMES to reread it immediately.
+
+## Update Log
+
+### 1.0.2
+
+- Added a configurable native UI font-size option under **Interface -> Font size percent**.
+- Added default and maximum button sizing so larger font settings stay readable without oversized controls.
+- Moved the HERMES inventory tab to appear after Tasks.
+- Improved tab placement compatibility with mods such as WeekendDrops by preserving later tabs, including tabs added after Prestige.
+- Updated package, client, and server version reporting to **1.0.2**.
 
 ## Important Notes
 

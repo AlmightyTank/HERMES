@@ -63,6 +63,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
     private float _lastRootWidth = -1f;
     private float _nextSyncAt;
     private int _lastClientRefreshRevision;
+    private int _lastFontSizePercent = -1;
 
     internal void Initialize(HermesWindow window)
     {
@@ -278,8 +279,15 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         _diagnosticsLabel.enableWordWrapping = true;
         _diagnosticsLabel.gameObject.AddComponent<LayoutElement>().preferredHeight = 32f;
 
-        var copyButton = CreateNativeButton("CopyDiagnostics", _diagnosticsObject.transform, "COPY DIAGNOSTICS", 160f);
-        copyButton.Layout.preferredHeight = 28f;
+        var copyButton = CreateNativeButton(
+            "CopyDiagnostics",
+            _diagnosticsObject.transform,
+            "COPY DIAGNOSTICS",
+            160f,
+            preferredHeight: 28f,
+            minHeight: 28f,
+            maxPreferredHeight: 40f,
+            maxMinHeight: 38f);
         copyButton.AddListener(() =>
         {
             if (_window == null)
@@ -422,6 +430,16 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         var refreshing = HermesEftWindowReflection.IsRefreshing(_window);
         var searching = HermesNativeSearchBridge.IsSearching(_window);
         var tabChanged = force || !string.Equals(tabName, _lastTabName, StringComparison.Ordinal);
+        var fontSizePercent = Plugin.Settings.GetInterfaceFontSizePercent();
+        if (force || fontSizePercent != _lastFontSizePercent)
+        {
+            _lastFontSizePercent = fontSizePercent;
+            HermesNativeUiFramework.ApplyConfiguredFontSizes(this);
+            if (_rootRect != null)
+            {
+                LayoutRebuilder.ForceRebuildLayoutImmediate(_rootRect);
+            }
+        }
 
         if (tabChanged)
         {
@@ -442,7 +460,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         if (_statusLabel != null)
         {
             _statusLabel.text = refreshing
-                ? NormalizeActivityStatus(HermesEftWindowReflection.RefreshStatus(_window), "SYNCING CURRENT VIEW")
+                ? NormalizeActivityStatus(HermesEftWindowReflection.RefreshStatus(_window) ?? string.Empty, "SYNCING CURRENT VIEW")
                 : WorkspaceSubtitle(tabName);
         }
 
@@ -719,7 +737,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         if (spawnable != null)
         {
             spawnable.method_1(_toggleGroup!);
-            spawnable.method_2(label, 19, null, null);
+            spawnable.method_2(label, HermesNativeUiFramework.ScaleFontSize(19), null, null);
         }
         toggle.group = _toggleGroup;
         toggle.interactable = true;
@@ -764,7 +782,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
             }
 
             text.text = label;
-            text.fontSize = 19f;
+            HermesNativeUiFramework.SetFontSize(text, 19f);
             text.enableAutoSizing = false;
             text.alignment = TextAlignmentOptions.Center;
             text.margin = Vector4.zero;
@@ -784,7 +802,16 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         return toggle;
     }
 
-    private HermesNativeButtonHandle CreateNativeButton(string name, Transform parent, string label, float width)
+    private HermesNativeButtonHandle CreateNativeButton(
+        string name,
+        Transform parent,
+        string label,
+        float width,
+        float preferredHeight = HermesNativeUiFramework.DefaultButtonPreferredHeight,
+        float minHeight = HermesNativeUiFramework.DefaultButtonMinHeight,
+        float? maxPreferredWidth = null,
+        float? maxPreferredHeight = null,
+        float? maxMinHeight = null)
     {
         GameObject buttonObject;
         DefaultUIButton? nativeButton = null;
@@ -808,10 +835,15 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         var rect = (RectTransform)buttonObject.transform;
         rect.localScale = Vector3.one;
         var layout = buttonObject.GetComponent<LayoutElement>() ?? buttonObject.AddComponent<LayoutElement>();
-        layout.preferredWidth = width;
-        layout.minWidth = width;
-        layout.preferredHeight = 40f;
-        layout.minHeight = 36f;
+        HermesNativeUiFramework.SetScalableButtonSize(
+            layout,
+            defaultPreferredWidth: width,
+            defaultMinWidth: width,
+            defaultPreferredHeight: preferredHeight,
+            defaultMinHeight: minHeight,
+            maxPreferredWidth: maxPreferredWidth,
+            maxPreferredHeight: maxPreferredHeight,
+            maxMinHeight: maxMinHeight);
         layout.flexibleWidth = 0f;
 
         var handle = new HermesNativeButtonHandle(buttonObject, layout, nativeButton, fallbackButton, fallbackLabel);
@@ -980,7 +1012,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
         {
             text.font = font;
         }
-        text.fontSize = size;
+        HermesNativeUiFramework.SetFontSize(text, size);
         text.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
         text.alignment = alignment;
         text.enableWordWrapping = false;
@@ -1178,13 +1210,15 @@ internal sealed class HermesNativeButtonHandle
             {
                 if (SetRawTextWithSizeMethod != null)
                 {
-                    SetRawTextWithSizeMethod.Invoke(_nativeButton, [text, 18]);
+                    SetRawTextWithSizeMethod.Invoke(_nativeButton, [text, HermesNativeUiFramework.ScaleFontSize(18)]);
+                    BindNativeLabels(18f);
                     return;
                 }
 
                 if (SetRawTextMethod != null)
                 {
                     SetRawTextMethod.Invoke(_nativeButton, [text]);
+                    BindNativeLabels(18f);
                     return;
                 }
             }
@@ -1196,6 +1230,7 @@ internal sealed class HermesNativeButtonHandle
             foreach (var label in _gameObject.GetComponentsInChildren<TMP_Text>(true))
             {
                 label.text = text;
+                HermesNativeUiFramework.SetFontSize(label, 18f);
             }
 
             var iconContainer = _gameObject.transform.Find("SizeLabel/IconContainer")?.gameObject;
@@ -1204,6 +1239,14 @@ internal sealed class HermesNativeButtonHandle
         else if (_fallbackLabel != null)
         {
             _fallbackLabel.text = text;
+        }
+    }
+
+    private void BindNativeLabels(float baseSize)
+    {
+        foreach (var label in _gameObject.GetComponentsInChildren<TMP_Text>(true))
+        {
+            HermesNativeUiFramework.SetFontSize(label, baseSize);
         }
     }
 

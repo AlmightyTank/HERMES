@@ -14,6 +14,7 @@ namespace Hermes.Client;
 internal sealed class HermesNativeScreenHost : MonoBehaviour
 {
     private const float RetryDelaySeconds = 1f;
+    private const float TabPositionEpsilon = 0.01f;
     private const float FullScreenTopInsetPixels = 54f;
     private const float FullScreenBottomInsetPixels = 58f;
     private const float FullScreenSideInsetPixels = 8f;
@@ -167,6 +168,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         StopInitialHeaderSettle();
 
         HideHermesVisualsImmediate();
+        RestoreShiftedTabPositions(_hermesTabObject?.transform.parent);
         if (_hermesTabObject != null)
         {
             _hermesTabObject.SetActive(false);
@@ -193,6 +195,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
 
         if (!nativeEnabled)
         {
+            RestoreShiftedTabPositions(_hermesTabObject?.transform.parent);
             if (IsShowingHermes)
             {
                 HideHermes(false);
@@ -564,11 +567,18 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
                 return false;
             }
 
-            _hermesTab.UpdateVisual(false);
+            var hermesTab = _hermesTab;
+            var hermesTabObject = _hermesTabObject;
+            if (hermesTab == null || hermesTabObject == null)
+            {
+                return false;
+            }
+
+            hermesTab.UpdateVisual(false);
             _readyGeneration = generation;
-            _hermesTabObject.SetActive(Plugin.Settings.UseNativeInventoryTabs.Value
-                                       && _inventoryOpen
-                                       && generation == _showGeneration);
+            hermesTabObject.SetActive(Plugin.Settings.UseNativeInventoryTabs.Value
+                                      && _inventoryOpen
+                                      && generation == _showGeneration);
             RepairInitialHeaderState();
             QueueInitialHeaderSettle(generation);
 
@@ -679,14 +689,8 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
     {
         var template = ResolveAchievementsTemplate()
                        ?? throw new InvalidOperationException("EFT did not provide the Achievements Tab template.");
-        var prestigeTab = ResolvePrestigeTab()
-                          ?? throw new InvalidOperationException("EFT did not provide the Prestige Tab used to position HERMES.");
         var parent = template.transform.parent
                      ?? throw new InvalidOperationException("The EFT Achievements Tab template has no parent.");
-        if (prestigeTab.transform.parent != parent)
-        {
-            throw new InvalidOperationException("The Achievements and Prestige tabs do not share the same tab-strip parent.");
-        }
 
         RemoveDuplicateHermesTabs(parent, keep: null);
 
@@ -695,7 +699,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         var tabObject = UnityEngine.Object.Instantiate(template.gameObject, parent, false);
         tabObject.name = "HERMES_Tab";
         tabObject.SetActive(false);
-        PositionHermesAfterPrestige(tabObject.transform, template.transform, prestigeTab.transform, parent);
+        PositionHermesAfterTasksTab(tabObject.transform, template.transform, parent);
 
         var hermesTab = tabObject.GetComponent<global::Tab>()
                         ?? throw new InvalidOperationException("The cloned EFT tab does not contain Tab.");
@@ -749,12 +753,9 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         }
 
         var achievementsTab = ResolveAchievementsTemplate();
-        var prestigeTab = ResolvePrestigeTab();
         var parent = achievementsTab?.transform.parent;
         if (achievementsTab == null
-            || prestigeTab == null
-            || parent == null
-            || prestigeTab.transform.parent != parent)
+            || parent == null)
         {
             return;
         }
@@ -765,10 +766,9 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         }
 
         RemoveDuplicateHermesTabs(parent, _hermesTabObject);
-        PositionHermesAfterPrestige(
+        PositionHermesAfterTasksTab(
             _hermesTabObject.transform,
             achievementsTab.transform,
-            prestigeTab.transform,
             parent);
         SetTabLabel(_hermesTab!);
     }
@@ -780,11 +780,8 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
             return;
         }
 
-        var prestigeTab = ResolvePrestigeTab();
-        var parent = prestigeTab?.transform.parent;
-        if (prestigeTab == null
-            || parent == null
-            || _hermesTabObject.transform.parent != parent)
+        var parent = _hermesTabObject.transform.parent;
+        if (parent == null)
         {
             return;
         }
@@ -792,76 +789,173 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         var layoutGroup = parent.GetComponent<LayoutGroup>();
         if (layoutGroup != null && layoutGroup.isActiveAndEnabled)
         {
-            // Layout groups own geometry. The external tab must remain after Prestige.
+            // Layout groups own geometry. Placement already keeps HERMES after Tasks.
+            return;
+        }
+
+        var anchorTab = ResolveRightEdgeAnchor(parent, _hermesTabObject.transform);
+        var placeAfterAnchor = false;
+        if (anchorTab == null)
+        {
+            anchorTab = ResolveTasksTab();
+            placeAfterAnchor = true;
+        }
+
+        if (anchorTab == null
+            || anchorTab.transform.parent != parent)
+        {
             return;
         }
 
         var hermesIndex = _hermesTabObject.transform.GetSiblingIndex();
-        var prestigeIndex = prestigeTab.transform.GetSiblingIndex();
-        if (selected)
+        var anchorIndex = anchorTab.transform.GetSiblingIndex();
+        if (placeAfterAnchor)
         {
-            if (hermesIndex == prestigeIndex + 1)
+            if (hermesIndex == anchorIndex + 1)
             {
                 return;
             }
 
-            // When HERMES is currently before Prestige, removing it shifts Prestige
-            // left by one, so the original Prestige index becomes the after position.
-            var targetIndex = hermesIndex < prestigeIndex
-                ? prestigeIndex
-                : Math.Min(prestigeIndex + 1, Math.Max(0, parent.childCount - 1));
+            var afterTarget = hermesIndex < anchorIndex
+                ? anchorIndex
+                : Math.Min(anchorIndex + 1, Math.Max(0, parent.childCount - 1));
+            _hermesTabObject.transform.SetSiblingIndex(afterTarget);
+            return;
+        }
+
+        if (selected)
+        {
+            if (hermesIndex == anchorIndex + 1)
+            {
+                return;
+            }
+
+            // When HERMES is currently before the anchor, removing it shifts the anchor
+            // left by one, so the original anchor index becomes the after position.
+            var targetIndex = hermesIndex < anchorIndex
+                ? anchorIndex
+                : Math.Min(anchorIndex + 1, Math.Max(0, parent.childCount - 1));
             _hermesTabObject.transform.SetSiblingIndex(targetIndex);
             return;
         }
 
-        if (hermesIndex + 1 == prestigeIndex)
+        if (hermesIndex + 1 == anchorIndex)
         {
             return;
         }
 
-        var inactiveTarget = hermesIndex < prestigeIndex
-            ? Math.Max(0, prestigeIndex - 1)
-            : prestigeIndex;
+        var inactiveTarget = hermesIndex < anchorIndex
+            ? Math.Max(0, anchorIndex - 1)
+            : anchorIndex;
         _hermesTabObject.transform.SetSiblingIndex(inactiveTarget);
     }
 
-    private static void PositionHermesAfterPrestige(
+    private void PositionHermesAfterTasksTab(
         Transform hermesTransform,
-        Transform achievementsTransform,
-        Transform prestigeTransform,
+        Transform templateTransform,
+        Transform parent)
+    {
+        var tasksTransform = ResolveTasksTab()?.transform;
+        if (tasksTransform == null || tasksTransform.parent != parent)
+        {
+            var fallbackAnchor = ResolvePlacementAnchor(parent)?.transform
+                                 ?? ResolvePrestigeTab()?.transform
+                                 ?? templateTransform;
+            var fallbackPrevious = ResolvePreviousPlacementTab(parent, fallbackAnchor, templateTransform);
+            PositionHermesAfterTab(hermesTransform, fallbackPrevious, fallbackAnchor, parent);
+            return;
+        }
+
+        var layoutGroup = parent.GetComponent<LayoutGroup>();
+        if (layoutGroup != null && layoutGroup.isActiveAndEnabled)
+        {
+            PlaceHermesAfterAnchor(hermesTransform, tasksTransform, parent);
+            if (parent is RectTransform layoutParentRect)
+            {
+                LayoutRebuilder.ForceRebuildLayoutImmediate(layoutParentRect);
+            }
+
+            return;
+        }
+
+        RestoreShiftedTabPositions(parent);
+
+        if (hermesTransform is not RectTransform hermesRect
+            || tasksTransform is not RectTransform tasksRect)
+        {
+            PositionHermesAfterTab(hermesTransform, null, tasksTransform, parent);
+            return;
+        }
+
+        var step = ResolveTabSpacingAfter(parent, tasksTransform)
+                   ?? ResolveTabSpacingBefore(parent, tasksTransform)
+                   ?? ResolveTabSpacingBefore(parent, templateTransform);
+        if (step == null || step.Value.sqrMagnitude <= TabPositionEpsilon)
+        {
+            PositionHermesAfterTab(hermesTransform, null, tasksTransform, parent);
+            return;
+        }
+
+        var insertionPosition = tasksRect.anchoredPosition + step.Value;
+        ShiftTabsAtOrAfter(parent, hermesTransform, tasksTransform, insertionPosition, step.Value);
+        hermesRect.anchoredPosition = insertionPosition;
+
+        var rightEdgeAnchor = ResolveRightEdgeAnchor(parent, hermesTransform)?.transform;
+        if (rightEdgeAnchor != null)
+        {
+            PlaceHermesBeforeAnchor(hermesTransform, rightEdgeAnchor);
+            if (parent is RectTransform rightEdgeParentRect)
+            {
+                LayoutRebuilder.ForceRebuildLayoutImmediate(rightEdgeParentRect);
+            }
+
+            return;
+        }
+
+        PlaceHermesAfterAnchor(hermesTransform, tasksTransform, parent);
+        if (parent is RectTransform parentRect)
+        {
+            LayoutRebuilder.ForceRebuildLayoutImmediate(parentRect);
+        }
+    }
+
+    private static void PositionHermesAfterTab(
+        Transform hermesTransform,
+        Transform? previousTransform,
+        Transform anchorTransform,
         Transform parent)
     {
         // Fixed-position EFT tab strips use sibling order only for the slanted overlap.
-        // Keep inactive HERMES immediately before Prestige in draw order so Prestige's
-        // right edge stays in front, while the anchored position remains after Prestige.
-        // A real LayoutGroup still requires HERMES after Prestige for geometry.
+        // Keep inactive HERMES immediately before the current anchor in draw order so
+        // the anchor's right edge stays in front, while the anchored position remains after it.
+        // A real LayoutGroup still requires HERMES after the anchor for geometry.
         var layoutGroup = parent.GetComponent<LayoutGroup>();
         var usesLayoutGroup = layoutGroup != null && layoutGroup.isActiveAndEnabled;
         var hermesIndex = hermesTransform.GetSiblingIndex();
-        var prestigeIndex = prestigeTransform.GetSiblingIndex();
+        var anchorIndex = anchorTransform.GetSiblingIndex();
         var siblingIndex = usesLayoutGroup
-            ? (hermesIndex < prestigeIndex
-                ? prestigeIndex
-                : Math.Min(prestigeIndex + 1, Math.Max(0, parent.childCount - 1)))
-            : (hermesIndex < prestigeIndex
-                ? Math.Max(0, prestigeIndex - 1)
-                : Math.Max(0, prestigeIndex));
+            ? (hermesIndex < anchorIndex
+                ? anchorIndex
+                : Math.Min(anchorIndex + 1, Math.Max(0, parent.childCount - 1)))
+            : (hermesIndex < anchorIndex
+                ? Math.Max(0, anchorIndex - 1)
+                : Math.Max(0, anchorIndex));
         if (hermesIndex != siblingIndex)
         {
             hermesTransform.SetSiblingIndex(siblingIndex);
         }
 
         // Some EFT tab strips use fixed RectTransform positions instead of a layout
-        // group. The clone inherits Achievements' coordinates, so explicitly advance
-        // it by the Achievements-to-Prestige spacing to avoid covering Achievements.
+        // group. The clone inherits its template coordinates, so explicitly advance it
+        // by the previous-to-anchor spacing to avoid covering native or external tabs.
         if (hermesTransform is RectTransform hermesRect
-            && achievementsTransform is RectTransform achievementsRect
-            && prestigeTransform is RectTransform prestigeRect)
+            && previousTransform is RectTransform previousRect
+            && anchorTransform is RectTransform anchorRect)
         {
-            var step = prestigeRect.anchoredPosition - achievementsRect.anchoredPosition;
-            if (step.sqrMagnitude > 0.01f)
+            var step = anchorRect.anchoredPosition - previousRect.anchoredPosition;
+            if (step.sqrMagnitude > TabPositionEpsilon)
             {
-                hermesRect.anchoredPosition = prestigeRect.anchoredPosition + step;
+                hermesRect.anchoredPosition = anchorRect.anchoredPosition + step;
             }
         }
 
@@ -869,6 +963,334 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         {
             LayoutRebuilder.ForceRebuildLayoutImmediate(parentRect);
         }
+    }
+
+    private global::Tab? ResolvePlacementAnchor(Transform parent)
+    {
+        var layoutGroup = parent.GetComponent<LayoutGroup>();
+        var usesLayoutGroup = layoutGroup != null && layoutGroup.isActiveAndEnabled;
+        global::Tab? bestTab = null;
+        var bestIndex = -1;
+        var bestX = float.NegativeInfinity;
+
+        for (var index = 0; index < parent.childCount; index++)
+        {
+            var child = parent.GetChild(index);
+            if (!IsPlacementCandidate(child))
+            {
+                continue;
+            }
+
+            var tab = child.GetComponent<global::Tab>();
+            if (tab == null)
+            {
+                continue;
+            }
+
+            if (usesLayoutGroup)
+            {
+                if (index >= bestIndex)
+                {
+                    bestTab = tab;
+                    bestIndex = index;
+                }
+
+                continue;
+            }
+
+            var childX = child is RectTransform childRect
+                ? childRect.anchoredPosition.x
+                : index;
+            if (childX > bestX + TabPositionEpsilon
+                || Mathf.Abs(childX - bestX) <= TabPositionEpsilon && index > bestIndex)
+            {
+                bestTab = tab;
+                bestIndex = index;
+                bestX = childX;
+            }
+        }
+
+        return bestTab;
+    }
+
+    private static global::Tab? ResolveRightEdgeAnchor(Transform parent, Transform hermesTransform)
+    {
+        if (hermesTransform is RectTransform hermesRect)
+        {
+            global::Tab? bestTab = null;
+            var bestIndex = -1;
+            var bestX = float.PositiveInfinity;
+            var hermesX = hermesRect.anchoredPosition.x;
+
+            for (var index = 0; index < parent.childCount; index++)
+            {
+                var child = parent.GetChild(index);
+                if (!IsPlacementCandidate(child)
+                    || child is not RectTransform childRect)
+                {
+                    continue;
+                }
+
+                var childX = childRect.anchoredPosition.x;
+                if (childX <= hermesX + TabPositionEpsilon)
+                {
+                    continue;
+                }
+
+                if (childX < bestX - TabPositionEpsilon
+                    || Mathf.Abs(childX - bestX) <= TabPositionEpsilon && index > bestIndex)
+                {
+                    bestTab = child.GetComponent<global::Tab>();
+                    bestIndex = index;
+                    bestX = childX;
+                }
+            }
+
+            if (bestTab != null)
+            {
+                return bestTab;
+            }
+        }
+
+        var hermesIndex = hermesTransform.GetSiblingIndex();
+        for (var index = Math.Max(0, hermesIndex + 1); index < parent.childCount; index++)
+        {
+            var child = parent.GetChild(index);
+            if (IsPlacementCandidate(child))
+            {
+                return child.GetComponent<global::Tab>();
+            }
+        }
+
+        return null;
+    }
+
+    private static Vector2? ResolveTabSpacingAfter(Transform parent, Transform anchorTransform)
+    {
+        if (anchorTransform is not RectTransform anchorRect)
+        {
+            return null;
+        }
+
+        Transform? next = null;
+        var nextIndex = int.MaxValue;
+        var nextX = float.PositiveInfinity;
+        var anchorX = anchorRect.anchoredPosition.x;
+
+        for (var index = 0; index < parent.childCount; index++)
+        {
+            var child = parent.GetChild(index);
+            if (child == anchorTransform
+                || !IsPlacementCandidate(child)
+                || child is not RectTransform childRect)
+            {
+                continue;
+            }
+
+            var childX = childRect.anchoredPosition.x;
+            if (childX <= anchorX + TabPositionEpsilon)
+            {
+                continue;
+            }
+
+            if (childX < nextX - TabPositionEpsilon
+                || Mathf.Abs(childX - nextX) <= TabPositionEpsilon && index < nextIndex)
+            {
+                next = child;
+                nextIndex = index;
+                nextX = childX;
+            }
+        }
+
+        return next is RectTransform nextRect
+            ? nextRect.anchoredPosition - anchorRect.anchoredPosition
+            : null;
+    }
+
+    private static Vector2? ResolveTabSpacingBefore(Transform parent, Transform anchorTransform)
+    {
+        if (anchorTransform is not RectTransform anchorRect)
+        {
+            return null;
+        }
+
+        Transform? previous = null;
+        var previousIndex = -1;
+        var previousX = float.NegativeInfinity;
+        var anchorX = anchorRect.anchoredPosition.x;
+
+        for (var index = 0; index < parent.childCount; index++)
+        {
+            var child = parent.GetChild(index);
+            if (child == anchorTransform
+                || !IsPlacementCandidate(child)
+                || child is not RectTransform childRect)
+            {
+                continue;
+            }
+
+            var childX = childRect.anchoredPosition.x;
+            if (childX >= anchorX - TabPositionEpsilon)
+            {
+                continue;
+            }
+
+            if (childX > previousX + TabPositionEpsilon
+                || Mathf.Abs(childX - previousX) <= TabPositionEpsilon && index > previousIndex)
+            {
+                previous = child;
+                previousIndex = index;
+                previousX = childX;
+            }
+        }
+
+        return previous is RectTransform previousRect
+            ? anchorRect.anchoredPosition - previousRect.anchoredPosition
+            : null;
+    }
+
+    private static void ShiftTabsAtOrAfter(
+        Transform parent,
+        Transform hermesTransform,
+        Transform tasksTransform,
+        Vector2 insertionPosition,
+        Vector2 step)
+    {
+        for (var index = 0; index < parent.childCount; index++)
+        {
+            var child = parent.GetChild(index);
+            if (child == hermesTransform
+                || child == tasksTransform
+                || !IsPlacementCandidate(child)
+                || child is not RectTransform childRect)
+            {
+                continue;
+            }
+
+            if (childRect.anchoredPosition.x < insertionPosition.x - TabPositionEpsilon)
+            {
+                continue;
+            }
+
+            var restorePoint = child.gameObject.GetComponent<HermesNativeTabPositionRestorePoint>()
+                               ?? child.gameObject.AddComponent<HermesNativeTabPositionRestorePoint>();
+            restorePoint.Capture(childRect);
+            childRect.anchoredPosition += step;
+        }
+    }
+
+    private static void RestoreShiftedTabPositions(Transform? parent)
+    {
+        if (parent == null)
+        {
+            return;
+        }
+
+        for (var index = 0; index < parent.childCount; index++)
+        {
+            var child = parent.GetChild(index);
+            if (child is not RectTransform childRect)
+            {
+                continue;
+            }
+
+            child.GetComponent<HermesNativeTabPositionRestorePoint>()?.Restore(childRect);
+        }
+    }
+
+    private static void PlaceHermesAfterAnchor(
+        Transform hermesTransform,
+        Transform anchorTransform,
+        Transform parent)
+    {
+        var hermesIndex = hermesTransform.GetSiblingIndex();
+        var anchorIndex = anchorTransform.GetSiblingIndex();
+        var targetIndex = hermesIndex < anchorIndex
+            ? anchorIndex
+            : Math.Min(anchorIndex + 1, Math.Max(0, parent.childCount - 1));
+        if (hermesIndex != targetIndex)
+        {
+            hermesTransform.SetSiblingIndex(targetIndex);
+        }
+    }
+
+    private static void PlaceHermesBeforeAnchor(Transform hermesTransform, Transform anchorTransform)
+    {
+        var hermesIndex = hermesTransform.GetSiblingIndex();
+        var anchorIndex = anchorTransform.GetSiblingIndex();
+        var targetIndex = hermesIndex < anchorIndex
+            ? Math.Max(0, anchorIndex - 1)
+            : anchorIndex;
+        if (hermesIndex != targetIndex)
+        {
+            hermesTransform.SetSiblingIndex(targetIndex);
+        }
+    }
+
+    private static Transform? ResolvePreviousPlacementTab(
+        Transform parent,
+        Transform anchorTransform,
+        Transform fallbackTransform)
+    {
+        if (anchorTransform is RectTransform anchorRect)
+        {
+            Transform? previous = null;
+            var previousIndex = -1;
+            var previousX = float.NegativeInfinity;
+            var anchorX = anchorRect.anchoredPosition.x;
+
+            for (var index = 0; index < parent.childCount; index++)
+            {
+                var child = parent.GetChild(index);
+                if (child == anchorTransform
+                    || !IsPlacementCandidate(child)
+                    || child is not RectTransform childRect)
+                {
+                    continue;
+                }
+
+                var childX = childRect.anchoredPosition.x;
+                if (childX >= anchorX - TabPositionEpsilon)
+                {
+                    continue;
+                }
+
+                if (childX > previousX + TabPositionEpsilon
+                    || Mathf.Abs(childX - previousX) <= TabPositionEpsilon && index > previousIndex)
+                {
+                    previous = child;
+                    previousIndex = index;
+                    previousX = childX;
+                }
+            }
+
+            if (previous != null)
+            {
+                return previous;
+            }
+        }
+
+        var anchorIndex = anchorTransform.GetSiblingIndex();
+        for (var index = anchorIndex - 1; index >= 0; index--)
+        {
+            var child = parent.GetChild(index);
+            if (child != anchorTransform && IsPlacementCandidate(child))
+            {
+                return child;
+            }
+        }
+
+        return fallbackTransform != anchorTransform
+            ? fallbackTransform
+            : null;
+    }
+
+    private static bool IsPlacementCandidate(Transform child)
+    {
+        return child != null
+               && child.gameObject != null
+               && !string.Equals(child.gameObject.name, "HERMES_Tab", StringComparison.Ordinal)
+               && child.GetComponent<global::Tab>() != null;
     }
 
     private static void RemoveDuplicateHermesTabs(Transform parent, GameObject? keep)
@@ -904,6 +1326,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
 
         // The cloned Tab can receive one late visual update from EFT after it is activated.
         // Normalize both the external HERMES header and the authoritative native selection.
+        EnsureHermesTabPlacement();
         _hermesTab?.UpdateVisual(false);
         _hermesTabObject?.GetComponent<HermesNativeTabHeaderStateController>()
             ?.SetSelected(false);
@@ -1017,6 +1440,18 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
             && prestige != null)
         {
             return prestige;
+        }
+
+        return null;
+    }
+
+    private global::Tab? ResolveTasksTab()
+    {
+        if (_tabDictionary != null
+            && _tabDictionary.TryGetValue(EInventoryTab.Notes, out var tasks)
+            && tasks != null)
+        {
+            return tasks;
         }
 
         return null;
@@ -1287,6 +1722,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
         StopInitialHeaderSettle();
 
         HideHermesVisualsImmediate();
+        RestoreShiftedTabPositions(_hermesTabObject?.transform.parent);
         if (_hermesTabObject != null)
         {
             _hermesTabObject.SetActive(false);
@@ -1313,6 +1749,7 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
 
         HermesNativeScreenRegistry.Unregister(this);
         HideHermesVisualsImmediate();
+        RestoreShiftedTabPositions(_hermesTabObject?.transform.parent);
         DestroyHermesTab();
         if (_contentRoot != null)
         {
@@ -1320,6 +1757,31 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
             _contentRoot = null;
             _contentView = null;
             _hermesController = null;
+        }
+    }
+}
+
+internal sealed class HermesNativeTabPositionRestorePoint : MonoBehaviour
+{
+    private Vector2 _originalAnchoredPosition;
+    private bool _hasOriginal;
+
+    internal void Capture(RectTransform rect)
+    {
+        if (_hasOriginal)
+        {
+            return;
+        }
+
+        _originalAnchoredPosition = rect.anchoredPosition;
+        _hasOriginal = true;
+    }
+
+    internal void Restore(RectTransform rect)
+    {
+        if (_hasOriginal)
+        {
+            rect.anchoredPosition = _originalAnchoredPosition;
         }
     }
 }

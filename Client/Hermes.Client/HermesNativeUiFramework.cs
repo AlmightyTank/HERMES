@@ -12,6 +12,11 @@ namespace Hermes.Client;
 /// </summary>
 internal static class HermesNativeUiFramework
 {
+    internal const float DefaultButtonPreferredHeight = 40f;
+    internal const float DefaultButtonMinHeight = 36f;
+    internal const float DefaultButtonMaxPreferredHeight = 52f;
+    internal const float DefaultButtonMaxWidthScale = 1.35f;
+
     internal static readonly Color PanelColor = new(0f, 0f, 0f, 0.255f);
     internal static readonly Color RowColor = new(0.032f, 0.043f, 0.045f, 0.62f);
     internal static readonly Color RowAlternateColor = new(0.025f, 0.035f, 0.037f, 0.55f);
@@ -20,6 +25,64 @@ internal static class HermesNativeUiFramework
     internal static readonly Color AccentTextColor = new Color32(197, 195, 178, 255);
     internal static readonly Color NormalTextColor = new Color32(224, 226, 216, 255);
     internal static readonly Color MutedTextColor = new Color32(137, 145, 142, 255);
+
+    internal static float ScaleFontSize(float baseSize)
+        => baseSize * (Plugin.Settings?.GetInterfaceFontSizePercent() ?? 100) / 100f;
+
+    internal static int ScaleFontSize(int baseSize)
+        => Math.Max(1, Mathf.RoundToInt(ScaleFontSize((float)baseSize)));
+
+    internal static float ScaleControlSize(float baseSize, float maxSize)
+    {
+        var scale = Math.Max(1f, (Plugin.Settings?.GetInterfaceFontSizePercent() ?? 100) / 100f);
+        return Mathf.Clamp(baseSize * scale, baseSize, Math.Max(baseSize, maxSize));
+    }
+
+    internal static void SetScalableButtonSize(
+        LayoutElement layout,
+        float defaultPreferredWidth,
+        float defaultMinWidth,
+        float defaultPreferredHeight = DefaultButtonPreferredHeight,
+        float defaultMinHeight = DefaultButtonMinHeight,
+        float? maxPreferredWidth = null,
+        float? maxMinWidth = null,
+        float? maxPreferredHeight = null,
+        float? maxMinHeight = null)
+    {
+        var binding = layout.GetComponent<HermesNativeLayoutSizeBinding>()
+                      ?? layout.gameObject.AddComponent<HermesNativeLayoutSizeBinding>();
+        binding.ConfigureButton(
+            layout,
+            defaultPreferredWidth,
+            defaultMinWidth,
+            defaultPreferredHeight,
+            defaultMinHeight,
+            maxPreferredWidth ?? defaultPreferredWidth * DefaultButtonMaxWidthScale,
+            maxMinWidth ?? defaultMinWidth * DefaultButtonMaxWidthScale,
+            maxPreferredHeight ?? Math.Max(DefaultButtonMaxPreferredHeight, defaultPreferredHeight),
+            maxMinHeight ?? Math.Max(defaultPreferredHeight, defaultMinHeight * DefaultButtonMaxWidthScale));
+    }
+
+    internal static void SetFontSize(TMP_Text text, float baseSize)
+    {
+        text.fontSize = ScaleFontSize(baseSize);
+        var binding = text.GetComponent<HermesNativeFontSizeBinding>()
+                      ?? text.gameObject.AddComponent<HermesNativeFontSizeBinding>();
+        binding.BaseSize = baseSize;
+    }
+
+    internal static void ApplyConfiguredFontSizes(Component root)
+    {
+        foreach (var binding in root.GetComponentsInChildren<HermesNativeFontSizeBinding>(true))
+        {
+            binding.Apply();
+        }
+
+        foreach (var binding in root.GetComponentsInChildren<HermesNativeLayoutSizeBinding>(true))
+        {
+            binding.Apply();
+        }
+    }
 
     internal static void NormalizeClonedControl(GameObject root)
     {
@@ -361,7 +424,7 @@ internal static class HermesNativeUiFramework
         {
             text.font = font;
         }
-        text.fontSize = size;
+        SetFontSize(text, size);
         text.fontStyle = bold ? FontStyles.Bold : FontStyles.Normal;
         text.alignment = alignment;
         text.margin = new Vector4(3f, 0f, 3f, 0f);
@@ -411,6 +474,69 @@ internal static class HermesNativeUiFramework
             }
             type = type.BaseType;
         }
+    }
+}
+
+internal sealed class HermesNativeFontSizeBinding : MonoBehaviour
+{
+    internal float BaseSize { get; set; }
+
+    internal void Apply()
+    {
+        if (TryGetComponent<TMP_Text>(out var text))
+        {
+            text.fontSize = HermesNativeUiFramework.ScaleFontSize(BaseSize);
+        }
+    }
+}
+
+internal sealed class HermesNativeLayoutSizeBinding : MonoBehaviour
+{
+    private LayoutElement? _layout;
+    private float _defaultPreferredWidth;
+    private float _defaultMinWidth;
+    private float _defaultPreferredHeight;
+    private float _defaultMinHeight;
+    private float _maxPreferredWidth;
+    private float _maxMinWidth;
+    private float _maxPreferredHeight;
+    private float _maxMinHeight;
+
+    internal void ConfigureButton(
+        LayoutElement layout,
+        float defaultPreferredWidth,
+        float defaultMinWidth,
+        float defaultPreferredHeight,
+        float defaultMinHeight,
+        float maxPreferredWidth,
+        float maxMinWidth,
+        float maxPreferredHeight,
+        float maxMinHeight)
+    {
+        _layout = layout;
+        _defaultPreferredWidth = defaultPreferredWidth;
+        _defaultMinWidth = defaultMinWidth;
+        _defaultPreferredHeight = defaultPreferredHeight;
+        _defaultMinHeight = defaultMinHeight;
+        _maxPreferredWidth = maxPreferredWidth;
+        _maxMinWidth = maxMinWidth;
+        _maxPreferredHeight = maxPreferredHeight;
+        _maxMinHeight = maxMinHeight;
+        Apply();
+    }
+
+    internal void Apply()
+    {
+        _layout ??= GetComponent<LayoutElement>();
+        if (_layout == null)
+        {
+            return;
+        }
+
+        _layout.preferredWidth = HermesNativeUiFramework.ScaleControlSize(_defaultPreferredWidth, _maxPreferredWidth);
+        _layout.minWidth = HermesNativeUiFramework.ScaleControlSize(_defaultMinWidth, _maxMinWidth);
+        _layout.preferredHeight = HermesNativeUiFramework.ScaleControlSize(_defaultPreferredHeight, _maxPreferredHeight);
+        _layout.minHeight = HermesNativeUiFramework.ScaleControlSize(_defaultMinHeight, _maxMinHeight);
     }
 }
 

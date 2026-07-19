@@ -111,7 +111,7 @@ dotnet build .\Hermes.Build.csproj -c Release -p:SptRoot="D:\Games\SPT"
 The build creates the release package at the repository root. The package name uses the value in `Version.props`; with the current source it is:
 
 ```text
-HERMES-1.0.0.zip
+HERMES-1.0.2.zip
 ```
 
 It also stages the install payload under:
@@ -155,7 +155,7 @@ dist/                       Generated install payload
 
 ## Configuration
 
-HERMES creates its BepInEx configuration after first launch. Open the in-game Configuration Manager with **F12** to adjust Assistant, market, Hideout, craft, stash, loadout, Raid Planner, notification, and interface settings.
+HERMES creates its BepInEx configuration after first launch. Open the in-game Configuration Manager with **F12** to adjust Assistant, market, Hideout, craft, stash, loadout, Raid Planner, notification, and interface settings, including **Interface -> Font size percent**.
 
 The top **Refresh** button performs a stronger source recheck when gear, stash contents, Hideout state, quest progress, or other profile data has changed and you want HERMES to reread it immediately.
 

@@ -1590,7 +1590,7 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
         textObject.transform.SetParent(parent, false);
         var text = textObject.GetComponent<TextMeshProUGUI>();
         text.text = value;
-        text.fontSize = size;
+        HermesNativeUiFramework.SetFontSize(text, size);
         text.fontStyle = style;
         text.alignment = alignment;
         text.color = new Color(0.88f, 0.86f, 0.78f, 1f);
@@ -1614,10 +1614,15 @@ internal sealed class HermesPreRaidInsuranceBridge : MonoBehaviour
         button.targetGraphic = buttonObject.GetComponent<Image>();
         button.onClick.AddListener(action);
         var buttonElement = buttonObject.GetComponent<LayoutElement>();
-        buttonElement.minWidth = 170f;
-        buttonElement.preferredWidth = 205f;
-        buttonElement.minHeight = 40f;
-        buttonElement.preferredHeight = 40f;
+        HermesNativeUiFramework.SetScalableButtonSize(
+            buttonElement,
+            defaultPreferredWidth: 205f,
+            defaultMinWidth: 170f,
+            defaultPreferredHeight: HermesNativeUiFramework.DefaultButtonPreferredHeight,
+            defaultMinHeight: HermesNativeUiFramework.DefaultButtonMinHeight,
+            maxPreferredWidth: 276f,
+            maxMinWidth: 230f,
+            maxPreferredHeight: HermesNativeUiFramework.DefaultButtonMaxPreferredHeight);
         buttonElement.flexibleWidth = 0f;
         buttonElement.flexibleHeight = 0f;
 

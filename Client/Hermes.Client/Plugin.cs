@@ -8,9 +8,9 @@ namespace Hermes.Client;
 [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
 public sealed class Plugin : BaseUnityPlugin
 {
-    public const string PluginGuid = "com.amightytank.hermes.client";
+    public const string PluginGuid = "com.amightytank.hermes";
     public const string PluginName = "HERMES Client";
-    public const string PluginVersion = "1.0.0";
+    public const string PluginVersion = "1.0.2";
 
     internal static ManualLogSource Log { get; private set; } = null!;
     internal static Plugin? Instance { get; private set; }

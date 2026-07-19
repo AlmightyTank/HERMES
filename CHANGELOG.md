@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.2
+
+- Added **Interface -> Font size percent** to the F12 Configuration Manager so the native HERMES workspace can be scaled from 80% to 130%.
+- Added scalable button sizing with default sizes and maximum growth caps so larger font settings keep button labels readable without letting controls over-expand.
+- Moved the native HERMES inventory tab to the slot immediately after Tasks, which better matches the mod's workflow.
+- Kept tab placement collision-aware by opening one tab-width of space and preserving the relative order of later tabs, improving compatibility with mods such as WeekendDrops that add tabs after Prestige.
+- Rechecked HERMES tab placement during the initial inventory-tab settle window so late-created external tabs are handled more reliably.
+- Updated client, server, package, and documentation version references for **1.0.2**.
+
 ## 1.0.0
 
 First full public release.

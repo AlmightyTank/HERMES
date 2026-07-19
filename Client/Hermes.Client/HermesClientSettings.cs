@@ -54,6 +54,7 @@ internal sealed class HermesClientSettings
     public ConfigEntry<bool> UseNativeInventoryTabs { get; private set; } = null!;
 
     public ConfigEntry<bool> CompactMode { get; private set; } = null!;
+    public ConfigEntry<int> InterfaceFontSizePercent { get; private set; } = null!;
     public ConfigEntry<bool> ShowHelpText { get; private set; } = null!;
     public ConfigEntry<bool> ShowSectionDescriptions { get; private set; } = null!;
     public ConfigEntry<bool> CollapseSectionsByDefault { get; private set; } = null!;
@@ -375,6 +376,13 @@ internal sealed class HermesClientSettings
             "Compact mode",
             false,
             "Reduces shared spacing, header height, and status-panel padding.");
+        InterfaceFontSizePercent = config.Bind(
+            "Interface",
+            "Font size percent",
+            100,
+            new ConfigDescription(
+                "Scales HERMES native UI text. 100 uses the default EFT-sized text. Range: 80-130.",
+                new AcceptableValueRange<int>(80, 130)));
         ShowHelpText = config.Bind(
             "Interface",
             "Show help text",
@@ -921,6 +929,7 @@ internal sealed class HermesClientSettings
     public int GetMinimumAssistantNoticeCraftProfit() => Math.Clamp(MinimumAssistantNoticeCraftProfit.Value, 0, 10_000_000);
     public int GetMinimumAssistantNoticeStashValue() => Math.Clamp(MinimumAssistantNoticeStashValue.Value, 0, 100_000_000);
     public int GetHighValueUninsuredThreshold() => Math.Clamp(HighValueUninsuredThreshold.Value, 0, 10_000_000);
+    public int GetInterfaceFontSizePercent() => Math.Clamp(InterfaceFontSizePercent.Value, 80, 130);
     public int GetMaximumRowsPerSection() => Math.Clamp(MaximumRowsPerSection.Value, 25, 120);
     public int GetMaximumSearchResults() => Math.Clamp(MaximumSearchResults.Value, 5, 50);
     public int GetMinimumSearchCharacters() => Math.Clamp(MinimumSearchCharacters.Value, 1, 10);

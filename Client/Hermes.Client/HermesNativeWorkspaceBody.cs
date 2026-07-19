@@ -2719,11 +2719,15 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         colors.disabledColor = new Color(0.12f, 0.13f, 0.13f, 0.55f);
         button.colors = colors;
         var layout = root.GetComponent<LayoutElement>();
-        layout.minWidth = width;
-        layout.preferredWidth = width;
+        HermesNativeUiFramework.SetScalableButtonSize(
+            layout,
+            defaultPreferredWidth: width,
+            defaultMinWidth: width,
+            defaultPreferredHeight: height,
+            defaultMinHeight: height,
+            maxPreferredHeight: Math.Max(height * HermesNativeUiFramework.DefaultButtonMaxWidthScale, height + 8f),
+            maxMinHeight: Math.Max(height * HermesNativeUiFramework.DefaultButtonMaxWidthScale, height + 8f));
         layout.flexibleWidth = 0f;
-        layout.minHeight = height;
-        layout.preferredHeight = height;
         layout.flexibleHeight = 0f;
         var label = HermesNativeUiFramework.CreateText("Label", root.transform, fontSize, true, TextAlignmentOptions.Center);
         label.text = text;
@@ -2756,7 +2760,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         {
             layout.flexibleWidth = 1f;
         }
-        layout.minHeight = Math.Max(18f, size + 5f);
+        layout.minHeight = Math.Max(18f, HermesNativeUiFramework.ScaleFontSize(size) + 5f);
         layout.flexibleHeight = 0f;
         var fitter = label.gameObject.AddComponent<ContentSizeFitter>();
         fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
