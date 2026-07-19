@@ -22,6 +22,14 @@ internal sealed class HermesClientSettings
     public ConfigEntry<int> CacheStatusRefreshSeconds { get; private set; } = null!;
     public ConfigEntry<bool> ShowDiagnosticsFooter { get; private set; } = null!;
 
+    public ConfigEntry<bool> EnableConfirmedActions { get; private set; } = null!;
+    public ConfigEntry<bool> AllowHarmlessTestActions { get; private set; } = null!;
+    public ConfigEntry<bool> AllowTraderPurchaseActions { get; private set; } = null!;
+    public ConfigEntry<bool> AllowTraderSaleActions { get; private set; } = null!;
+    public ConfigEntry<bool> AllowFleaListingActions { get; private set; } = null!;
+    public ConfigEntry<bool> AllowCraftActions { get; private set; } = null!;
+    public ConfigEntry<bool> AllowHideoutUpgradeActions { get; private set; } = null!;
+
     public ConfigEntry<bool> EnableAssistantTab { get; private set; } = null!;
     public ConfigEntry<bool> ShowAssistantSuggestedPrompts { get; private set; } = null!;
     public ConfigEntry<bool> IncludeSelectedItemInAssistant { get; private set; } = null!;
@@ -161,6 +169,7 @@ internal sealed class HermesClientSettings
                 "Workspace shown when HERMES opens and remembered-workspace behavior is disabled.",
                 "Assistant",
                 "Items & Market",
+                "Actions",
                 "Hideout",
                 "Crafts",
                 "Stash",
@@ -227,6 +236,42 @@ internal sealed class HermesClientSettings
             "Show diagnostics panel",
             false,
             "Shows compact request and cache health in the HERMES navigation rail.");
+
+        EnableConfirmedActions = config.Bind(
+            "Actions",
+            "Enable confirmed actions",
+            true,
+            "Master switch for the HERMES action-confirmation pipeline. Alpha1 still performs no real inventory actions.");
+        AllowHarmlessTestActions = config.Bind(
+            "Actions",
+            "Allow harmless test actions",
+            true,
+            "Allows the alpha1 no-op test action used to verify proposal, confirmation, token, result, and history flow.");
+        AllowTraderPurchaseActions = config.Bind(
+            "Actions",
+            "Allow trader purchase actions",
+            false,
+            "Reserved for a future release. Alpha1 will not buy items.");
+        AllowTraderSaleActions = config.Bind(
+            "Actions",
+            "Allow trader sale actions",
+            false,
+            "Reserved for a future release. Alpha1 will not sell items.");
+        AllowFleaListingActions = config.Bind(
+            "Actions",
+            "Allow flea listing actions",
+            false,
+            "Reserved for a future release. Alpha1 will not create Flea listings.");
+        AllowCraftActions = config.Bind(
+            "Actions",
+            "Allow craft actions",
+            false,
+            "Reserved for a future release. Alpha1 will not start or collect crafts.");
+        AllowHideoutUpgradeActions = config.Bind(
+            "Actions",
+            "Allow hideout upgrade actions",
+            false,
+            "Reserved for a future release. Alpha1 will not start hideout upgrades.");
 
         EnableAssistantTab = config.Bind(
             "Assistant",
@@ -992,6 +1037,7 @@ internal sealed class HermesClientSettings
         return normalized switch
         {
             "assistant" or "chat" => "Assistant",
+            "actions" or "action" or "confirmed actions" => "Actions",
             "items & market" or "items and market" or "item search" or "market" => "Item Search",
             "hideout" => "Hideout",
             "craft" or "crafts" => "Crafts",

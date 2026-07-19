@@ -1,12 +1,12 @@
-# HERMES 0.1.0 release checklist
+# HERMES 2.0.0-alpha1 release checklist
 
-Build and test against a clean SPT 4.0.13 installation before changing `Version.props` from `0.1.0-rc.2.4.1` to `0.1.0`.
+Build and test against a clean SPT 4.0.13 installation before publishing `2.0.0-alpha1`.
 
 ## Build and package
 
 - [ ] Clean the solution, then build `Hermes.Build` in **Release** with zero errors.
 - [ ] Review all compiler warnings; no new HERMES warning is accepted without explanation.
-- [ ] Confirm the package contains only the two DLLs plus README, LICENSE, and CHANGELOG.
+- [ ] Confirm the package contains only the client DLL, server DLL, and required client assets.
 - [ ] Confirm client and server report the exact same version.
 - [ ] Confirm a package build does not deploy unless `DeployToTestEnvironment=true` is explicitly set.
 
@@ -65,9 +65,9 @@ Build and test against a clean SPT 4.0.13 installation before changing `Version.
 
 - [ ] No reproducible crash, profile mix-up, incorrect-map quest warning, tab-selection defect, or request loop remains.
 - [ ] Any remaining slow first calculation is documented and completes within the configured long-request budget.
-- [ ] Change `Version.props` to `0.1.0`, rebuild Release, and repeat the package-content/version checks.
+- [ ] Confirm `Version.props` is `2.0.0-alpha1`, rebuild Release, and repeat the package-content/version checks.
 
-### Pre-raid and Hideout RC.2.1 checks
+### Pre-raid and Hideout regression checks
 
 - [ ] Select two different maps and confirm readiness refreshes after each stable selection.
 - [ ] Confirm quest warnings appear only for the confidently selected objective map.
@@ -80,13 +80,22 @@ Build and test against a clean SPT 4.0.13 installation before changing `Version.
 - [ ] Use **Ask HERMES** from the Hideout and confirm Items & Market opens with the selected item already looked up.
 - [ ] With Gear and Prestige selected, confirm inactive HERMES stays behind Prestige's right edge; select HERMES and confirm it comes forward.
 
-## RC.2.2 additions
+## Context action and quest-key regression checks
 
 - [ ] Confirm all text-choice settings render as dropdowns in F12.
 - [ ] Confirm Ask HERMES from stash, equipment, trader, Flea, Crafts, and Hideout always opens Items & Market with the selected item.
 - [ ] Request `/hermes/quest-keys/status` and confirm the embedded catalog reports loaded with no error.
 - [ ] Open an active quest that requires a key and confirm Raid Planner shows the key only on the correct map.
 - [ ] Confirm completed key-access objectives no longer produce a missing-key requirement.
+
+## Confirmed action pipeline checks
+
+- [ ] Confirm the Actions workspace appears in native navigation and opens without refreshing profile workspaces.
+- [ ] Confirm the Actions master toggle and harmless-test-action permission gate the test proposal button.
+- [ ] Create the harmless test proposal and verify the confirmation preview shows action, affected item text, quantity, cost, destination, expected result, warnings, and cannot-execute reason.
+- [ ] Confirm Cancel resolves the proposal once and records a cancelled history row.
+- [ ] Confirm Confirm resolves the proposal once, records a succeeded history row, and does not change profile inventory.
+- [ ] Confirm duplicate proposal requests reuse a pending proposal, and expired or reused tokens cannot execute a second action.
 
 ## Items & Market quest-key knowledge
 
@@ -96,7 +105,7 @@ Build and test against a clean SPT 4.0.13 installation before changing `Version.
 - Confirm a normal non-key item does not receive an unrelated quest-key card.
 
 
-## RC.2.4 final-pass checks
+## Performance and information-density regression checks
 
 - [ ] Search for and carry an **MRE ration pack**; confirm Stash and Loadout classify it as **Provisions**, not **Medical**.
 - [ ] Confirm an MRE can satisfy the enabled energy requirement but never satisfies healing, bleed, fracture, pain, or surgery coverage.

@@ -201,6 +201,9 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 case "Assistant":
                     RenderAssistant(contentRect);
                     break;
+                case "Actions":
+                    RenderActions(contentRect);
+                    break;
                 case "Hideout":
                     RenderHideout(contentRect);
                     break;
@@ -667,6 +670,212 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         }
 
         return HermesNativeUiFramework.RowColor;
+    }
+
+    #endregion
+
+    #region Actions
+
+    private void RenderActions(RectTransform parent)
+    {
+        var state = _state!;
+        var root = CreateVerticalRoot(parent);
+        AddStatusStrip(
+            root,
+            state.ActionStatus,
+            state.ActionLoading,
+            state.RefreshActionHistory,
+            "HISTORY");
+
+        AddMetricGrid(root,
+            ("MASTER TOGGLE", Plugin.Settings.EnableConfirmedActions.Value ? "ON" : "OFF"),
+            ("TEST ACTION", Plugin.Settings.AllowHarmlessTestActions.Value ? "ALLOWED" : "BLOCKED"),
+            ("REAL INVENTORY ACTIONS", "OFF"),
+            ("HISTORY", (state.ActionHistory?.TotalActions ?? 0).ToString("N0")));
+
+        var toolbar = CreateToolbar(root);
+        AddButton(
+            toolbar,
+            "TEST PROPOSAL",
+            () =>
+            {
+                state.ProposeTestAction();
+                Invalidate(0.20f);
+            },
+            126f,
+            !state.ActionLoading
+            && Plugin.Settings.EnableConfirmedActions.Value
+            && Plugin.Settings.AllowHarmlessTestActions.Value,
+            height: 28f,
+            fontSize: 11.5f);
+        AddButton(
+            toolbar,
+            "REFRESH HISTORY",
+            () =>
+            {
+                state.RefreshActionHistory();
+                Invalidate(0.20f);
+            },
+            132f,
+            !state.ActionLoading,
+            height: 28f,
+            fontSize: 11.5f);
+        AddFlexibleSpace(toolbar);
+
+        var split = HermesNativeUiFramework.CreateSplitView(root, 440f);
+        var splitElement = split.Root.gameObject.AddComponent<LayoutElement>();
+        splitElement.minHeight = 180f;
+        splitElement.flexibleHeight = 1f;
+        splitElement.flexibleWidth = 1f;
+
+        RenderActionConfirmation(split.Left, state);
+        RenderActionHistory(split.Right, state);
+    }
+
+    private void RenderActionConfirmation(RectTransform parent, HermesNativeWorkspaceState state)
+    {
+        AddVerticalLayout(parent, 6, 6, 6, 6, 4f);
+        AddSectionHeader(parent, "CONFIRMATION WINDOW");
+
+        var proposal = state.ActionProposal;
+        if (!Plugin.Settings.EnableConfirmedActions.Value)
+        {
+            AddEmptyState(parent, "Confirmed actions are disabled.", "Enable the master Actions setting before requesting proposals.");
+            return;
+        }
+
+        if (!Plugin.Settings.AllowHarmlessTestActions.Value)
+        {
+            AddEmptyState(parent, "Harmless test action disabled.", "Alpha1 exposes only the test action, and it is blocked by the individual permission setting.");
+            return;
+        }
+
+        if (proposal is null)
+        {
+            AddEmptyState(parent, "No pending action proposal.", "Create the alpha1 harmless test proposal to verify confirmation without changing the profile.");
+            return;
+        }
+
+        var preview = proposal.Preview;
+        var card = AddCard(
+            parent,
+            proposal.DisplayName,
+            proposal.IsHarmlessTestAction ? "Harmless alpha1 verification action. No real inventory action will run." : "Inventory action proposal.",
+            proposal.CanExecute ? $"EXPIRES IN {ActionSecondsRemaining(proposal):N0}s" : "BLOCKED",
+            null,
+            proposal.CanExecute
+                ? new Color(0.08f, 0.12f, 0.11f, 0.82f)
+                : new Color(0.20f, 0.08f, 0.07f, 0.82f));
+
+        AddPreviewRow(card, "ACTION", preview.ActionName);
+        AddPreviewRow(card, "ITEMS", preview.AffectedItems.Count == 0 ? "None" : string.Join(", ", preview.AffectedItems));
+        AddPreviewRow(card, "QUANTITY", preview.Quantity);
+        AddPreviewRow(card, "PRICE / COST", preview.PriceOrCost);
+        AddPreviewRow(card, "TRADER / STATION / DESTINATION", preview.TraderStationOrDestination);
+        AddPreviewRow(card, "EXPECTED RESULT", preview.ExpectedResult);
+        AddPreviewRow(card, "CANNOT EXECUTE", string.IsNullOrWhiteSpace(preview.CannotExecuteReason) ? "None" : preview.CannotExecuteReason!);
+
+        AddSectionHeader(parent, "WARNINGS");
+        if (preview.Warnings.Count == 0)
+        {
+            AddText(parent, "None", 12f, false, HermesNativeUiFramework.MutedTextColor);
+        }
+        else
+        {
+            foreach (var warning in preview.Warnings)
+            {
+                AddCard(
+                    parent,
+                    "WARNING",
+                    warning,
+                    "CONFIRMATION PREVIEW",
+                    null,
+                    new Color(0.22f, 0.145f, 0.055f, 0.82f));
+            }
+        }
+
+        var actions = CreateToolbar(parent);
+        AddButton(
+            actions,
+            "CANCEL",
+            () =>
+            {
+                state.CancelAction();
+                Invalidate(0.20f);
+            },
+            96f,
+            !state.ActionLoading,
+            height: 30f);
+        AddButton(
+            actions,
+            "CONFIRM",
+            () =>
+            {
+                state.ConfirmAction();
+                Invalidate(0.20f);
+            },
+            104f,
+            !state.ActionLoading && proposal.CanExecute,
+            height: 30f,
+            selected: true);
+        AddFlexibleSpace(actions);
+
+        if (state.ActionResult is not null)
+        {
+            AddCard(
+                parent,
+                $"LAST RESULT: {state.ActionResult.Status}",
+                state.ActionResult.Message,
+                state.ActionResult.Executed ? "CONFIRMED" : state.ActionResult.Cancelled ? "CANCELLED" : "RESULT");
+        }
+    }
+
+    private static void AddPreviewRow(Transform parent, string label, string value)
+    {
+        AddText(
+            parent,
+            $"{label}: {value}",
+            12.5f,
+            label is "ACTION" or "EXPECTED RESULT",
+            HermesNativeUiFramework.NormalTextColor);
+    }
+
+    private void RenderActionHistory(RectTransform parent, HermesNativeWorkspaceState state)
+    {
+        AddVerticalLayout(parent, 6, 6, 6, 6, 4f);
+        var header = CreateToolbar(parent);
+        AddToolbarLabel(header, "BASIC ACTION HISTORY");
+        AddFlexibleSpace(header);
+
+        var scroll = CreateScroll(parent, "action-history", true);
+        var history = state.ActionHistory;
+        var entries = history?.Entries ?? [];
+        if (entries.Count == 0)
+        {
+            AddEmptyState(
+                scroll.Content,
+                "No resolved actions yet.",
+                history?.Message ?? "Confirmed, cancelled, expired, and blocked actions will appear here.");
+            return;
+        }
+
+        foreach (var entry in entries.Take(MaximumRowsPerSection))
+        {
+            var preview = entry.Preview;
+            var body = $"{entry.Message}\n"
+                       + $"Action: {preview.ActionName}\n"
+                       + $"Items: {(preview.AffectedItems.Count == 0 ? "None" : string.Join(", ", preview.AffectedItems))}\n"
+                       + $"Quantity: {preview.Quantity} | Cost: {preview.PriceOrCost} | Destination: {preview.TraderStationOrDestination}";
+            AddCard(
+                scroll.Content,
+                $"{entry.Status}: {entry.DisplayName}",
+                body,
+                $"{(entry.HarmlessTestAction ? "HARMLESS TEST" : "INVENTORY ACTION")} | {FormatUnixTime(entry.ResolvedUnixTime)}",
+                null,
+                entry.Executed
+                    ? new Color(0.08f, 0.13f, 0.10f, 0.82f)
+                    : HermesNativeUiFramework.RowColor);
+        }
     }
 
     #endregion
@@ -3059,6 +3268,19 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
     private static string Money(long? amount) => amount.HasValue ? $"₽{amount.Value:N0}" : "N/A";
     private static string FormatCount(double value) => Math.Abs(value - Math.Round(value)) < 0.0001d ? Math.Round(value).ToString("N0") : value.ToString("0.##");
     private static string YesNo(bool value) => value ? "COVERED" : "MISSING";
+
+    private static string FormatUnixTime(long unixTime)
+    {
+        if (unixTime <= 0)
+        {
+            return "time unknown";
+        }
+
+        return DateTimeOffset.FromUnixTimeSeconds(unixTime).LocalDateTime.ToString("g");
+    }
+
+    private static int ActionSecondsRemaining(HermesActionProposal proposal)
+        => (int)Math.Max(0L, proposal.ExpiresUnixTime - DateTimeOffset.UtcNow.ToUnixTimeSeconds());
 
     private static string FormatCurrency(long amount, string currency)
         => currency.ToUpperInvariant() switch

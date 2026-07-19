@@ -9,6 +9,7 @@ internal sealed class HermesWindow
     {
         Assistant,
         ItemSearch,
+        Actions,
         Hideout,
         Crafts,
         Stash,
@@ -69,6 +70,11 @@ internal sealed class HermesWindow
     private float _nextProfileSaveAt;
     private HermesCacheStatusResponse? _cacheStatus;
     private string? _refreshStatus;
+    private HermesActionProposal? _actionProposal;
+    private HermesActionResultResponse? _actionResult;
+    private HermesActionHistoryResponse? _actionHistory;
+    private string _actionStatus = "Action confirmation pipeline ready. Alpha1 only supports a harmless test action.";
+    private bool _actionLoading;
 
     public HermesWindow()
     {
@@ -566,6 +572,7 @@ internal sealed class HermesWindow
         }
 
         DrawNavigationButton(HermesTab.ItemSearch, "Items & Market");
+        DrawNavigationButton(HermesTab.Actions, "Actions");
         DrawNavigationButton(HermesTab.Hideout, "Hideout");
         DrawNavigationButton(HermesTab.Crafts, "Crafts");
         DrawNavigationButton(HermesTab.Stash, "Stash");
@@ -597,6 +604,7 @@ internal sealed class HermesWindow
             firstRow.Add((HermesTab.Assistant, "Assistant"));
         }
         firstRow.Add((HermesTab.ItemSearch, "Items"));
+        firstRow.Add((HermesTab.Actions, "Actions"));
         firstRow.Add((HermesTab.Hideout, "Hideout"));
         firstRow.Add((HermesTab.Crafts, "Crafts"));
 
@@ -657,6 +665,7 @@ internal sealed class HermesWindow
         {
             HermesTab.Assistant => "Assistant",
             HermesTab.ItemSearch => "Items & Market",
+            HermesTab.Actions => "Actions",
             HermesTab.Hideout => "Hideout",
             HermesTab.Crafts => "Crafts",
             HermesTab.Stash => "Stash",
@@ -696,6 +705,9 @@ internal sealed class HermesWindow
                 break;
             case HermesTab.Hideout:
                 _hideoutPanel.Draw();
+                break;
+            case HermesTab.Actions:
+                DrawActionsTab();
                 break;
             case HermesTab.Crafts:
                 _craftPanel.Draw();
@@ -749,6 +761,103 @@ internal sealed class HermesWindow
         GUILayout.Space(8f);
         DrawDetailPanel();
         GUILayout.EndHorizontal();
+    }
+
+    private void DrawActionsTab()
+    {
+        HermesUi.DrawPanelTitle(
+            "CONFIRMED ACTIONS",
+            "Permission-gated action proposals, confirmation tokens, results, and history.",
+            _actionStatus,
+            _actionLoading);
+
+        GUILayout.BeginHorizontal();
+        GUI.enabled = !_actionLoading
+                      && Plugin.Settings.EnableConfirmedActions.Value
+                      && Plugin.Settings.AllowHarmlessTestActions.Value;
+        if (GUILayout.Button("Create harmless test proposal", GUILayout.Height(30f)))
+        {
+            _ = ProposeTestActionAsync();
+        }
+        GUI.enabled = !_actionLoading;
+        if (GUILayout.Button("Refresh history", GUILayout.Width(130f), GUILayout.Height(30f)))
+        {
+            _ = RefreshActionHistoryAsync();
+        }
+        GUI.enabled = true;
+        GUILayout.EndHorizontal();
+
+        if (!Plugin.Settings.EnableConfirmedActions.Value)
+        {
+            HermesUi.DrawWarning("Confirmed actions are disabled by the master toggle.");
+        }
+        else if (!Plugin.Settings.AllowHarmlessTestActions.Value)
+        {
+            HermesUi.DrawWarning("The harmless alpha1 test action is disabled in the Actions settings.");
+        }
+
+        if (_actionProposal is not null)
+        {
+            GUILayout.Space(HermesUi.StandardSpace);
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label("CONFIRMATION WINDOW");
+            GUILayout.Label($"Action: {_actionProposal.Preview.ActionName}");
+            GUILayout.Label($"Item(s): {string.Join(", ", _actionProposal.Preview.AffectedItems)}");
+            GUILayout.Label($"Quantity: {_actionProposal.Preview.Quantity}");
+            GUILayout.Label($"Price / cost: {_actionProposal.Preview.PriceOrCost}");
+            GUILayout.Label($"Trader / station / destination: {_actionProposal.Preview.TraderStationOrDestination}");
+            GUILayout.Label($"Expected result: {_actionProposal.Preview.ExpectedResult}");
+            foreach (var warning in _actionProposal.Preview.Warnings)
+            {
+                GUILayout.Label("Warning: " + warning);
+            }
+            if (!string.IsNullOrWhiteSpace(_actionProposal.Preview.CannotExecuteReason))
+            {
+                HermesUi.DrawWarning(_actionProposal.Preview.CannotExecuteReason);
+            }
+            GUILayout.Label($"Token expires in {ActionSecondsRemaining(_actionProposal):N0}s.");
+            GUILayout.BeginHorizontal();
+            GUI.enabled = !_actionLoading;
+            if (GUILayout.Button("Cancel", GUILayout.Width(120f), GUILayout.Height(30f)))
+            {
+                _ = CancelActionAsync();
+            }
+            GUI.enabled = !_actionLoading && _actionProposal.CanExecute;
+            if (GUILayout.Button("Confirm", GUILayout.Width(120f), GUILayout.Height(30f)))
+            {
+                _ = ConfirmActionAsync();
+            }
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            GUILayout.EndVertical();
+        }
+
+        if (_actionResult is not null)
+        {
+            GUILayout.Space(HermesUi.StandardSpace);
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label($"LAST RESULT: {_actionResult.Status}");
+            GUILayout.Label(_actionResult.Message);
+            GUILayout.EndVertical();
+        }
+
+        GUILayout.Space(HermesUi.StandardSpace);
+        GUILayout.Label("BASIC ACTION HISTORY");
+        var entries = _actionHistory?.Entries ?? [];
+        if (entries.Count == 0)
+        {
+            GUILayout.Label(_actionHistory?.Message ?? "No actions have been resolved in this session.");
+            return;
+        }
+
+        foreach (var entry in entries.Take(10))
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label($"{entry.Status}: {entry.DisplayName}");
+            GUILayout.Label(entry.Message);
+            GUILayout.Label(entry.HarmlessTestAction ? "Harmless test action" : "Inventory action");
+            GUILayout.EndVertical();
+        }
     }
 
     private void DrawSearchBar()
@@ -1982,6 +2091,166 @@ internal sealed class HermesWindow
         }
     }
 
+    internal async Task ProposeTestActionAsync()
+    {
+        if (_actionLoading)
+        {
+            return;
+        }
+
+        if (!Plugin.Settings.EnableConfirmedActions.Value)
+        {
+            _actionStatus = "Confirmed actions are disabled by the master toggle.";
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+            return;
+        }
+
+        if (!Plugin.Settings.AllowHarmlessTestActions.Value)
+        {
+            _actionStatus = "The harmless alpha1 test action is disabled.";
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+            return;
+        }
+
+        _actionLoading = true;
+        _actionStatus = "Requesting a harmless test action proposal...";
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        try
+        {
+            var response = await HermesApiClient.ProposeTestActionAsync();
+            _actionProposal = response.Proposal;
+            _actionResult = null;
+            _actionStatus = response.Found && response.Proposal is not null
+                ? response.Message ?? "Confirmation window ready."
+                : response.Message ?? "HERMES could not create a test action proposal.";
+            await RefreshActionHistoryAsync(setLoading: false);
+        }
+        catch (Exception ex)
+        {
+            _actionStatus = HermesApiClient.DescribeFailure(ex, "Test action proposal");
+            Plugin.Log.LogError(ex);
+        }
+        finally
+        {
+            _actionLoading = false;
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        }
+    }
+
+    internal async Task ConfirmActionAsync()
+    {
+        if (_actionLoading || _actionProposal is null)
+        {
+            return;
+        }
+
+        _actionLoading = true;
+        _actionStatus = "Confirming action with one-time token...";
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        try
+        {
+            var result = await HermesApiClient.ConfirmActionAsync(
+                _actionProposal.ProposalId,
+                _actionProposal.ConfirmationToken);
+            _actionResult = result;
+            _actionStatus = result.Message;
+            _actionProposal = result.Found && !result.Executed && !result.Cancelled && !result.Expired
+                ? result.Proposal
+                : null;
+            await RefreshActionHistoryAsync(setLoading: false);
+        }
+        catch (Exception ex)
+        {
+            _actionStatus = HermesApiClient.DescribeFailure(ex, "Action confirmation");
+            Plugin.Log.LogError(ex);
+        }
+        finally
+        {
+            _actionLoading = false;
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        }
+    }
+
+    internal async Task CancelActionAsync()
+    {
+        if (_actionLoading || _actionProposal is null)
+        {
+            return;
+        }
+
+        _actionLoading = true;
+        _actionStatus = "Cancelling action proposal...";
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        try
+        {
+            var result = await HermesApiClient.CancelActionAsync(
+                _actionProposal.ProposalId,
+                _actionProposal.ConfirmationToken);
+            _actionResult = result;
+            _actionStatus = result.Message;
+            _actionProposal = null;
+            await RefreshActionHistoryAsync(setLoading: false);
+        }
+        catch (Exception ex)
+        {
+            _actionStatus = HermesApiClient.DescribeFailure(ex, "Action cancellation");
+            Plugin.Log.LogError(ex);
+        }
+        finally
+        {
+            _actionLoading = false;
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        }
+    }
+
+    internal Task RefreshActionHistoryAsync()
+        => RefreshActionHistoryAsync(setLoading: true);
+
+    private async Task RefreshActionHistoryAsync(bool setLoading)
+    {
+        if (setLoading)
+        {
+            _actionLoading = true;
+            _actionStatus = "Loading action history...";
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        }
+
+        try
+        {
+            _actionHistory = await HermesApiClient.GetActionHistoryAsync();
+            if (setLoading)
+            {
+                _actionStatus = _actionHistory.Message ?? $"Loaded {_actionHistory.TotalActions:N0} action history row(s).";
+            }
+        }
+        catch (Exception ex)
+        {
+            _actionStatus = HermesApiClient.DescribeFailure(ex, "Action history");
+            Plugin.Log.LogError(ex);
+        }
+        finally
+        {
+            if (setLoading)
+            {
+                _actionLoading = false;
+                HermesNativeWorkspaceRuntime.RequestClientRefresh();
+            }
+        }
+    }
+
+    private void ClearActionState()
+    {
+        _actionProposal = null;
+        _actionResult = null;
+        _actionHistory = null;
+        _actionStatus = "Action confirmation pipeline ready. Alpha1 only supports a harmless test action.";
+        _actionLoading = false;
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+    }
+
+    private static int ActionSecondsRemaining(HermesActionProposal proposal)
+        => (int)Math.Max(0L, proposal.ExpiresUnixTime - DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
     private async Task RefreshItemSearchDataAsync()
     {
         if (_activeTab != HermesTab.ItemSearch
@@ -2080,6 +2349,10 @@ internal sealed class HermesWindow
 
             switch (_activeTab)
             {
+                case HermesTab.Actions:
+                    await RefreshActionHistoryAsync();
+                    _refreshStatus = "Action history refreshed.";
+                    break;
                 case HermesTab.Assistant:
                     HermesWorkspaceSnapshotCoordinator.Current?.RefreshNoticesFromLoadedData(manual: true);
                     _refreshStatus = "Checking current profile sources. Alerts and pages change only when new semantic data is found.";
@@ -2140,6 +2413,9 @@ internal sealed class HermesWindow
                 break;
             case HermesTab.Hideout:
                 _hideoutPanel.Clear();
+                break;
+            case HermesTab.Actions:
+                ClearActionState();
                 break;
             case HermesTab.Crafts:
                 _craftPanel.Clear();
@@ -2616,6 +2892,12 @@ internal sealed class HermesWindow
             return;
         }
 
+        if (_activeTab == HermesTab.Actions)
+        {
+            _ = RefreshActionHistoryAsync();
+            return;
+        }
+
         var tabName = GetTabName(_activeTab);
         var displayName = GetTabDisplayName(_activeTab);
         _ = RefreshSelectedProfileWorkspaceAsync(tabName, displayName);
@@ -2652,6 +2934,7 @@ internal sealed class HermesWindow
         var tab = value.Trim().ToLowerInvariant() switch
         {
             "assistant" or "chat" => HermesTab.Assistant,
+            "actions" or "action" or "confirmed actions" => HermesTab.Actions,
             "hideout" => HermesTab.Hideout,
             "crafts" or "craft" => HermesTab.Crafts,
             "stash" => HermesTab.Stash,
@@ -2670,6 +2953,7 @@ internal sealed class HermesWindow
         return tab switch
         {
             HermesTab.Assistant => "Assistant",
+            HermesTab.Actions => "Actions",
             HermesTab.Hideout => "Hideout",
             HermesTab.Crafts => "Crafts",
             HermesTab.Stash => "Stash",

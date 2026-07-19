@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0-alpha1
+
+Initial alpha for the HERMES 2.0.0 development line.
+
+- Promoted the shared client, server, and package version to **2.0.0-alpha1**.
+- Updated active release documentation to use the 2.0.0-alpha1 package label.
+- Added the first confirmed-action pipeline with a master toggle, per-action permission settings, proposal model, confirmation preview, cancel/confirm controls, one-time tokens, expiration, duplicate proposal protection, result messages, and basic action history.
+- Added a harmless alpha1 test action so the whole confirmation flow can be verified without changing inventory or profile data.
+
 ## 1.0.0
 
 First full public release.

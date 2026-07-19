@@ -21,6 +21,7 @@ internal sealed class HermesNativeWorkspaceView : MonoBehaviour
     [
         ("Assistant", "ASSISTANT", "LOCAL READ-ONLY ASSISTANCE"),
         ("ItemSearch", "ITEMS & MARKET", "SEARCH, COMPARE, AND SOURCE ITEMS"),
+        ("Actions", "ACTIONS", "CONFIRMATION PIPELINE AND HISTORY"),
         ("Hideout", "HIDEOUT", "AREA STATUS, REQUIREMENTS, AND UPGRADES"),
         ("Crafts", "CRAFTS", "RECIPE READINESS AND PROFIT INTELLIGENCE"),
         ("Stash", "STASH", "VALUE, SPACE, DUPLICATES, AND CONDITION"),

@@ -99,6 +99,19 @@ internal static class HermesUi
         GUILayout.EndVertical();
     }
 
+    public static void DrawWarning(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return;
+        }
+
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.Label("HERMES WARNING");
+        GUILayout.Label(message);
+        GUILayout.EndVertical();
+    }
+
     public static bool DrawTabButton(string label, bool selected, float width)
     {
         return GUILayout.Button(

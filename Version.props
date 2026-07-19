@@ -1,5 +1,5 @@
 <Project>
   <PropertyGroup>
-    <HermesVersion>1.0.0</HermesVersion>
+    <HermesVersion>2.0.0-alpha1</HermesVersion>
   </PropertyGroup>
 </Project>

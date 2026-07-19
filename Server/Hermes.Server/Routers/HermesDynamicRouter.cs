@@ -20,6 +20,7 @@ public sealed class HermesDynamicRouter(
     HermesTraderService traderService,
     HermesMarketService marketService,
     HermesHideoutService hideoutService,
+    HermesActionService actionService,
     HermesChangeTrackingService changeTrackingService)
     : DynamicRouter(
         jsonUtil,
@@ -203,6 +204,44 @@ public sealed class HermesDynamicRouter(
                 {
                     var craftKey = GetTail(url, "/hermes/crafts/detail/");
                     var response = hideoutService.GetCraftDetail(craftKey, sessionId);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
+                "/hermes/actions/propose/test",
+                (_, _, sessionId, _) =>
+                {
+                    var response = actionService.ProposeTestAction(sessionId);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
+                "/hermes/actions/confirm/",
+                (url, _, sessionId, _) =>
+                {
+                    var segments = GetTail(url, "/hermes/actions/confirm/")
+                        .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var response = actionService.Confirm(
+                        sessionId,
+                        segments.ElementAtOrDefault(0) ?? string.Empty,
+                        segments.ElementAtOrDefault(1) ?? string.Empty);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
+                "/hermes/actions/cancel/",
+                (url, _, sessionId, _) =>
+                {
+                    var segments = GetTail(url, "/hermes/actions/cancel/")
+                        .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var response = actionService.Cancel(
+                        sessionId,
+                        segments.ElementAtOrDefault(0) ?? string.Empty,
+                        segments.ElementAtOrDefault(1) ?? string.Empty);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
+                "/hermes/actions/history",
+                (_, _, sessionId, _) =>
+                {
+                    var response = actionService.GetHistory(sessionId);
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 })
         ])

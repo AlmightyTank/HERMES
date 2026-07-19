@@ -17,6 +17,64 @@ public sealed record HermesProfileSaveResponse(
     string? Message,
     double DurationSeconds);
 
+public sealed record HermesActionPreview(
+    string ActionName,
+    IReadOnlyList<string> AffectedItems,
+    string Quantity,
+    string PriceOrCost,
+    string TraderStationOrDestination,
+    string ExpectedResult,
+    IReadOnlyList<string> Warnings,
+    string? CannotExecuteReason);
+
+public sealed record HermesActionProposal(
+    string ProposalId,
+    string ConfirmationToken,
+    string ActionKind,
+    string DisplayName,
+    bool CanExecute,
+    bool IsHarmlessTestAction,
+    bool RequiresConfirmation,
+    long CreatedUnixTime,
+    long ExpiresUnixTime,
+    int ExpiresInSeconds,
+    HermesActionPreview Preview);
+
+public sealed record HermesActionProposalResponse(
+    bool Found,
+    string? Message,
+    HermesActionProposal? Proposal);
+
+public sealed record HermesActionResultResponse(
+    bool Found,
+    bool Executed,
+    bool Cancelled,
+    bool Expired,
+    bool Duplicate,
+    string Status,
+    string Message,
+    HermesActionProposal? Proposal,
+    HermesActionHistoryEntry? HistoryEntry);
+
+public sealed record HermesActionHistoryResponse(
+    bool Found,
+    string? Message,
+    int TotalActions,
+    IReadOnlyList<HermesActionHistoryEntry> Entries);
+
+public sealed record HermesActionHistoryEntry(
+    string HistoryId,
+    string ProposalId,
+    string ActionKind,
+    string DisplayName,
+    string Status,
+    string Message,
+    long RequestedUnixTime,
+    long ResolvedUnixTime,
+    bool Executed,
+    bool HarmlessTestAction,
+    HermesActionPreview Preview);
+
 
 public sealed record HermesCacheStatusResponse(
     bool Found,

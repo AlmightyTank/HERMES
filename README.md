@@ -20,6 +20,7 @@ HERMES does not use an external AI service, does not send your profile anywhere,
 - Includes a Raid Planner with map-specific pre-raid readiness
 - Connects active quests to required access keys and maps through embedded quest-key knowledge
 - Supports a configurable pre-raid food-and-water requirement, including custom consumables when item data exposes hydration or energy effects
+- Includes an alpha confirmed-action pipeline with a harmless test action only; HERMES still performs no real inventory or profile actions
 
 ## Main Workspaces
 
@@ -111,7 +112,7 @@ dotnet build .\Hermes.Build.csproj -c Release -p:SptRoot="D:\Games\SPT"
 The build creates the release package at the repository root. The package name uses the value in `Version.props`; with the current source it is:
 
 ```text
-HERMES-1.0.0.zip
+HERMES-2.0.0-alpha1.zip
 ```
 
 It also stages the install payload under:
@@ -162,6 +163,7 @@ The top **Refresh** button performs a stronger source recheck when gear, stash c
 ## Important Notes
 
 - HERMES is read-only. It will not buy, sell, move, craft, repair, insure, accept quests, complete quests, or edit your profile.
+- The alpha Actions workspace verifies proposal, confirmation, result, and history flow with a no-op test action only.
 - HERMES uses the installed SPT database and active profile as the source of truth.
 - Flea and trader values are estimates based on available local SPT data and may not match every economy setup or heavily customized mod list.
 - Quest-key knowledge is embedded and resolved against installed SPT data. Entries that do not match SPT 4.0.13 are ignored safely.

@@ -92,6 +92,12 @@ internal sealed class HermesNativeWorkspaceState
     internal bool WorkspaceReady => HermesWorkspaceSnapshotCoordinator.Current?.HasLoadedWorkspaceData == true;
     internal bool WorkspaceInitialLoading => HermesWorkspaceSnapshotCoordinator.Current?.IsInitialWorkspaceLoadActive == true;
 
+    internal HermesActionProposal? ActionProposal => GetField<HermesActionProposal>(_window, "_actionProposal");
+    internal HermesActionResultResponse? ActionResult => GetField<HermesActionResultResponse>(_window, "_actionResult");
+    internal HermesActionHistoryResponse? ActionHistory => GetField<HermesActionHistoryResponse>(_window, "_actionHistory");
+    internal string ActionStatus => GetField<string>(_window, "_actionStatus") ?? string.Empty;
+    internal bool ActionLoading => GetField<bool>(_window, "_actionLoading");
+
     internal string AssistantContextLabel
     {
         get
@@ -256,6 +262,11 @@ internal sealed class HermesNativeWorkspaceState
         _ = SelectAreaMethod.Invoke(_hideout, [area]);
     }
 
+    internal void ProposeTestAction() => _ = _window.ProposeTestActionAsync();
+    internal void ConfirmAction() => _ = _window.ConfirmActionAsync();
+    internal void CancelAction() => _ = _window.CancelActionAsync();
+    internal void RefreshActionHistory() => _ = _window.RefreshActionHistoryAsync();
+
     internal void RefreshActive() => HermesEftWindowReflection.Refresh(_window);
     internal void ClearActive() => HermesEftWindowReflection.Clear(_window);
     internal void Navigate(string tabName) => _window.OpenNativeNoticeTarget(tabName);
@@ -303,6 +314,22 @@ internal sealed class HermesNativeWorkspaceState
                 ItemUsage?.UpgradeUses.Count,
                 ItemUsage?.ProducedBy.Count,
                 ItemUsage?.UsedBy.Count),
+            "Actions" => string.Join("|",
+                tab,
+                ActionStatus,
+                ActionLoading,
+                Identity(ActionProposal),
+                ActionProposal?.ProposalId,
+                ActionProposal is null
+                    ? 0
+                    : Math.Max(0L, ActionProposal.ExpiresUnixTime - DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+                ActionProposal?.CanExecute,
+                Identity(ActionResult),
+                ActionResult?.Status,
+                ActionResult?.Message,
+                Identity(ActionHistory),
+                ActionHistory?.TotalActions,
+                ActionHistory?.Entries.FirstOrDefault()?.HistoryId),
             "Hideout" => string.Join("|",
                 tab,
                 HideoutStatus,

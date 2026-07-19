@@ -15,6 +15,76 @@ public sealed class HermesProfileSaveResponse
     public double DurationSeconds { get; set; }
 }
 
+public sealed class HermesActionPreview
+{
+    public string ActionName { get; set; } = string.Empty;
+    public List<string> AffectedItems { get; set; } = [];
+    public string Quantity { get; set; } = string.Empty;
+    public string PriceOrCost { get; set; } = string.Empty;
+    public string TraderStationOrDestination { get; set; } = string.Empty;
+    public string ExpectedResult { get; set; } = string.Empty;
+    public List<string> Warnings { get; set; } = [];
+    public string? CannotExecuteReason { get; set; }
+}
+
+public sealed class HermesActionProposal
+{
+    public string ProposalId { get; set; } = string.Empty;
+    public string ConfirmationToken { get; set; } = string.Empty;
+    public string ActionKind { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public bool CanExecute { get; set; }
+    public bool IsHarmlessTestAction { get; set; }
+    public bool RequiresConfirmation { get; set; }
+    public long CreatedUnixTime { get; set; }
+    public long ExpiresUnixTime { get; set; }
+    public int ExpiresInSeconds { get; set; }
+    public HermesActionPreview Preview { get; set; } = new();
+}
+
+public sealed class HermesActionProposalResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public HermesActionProposal? Proposal { get; set; }
+}
+
+public sealed class HermesActionResultResponse
+{
+    public bool Found { get; set; }
+    public bool Executed { get; set; }
+    public bool Cancelled { get; set; }
+    public bool Expired { get; set; }
+    public bool Duplicate { get; set; }
+    public string Status { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public HermesActionProposal? Proposal { get; set; }
+    public HermesActionHistoryEntry? HistoryEntry { get; set; }
+}
+
+public sealed class HermesActionHistoryResponse
+{
+    public bool Found { get; set; }
+    public string? Message { get; set; }
+    public int TotalActions { get; set; }
+    public List<HermesActionHistoryEntry> Entries { get; set; } = [];
+}
+
+public sealed class HermesActionHistoryEntry
+{
+    public string HistoryId { get; set; } = string.Empty;
+    public string ProposalId { get; set; } = string.Empty;
+    public string ActionKind { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public string Status { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public long RequestedUnixTime { get; set; }
+    public long ResolvedUnixTime { get; set; }
+    public bool Executed { get; set; }
+    public bool HarmlessTestAction { get; set; }
+    public HermesActionPreview Preview { get; set; } = new();
+}
+
 public sealed class HermesCacheStatusResponse
 {
     public bool Found { get; set; }

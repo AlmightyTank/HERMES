@@ -234,6 +234,60 @@ internal static class HermesApiClient
             });
     }
 
+    public static Task<HermesActionProposalResponse> ProposeTestActionAsync()
+    {
+        return GetDataAsync(
+            "/hermes/actions/propose/test",
+            () => new HermesActionProposalResponse
+            {
+                Found = false,
+                Message = "HERMES could not create a test action proposal."
+            });
+    }
+
+    public static Task<HermesActionResultResponse> ConfirmActionAsync(string proposalId, string confirmationToken)
+    {
+        var route = "/hermes/actions/confirm/"
+                    + Uri.EscapeDataString(proposalId ?? string.Empty)
+                    + "/"
+                    + Uri.EscapeDataString(confirmationToken ?? string.Empty);
+        return GetDataAsync(
+            route,
+            () => new HermesActionResultResponse
+            {
+                Found = false,
+                Status = "Unavailable",
+                Message = "HERMES could not confirm the action."
+            });
+    }
+
+    public static Task<HermesActionResultResponse> CancelActionAsync(string proposalId, string confirmationToken)
+    {
+        var route = "/hermes/actions/cancel/"
+                    + Uri.EscapeDataString(proposalId ?? string.Empty)
+                    + "/"
+                    + Uri.EscapeDataString(confirmationToken ?? string.Empty);
+        return GetDataAsync(
+            route,
+            () => new HermesActionResultResponse
+            {
+                Found = false,
+                Status = "Unavailable",
+                Message = "HERMES could not cancel the action."
+            });
+    }
+
+    public static Task<HermesActionHistoryResponse> GetActionHistoryAsync()
+    {
+        return GetDataAsync(
+            "/hermes/actions/history",
+            () => new HermesActionHistoryResponse
+            {
+                Found = false,
+                Message = "HERMES action history is unavailable."
+            });
+    }
+
     public static HermesRequestDiagnosticsSnapshot GetDiagnosticsSnapshot()
     {
         return HermesRequestDiagnostics.Snapshot();
