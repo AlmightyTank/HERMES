@@ -282,7 +282,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             return;
         }
 
-        QueueWorkspaceOpenRefresh(GetActiveTabName());
+        QueueWorkspaceOpenRefresh(GetActiveTabName(), force: true);
     }
 
     internal void RequestImmediateRecheck()
@@ -291,7 +291,7 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         _ = RefreshWorkspaceAsync(GetActiveTabName(), manual: true);
     }
 
-    internal void OnWorkspaceSelected(string tabName)
+    internal void OnWorkspaceSelected(string tabName, bool force = false)
     {
         var normalized = NormalizeWorkspace(tabName);
         if (normalized is "ItemSearch" or "")
@@ -307,10 +307,10 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
             return;
         }
 
-        QueueWorkspaceOpenRefresh(normalized);
+        QueueWorkspaceOpenRefresh(normalized, force);
     }
 
-    private void QueueWorkspaceOpenRefresh(string tabName)
+    private void QueueWorkspaceOpenRefresh(string tabName, bool force = false)
     {
         var normalized = NormalizeWorkspace(tabName);
         if (normalized is "ItemSearch" or "")
@@ -322,7 +322,8 @@ internal sealed class HermesWorkspaceSnapshotCoordinator
         var now = Time.realtimeSinceStartup;
         lock (_workspaceRefreshSync)
         {
-            if (_lastWorkspaceOpenRequestAt.TryGetValue(requestKey, out var previous)
+            if (!force
+                && _lastWorkspaceOpenRequestAt.TryGetValue(requestKey, out var previous)
                 && now - previous < WorkspaceOpenDebounceSeconds)
             {
                 if (Plugin.Settings.DetailedLogging.Value)

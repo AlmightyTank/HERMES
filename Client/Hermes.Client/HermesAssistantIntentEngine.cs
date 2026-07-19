@@ -64,8 +64,8 @@ internal static class HermesAssistantIntentEngine
 {
     private static readonly string[] SubjectStopWords =
     [
-        "a", "about", "an", "are", "at", "be", "buy", "can", "cant", "cannot", "could",
-        "craft", "crafting", "do", "does", "for", "from", "have", "hideout", "how", "i",
+        "a", "about", "after", "am", "an", "are", "at", "be", "before", "buy", "can", "cant", "cannot", "could",
+        "craft", "crafting", "do", "does", "fix", "for", "from", "get", "go", "have", "hideout", "how", "i",
         "in", "is", "it", "make", "map", "me", "my", "need", "of", "on", "please",
         "price", "produce", "quest", "raid", "recipe", "requirements", "requirement", "sell",
         "should", "station", "status", "tell", "the", "this", "to", "upgrade", "value", "what",
@@ -110,17 +110,21 @@ internal static class HermesAssistantIntentEngine
                 normalized,
                 "what should i do next",
                 "what do i do next",
+                "what should i do first",
                 "what is most important",
                 "what's most important",
                 "prioritize my next steps",
                 "prioritize my tasks",
+                "why that priority",
+                "why this priority",
                 "next best step",
                 "best use of my time",
                 "should i craft or raid",
                 "craft or raid",
                 "how should i prepare",
                 "prepare me for",
-                "what should i fix first"))
+                "what should i fix first",
+                "what do i need before i go"))
         {
             return new HermesAssistantInterpretation(HermesAssistantIntent.CrossSystem, referencesSelectedItem, normalized, subject);
         }
@@ -130,13 +134,19 @@ internal static class HermesAssistantIntentEngine
             return new HermesAssistantInterpretation(HermesAssistantIntent.Item, true, normalized, subject);
         }
 
-        if (ContainsAny(normalized, "best raid", "which raid", "what raid", "best map", "which map", "raid planner", "active quests", "quests can i", "quest on", "quests on")
+        if (ContainsAny(
+                normalized,
+                "best raid", "which raid", "what raid",
+                "best map", "which map", "what map",
+                "map should i", "map do i", "where should i go", "where do i go",
+                "where should i raid", "where do i raid", "what should i run",
+                "raid planner", "active quests", "quests can i", "quest on", "quests on")
             || ContainsMapAlias(normalized))
         {
             return new HermesAssistantInterpretation(HermesAssistantIntent.RaidPlanner, false, normalized, subject);
         }
 
-        if (ContainsAny(normalized, "safe to sell", "safely sell", "stash cleanup", "clean my stash", "cleanup", "duplicate", "stash value", "my stash")
+        if (ContainsAny(normalized, "safe to sell", "safely sell", "stash cleanup", "clean my stash", "cleanup", "duplicate", "stash value", "my stash", "most valuable", "free stash space")
             || (normalized.Contains("stash", StringComparison.Ordinal)
                 && !ContainsAny(normalized, "upgrade stash", "stash level", "hideout stash")))
         {
@@ -153,7 +163,7 @@ internal static class HermesAssistantIntentEngine
             return new HermesAssistantInterpretation(HermesAssistantIntent.Hideout, false, normalized, subject);
         }
 
-        if (ContainsAny(normalized, "ready", "loadout", "ammo", "round", "magazine", "medical", "bleed", "fracture", "pain", "armor", "weapon", "insured", "insurance", "risk", "hydration", "energy"))
+        if (ContainsAny(normalized, "ready", "loadout", "ammo", "round", "magazine", "medical", "bleed", "fracture", "pain", "armor", "weapon", "insured", "insurance", "risk", "hydration", "energy", "what should i bring", "bring with me", "before i go"))
         {
             return new HermesAssistantInterpretation(HermesAssistantIntent.Loadout, false, normalized, subject);
         }

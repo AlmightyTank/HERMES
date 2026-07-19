@@ -62,11 +62,13 @@ internal sealed class HermesNativeWorkspaceState
     internal bool DetailLoading => GetField<bool>(_window, "_loadingDetails") || GetField<bool>(_window, "_loadingInstancePrice");
     internal IReadOnlyList<HermesItemSummary> SearchResults => GetField<IReadOnlyList<HermesItemSummary>>(_window, "_results") ?? [];
     internal HermesItemSummary? SelectedItem => GetField<HermesItemSummary>(_window, "_selectedItem");
+    internal HermesItemSummary? AssistantSelectedItem => _window.GetAssistantSelectedItem();
     internal HermesTraderSummaryResponse? TraderSummary => GetField<HermesTraderSummaryResponse>(_window, "_traderSummary");
     internal HermesMarketSummaryResponse? MarketSummary => GetField<HermesMarketSummaryResponse>(_window, "_marketSummary");
     internal HermesItemHideoutUsageResponse? ItemUsage => GetField<HermesItemHideoutUsageResponse>(_window, "_hideoutUsage");
     internal IReadOnlyList<HermesStashInstanceSummary> StashInstances => GetField<IReadOnlyList<HermesStashInstanceSummary>>(_window, "_stashInstances") ?? [];
     internal string? SelectedStashInstanceKey => GetField<string>(_window, "_selectedStashInstanceKey");
+    internal string? AssistantSelectedStashInstanceKey => _window.GetAssistantSelectedInstanceKey();
     internal HermesStashInstanceSummary? SelectedStashInstance => StashInstances.FirstOrDefault(instance =>
         string.Equals(instance.InstanceKey, SelectedStashInstanceKey, StringComparison.OrdinalIgnoreCase));
     internal long? DisplayedItemReferenceValue => SelectedStashInstance is { ConditionAdjustedReferenceValue: > 0 } selected
@@ -82,6 +84,7 @@ internal sealed class HermesNativeWorkspaceState
     internal string AssistantStatus => GetField<string>(_assistant, "_status") ?? string.Empty;
     internal bool AssistantLoading => GetField<bool>(_assistant, "_loading");
     internal IReadOnlyList<HermesNativeAssistantMessageData> AssistantMessages => ReadAssistantMessages();
+    internal IReadOnlyList<string> AssistantSuggestedPrompts => _assistant.GetSuggestedPromptButtons(AssistantSelectedItem);
     internal IReadOnlyList<HermesNativeNoticeData> Notices => ReadNotices();
     internal bool NoticesLoading => GetField<bool>(_notices, "_checking");
     internal string NoticeStatus => GetField<string>(_notices, "_status") ?? string.Empty;
@@ -93,18 +96,19 @@ internal sealed class HermesNativeWorkspaceState
     {
         get
         {
-            if (SelectedItem is null)
+            var assistantItem = AssistantSelectedItem;
+            if (assistantItem is null)
             {
                 return "ACTIVE PMC";
             }
 
-            var suffix = string.IsNullOrWhiteSpace(SelectedStashInstanceKey)
+            var suffix = string.IsNullOrWhiteSpace(AssistantSelectedStashInstanceKey)
                 ? string.Empty
                 : " • EXACT COPY";
             var maximumNameLength = suffix.Length == 0 ? 28 : 18;
-            var name = SelectedItem.Name.Length <= maximumNameLength
-                ? SelectedItem.Name
-                : SelectedItem.Name[..Math.Max(1, maximumNameLength - 1)].TrimEnd() + "…";
+            var name = assistantItem.Name.Length <= maximumNameLength
+                ? assistantItem.Name
+                : assistantItem.Name[..Math.Max(1, maximumNameLength - 1)].TrimEnd() + "…";
             return name + suffix;
         }
     }
@@ -197,10 +201,12 @@ internal sealed class HermesNativeWorkspaceState
 
         _ = SubmitAssistantMethod.Invoke(
             _assistant,
-            [prompt.Trim(), SelectedItem, SelectedStashInstanceKey, true]);
+            [prompt.Trim(), AssistantSelectedItem, AssistantSelectedStashInstanceKey, true]);
     }
 
     internal void ClearAssistant() => _assistant.Clear();
+
+    internal void ClearAssistantContext() => _window.ClearAssistantContext();
 
     internal void RefreshAssistantFromCache()
     {

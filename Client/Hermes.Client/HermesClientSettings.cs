@@ -171,7 +171,7 @@ internal sealed class HermesClientSettings
             "General",
             "Read prepared workspace when opened",
             true,
-            "Reads the active workspace from the server's prepared cache when HERMES opens. It does not recheck sources or invalidate caches.");
+            "Legacy compatibility setting. HERMES now refreshes the active prepared workspace whenever it opens or the selected HERMES workspace changes.");
         RequestTimeoutSeconds = config.Bind(
             "General",
             "Request timeout seconds",

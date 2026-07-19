@@ -67,6 +67,7 @@ internal sealed class HermesAssistantPanel
     [
         "What should I do next?",
         "What is the best raid for me right now?",
+        "What map should I go to?",
         "Should I craft or raid?",
         "How should I prepare for Ground Zero?",
         "What items can I safely sell?",
@@ -82,6 +83,7 @@ internal sealed class HermesAssistantPanel
             "How should I prepare for Ground Zero?"),
         new("RAIDS & LOADOUT", "Name a map or ask about a specific readiness concern.",
             "What is the best raid for me right now?",
+            "What map should I go to?",
             "Am I ready for Customs?",
             "What should I fix in my loadout first?"),
         new("STASH & ITEMS", "Use an exact item name, or select an item and say ‘this item’.",
@@ -121,7 +123,8 @@ internal sealed class HermesAssistantPanel
     public void Draw(
         HermesItemSummary? selectedItem,
         string? selectedInstanceKey,
-        Action<string> navigate)
+        Action<string> navigate,
+        Action clearContext)
     {
         HermesUi.DrawPanelTitle(
             "HERMES ASSISTANT",
@@ -129,7 +132,7 @@ internal sealed class HermesAssistantPanel
             _status,
             _loading);
 
-        DrawContext(selectedItem, selectedInstanceKey);
+        DrawContext(selectedItem, selectedInstanceKey, clearContext);
         GUILayout.Space(HermesUi.SmallSpace);
         DrawConversation(navigate);
         GUILayout.Space(HermesUi.StandardSpace);
@@ -148,6 +151,12 @@ internal sealed class HermesAssistantPanel
         AddWelcomeMessage();
     }
 
+    public void ClearContext()
+    {
+        _conversationContext.Reset();
+        _status = "Assistant context cleared. New questions will use the active PMC unless you select another item.";
+    }
+
     public async Task RefreshLastAsync(HermesItemSummary? selectedItem, string? selectedInstanceKey)
     {
         if (string.IsNullOrWhiteSpace(_lastPrompt) || _loading)
@@ -159,7 +168,15 @@ internal sealed class HermesAssistantPanel
         await SubmitPromptAsync(_lastPrompt, selectedItem, selectedInstanceKey, false);
     }
 
-    private void DrawContext(HermesItemSummary? selectedItem, string? selectedInstanceKey)
+    public IReadOnlyList<string> GetSuggestedPromptButtons(HermesItemSummary? selectedItem)
+    {
+        return GetSuggestedPrompts(selectedItem).Take(3).ToList();
+    }
+
+    private void DrawContext(
+        HermesItemSummary? selectedItem,
+        string? selectedInstanceKey,
+        Action clearContext)
     {
         _conversationContext.UpdateSelectedItem(selectedItem, selectedInstanceKey);
         if (!Plugin.Settings.ShowAssistantConversationContext.Value)
@@ -186,6 +203,11 @@ internal sealed class HermesAssistantPanel
         }
 
         GUILayout.Label("LOCAL • READ ONLY", GUILayout.Width(130f));
+        if (GUILayout.Button("Clear context", GUILayout.Width(112f), GUILayout.Height(HermesUi.ToolbarHeight)))
+        {
+            clearContext();
+        }
+
         GUILayout.EndHorizontal();
 
         if (selectedItem is not null && Plugin.Settings.IncludeSelectedItemInAssistant.Value)
@@ -273,7 +295,7 @@ internal sealed class HermesAssistantPanel
         if (Plugin.Settings.ShowAssistantSuggestedPrompts.Value)
         {
             GUILayout.BeginHorizontal();
-            foreach (var prompt in GetSuggestedPrompts(selectedItem).Take(3))
+            foreach (var prompt in GetSuggestedPromptButtons(selectedItem))
             {
                 if (GUILayout.Button(prompt, GUILayout.Height(HermesUi.ToolbarHeight), GUILayout.ExpandWidth(true)))
                 {
@@ -371,18 +393,115 @@ internal sealed class HermesAssistantPanel
         GUILayout.EndVertical();
     }
 
-    private static IEnumerable<string> GetSuggestedPrompts(HermesItemSummary? selectedItem)
+    private IEnumerable<string> GetSuggestedPrompts(HermesItemSummary? selectedItem)
+    {
+        foreach (var prompt in GetResponseSuggestedPrompts(selectedItem))
+        {
+            yield return prompt;
+        }
+
+        foreach (var prompt in GetContextSuggestedPrompts(selectedItem))
+        {
+            yield return prompt;
+        }
+
+        foreach (var prompt in SuggestedPrompts)
+        {
+            yield return prompt;
+        }
+    }
+
+    private IEnumerable<string> GetResponseSuggestedPrompts(HermesItemSummary? selectedItem)
+    {
+        var lastResponse = _messages.LastOrDefault(message =>
+            !message.IsUser
+            && !message.Source.Equals("LOCAL ASSISTANT", StringComparison.OrdinalIgnoreCase));
+        if (lastResponse is null)
+        {
+            yield break;
+        }
+
+        if (lastResponse.Text.StartsWith("I could not", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return "What should I do next?";
+            yield return "What map should I go to?";
+            yield return "What items can I safely sell?";
+            yield break;
+        }
+
+        var source = lastResponse.Source.ToLowerInvariant();
+        if (source.Contains("cross-system", StringComparison.Ordinal))
+        {
+            yield return "Why that priority?";
+            yield return "What should I do first?";
+            yield return "What map should I go to?";
+            yield break;
+        }
+
+        if (source.Contains("raid planner", StringComparison.Ordinal)
+            || source.Contains("best map", StringComparison.Ordinal)
+            || source.Contains("quest resolution", StringComparison.Ordinal))
+        {
+            yield return "Why that map?";
+            yield return "What do I need before I go?";
+            yield return "What map should I go to after that?";
+            yield break;
+        }
+
+        if (source.Contains("item", StringComparison.Ordinal)
+            || source.Contains("market", StringComparison.Ordinal)
+            || selectedItem is not null)
+        {
+            yield return "What is this item worth?";
+            yield return "Do I need this item for quests or hideout?";
+            yield return "Where should I sell this item?";
+            yield break;
+        }
+
+        if (source.Contains("loadout", StringComparison.Ordinal))
+        {
+            yield return "What should I fix first?";
+            yield return "What map should I go to?";
+            yield return "What should I bring?";
+            yield break;
+        }
+
+        if (source.Contains("craft", StringComparison.Ordinal))
+        {
+            yield return "What should I craft next?";
+            yield return "Is that profitable?";
+            yield return "What materials am I missing?";
+            yield break;
+        }
+
+        if (source.Contains("hideout", StringComparison.Ordinal))
+        {
+            yield return "What upgrade should I do next?";
+            yield return "What am I missing?";
+            yield return "Where can I get the parts?";
+            yield break;
+        }
+
+        if (source.Contains("stash", StringComparison.Ordinal))
+        {
+            yield return "What can I safely sell?";
+            yield return "What is most valuable?";
+            yield return "How do I free stash space?";
+            yield break;
+        }
+
+        yield return "Why?";
+        yield return "What should I do first?";
+        yield return "What map should I go to?";
+    }
+
+    private static IEnumerable<string> GetContextSuggestedPrompts(HermesItemSummary? selectedItem)
     {
         if (selectedItem is not null && Plugin.Settings.IncludeSelectedItemInAssistant.Value)
         {
             yield return "What is this item worth?";
             yield return "Do I need this item for quests or hideout?";
             yield return "Where should I sell this item?";
-        }
-
-        foreach (var prompt in SuggestedPrompts)
-        {
-            yield return prompt;
         }
     }
 
@@ -1766,6 +1885,18 @@ internal sealed class HermesAssistantPanel
         HermesItemSummary? selectedItem,
         string? selectedInstanceKey)
     {
+        if (IsBareFollowUpPrompt(prompt))
+        {
+            return new AssistantMessage(
+                false,
+                "I need a remembered Assistant subject before I can answer that short follow-up. Ask the full question first, such as \"What map should I go to?\", or select an item and ask about this item.",
+                "FOLLOW-UP CONTEXT",
+                [
+                    new AssistantAction("Open Raid Planner", "Loadout/Raid Planner"),
+                    new AssistantAction("Open Item Search", "Item Search")
+                ]);
+        }
+
         if (selectedItem is not null
             && Plugin.Settings.IncludeSelectedItemInAssistant.Value
             && ReferencesSelectedItem(prompt))
@@ -2197,6 +2328,12 @@ internal sealed class HermesAssistantPanel
     private static bool ReferencesSelectedItem(string text)
     {
         return HermesAssistantIntentEngine.ReferencesSelectedItem(text);
+    }
+
+    private static bool IsBareFollowUpPrompt(string text)
+    {
+        var normalized = HermesAssistantIntentEngine.Normalize(text);
+        return normalized is "why" or "why that" or "why this" or "what about it" or "how about it";
     }
 
     private static bool ContainsAny(string text, params string[] values)

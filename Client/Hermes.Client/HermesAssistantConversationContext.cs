@@ -427,15 +427,22 @@ internal sealed class HermesAssistantConversationContext
                 "which key",
                 "where",
                 "where is it",
+                "where can i get",
                 "what about it",
                 "how about it",
                 "do i have it",
                 "what do i need",
+                "what materials",
                 "what is missing",
+                "what am i missing",
+                "materials am i missing",
                 "is it ready",
                 "is it profitable",
                 "can i craft it",
                 "should i sell it",
+                "what should i bring",
+                "what should i fix",
+                "what should i do first",
                 "and then",
                 "what next"))
         {
@@ -472,7 +479,9 @@ internal sealed class HermesAssistantConversationContext
         {
             "key", "keys", "use", "missing", "next", "ready", "profitable", "profit", "worth",
             "value", "price", "sell", "buy", "owned", "have", "location", "objective", "objectives",
-            "requirement", "requirements", "first one", "second one", "third one", "one"
+            "requirement", "requirements", "first one", "second one", "third one", "one",
+            "before", "go", "before go", "bring", "fix", "first", "materials", "parts", "get parts",
+            "priority"
         };
         return generic.Contains(subject.Trim());
     }

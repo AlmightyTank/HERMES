@@ -55,6 +55,8 @@ internal sealed class HermesWindow
     private HermesItemHideoutUsageResponse? _hideoutUsage;
     private IReadOnlyList<HermesStashInstanceSummary> _stashInstances = [];
     private string? _selectedStashInstanceKey;
+    private string? _suppressedAssistantContextItemKey;
+    private string? _suppressedAssistantContextInstanceKey;
     private int _searchRequestVersion;
     private int _openRequestVersion;
     private int _detailRequestVersion;
@@ -115,13 +117,13 @@ internal sealed class HermesWindow
 
     private void OnPresentationOpened()
     {
-        // Rebuild the visible native presentation immediately. Server data is refreshed only
-        // through the prepared-workspace coordinator; opening HERMES must never behave like the
-        // top Refresh button or clear/invalidate server caches.
+        // Rebuild the visible native presentation immediately and refresh the active workspace
+        // from the prepared server data every time the player swaps into HERMES.
         HermesNativeWorkspaceRuntime.RequestClientRefresh();
-        if (Plugin.Settings.AutomaticallyRefreshWhenOpened.Value)
+        HermesWorkspaceSnapshotCoordinator.Current?.OnPresentationOpened();
+        if (_activeTab == HermesTab.ItemSearch)
         {
-            HermesWorkspaceSnapshotCoordinator.Current?.OnPresentationOpened();
+            _ = RefreshItemSearchDataAsync();
         }
     }
 
@@ -133,7 +135,7 @@ internal sealed class HermesWindow
         }
 
         EnsurePresentationVisible();
-        SetActiveTab(HermesTab.ItemSearch);
+        SetActiveTab(HermesTab.ItemSearch, refreshOnSelect: false);
         _ = OpenForInventoryItemAsync(profileItemId, null);
     }
 
@@ -145,7 +147,7 @@ internal sealed class HermesWindow
         }
 
         EnsurePresentationVisible();
-        SetActiveTab(HermesTab.ItemSearch);
+        SetActiveTab(HermesTab.ItemSearch, refreshOnSelect: false);
         if (string.IsNullOrWhiteSpace(profileItemId))
         {
             OpenForNamedItem(itemName, "loadout");
@@ -163,7 +165,7 @@ internal sealed class HermesWindow
         }
 
         EnsurePresentationVisible();
-        SetActiveTab(HermesTab.ItemSearch);
+        SetActiveTab(HermesTab.ItemSearch, refreshOnSelect: false);
 
         // Cancel any stale exact-instance/detail operation before starting the visible search.
         Clear();
@@ -180,7 +182,7 @@ internal sealed class HermesWindow
         }
 
         EnsurePresentationVisible();
-        SetActiveTab(HermesTab.ItemSearch);
+        SetActiveTab(HermesTab.ItemSearch, refreshOnSelect: false);
         HermesNativeWorkspaceRuntime.RequestClientRefresh();
 
         if (string.IsNullOrWhiteSpace(selectionKey))
@@ -205,7 +207,7 @@ internal sealed class HermesWindow
         }
 
         EnsurePresentationVisible();
-        SetActiveTab(HermesTab.ItemSearch);
+        SetActiveTab(HermesTab.ItemSearch, refreshOnSelect: false);
         _ = OpenForPreviewItemAsync(templateId, sourceLabel);
     }
 
@@ -643,7 +645,11 @@ internal sealed class HermesWindow
             case HermesTab.Assistant:
                 _noticeService.DrawInbox(OpenNoticeTarget);
                 GUILayout.Space(HermesUi.StandardSpace);
-                _assistantPanel.Draw(_selectedItem, _selectedStashInstanceKey, NavigateToTab);
+                _assistantPanel.Draw(
+                    GetAssistantSelectedItem(),
+                    GetAssistantSelectedInstanceKey(),
+                    NavigateToTab,
+                    ClearAssistantContext);
                 break;
             case HermesTab.Hideout:
                 _hideoutPanel.Draw();
@@ -1933,6 +1939,53 @@ internal sealed class HermesWindow
         }
     }
 
+    private async Task RefreshItemSearchDataAsync()
+    {
+        if (_activeTab != HermesTab.ItemSearch
+            || _searching
+            || _loadingDetails
+            || _loadingInstancePrice)
+        {
+            return;
+        }
+
+        try
+        {
+            _refreshStatus = "Reloading Items & Market...";
+            if (_selectedItem is not null)
+            {
+                _detailRequestVersion++;
+                _instanceRequestVersion++;
+                _loadingDetails = false;
+                _loadingInstancePrice = false;
+
+                var selectedInstance = _selectedStashInstanceKey is null
+                    ? null
+                    : _stashInstances.FirstOrDefault(instance =>
+                        instance.InstanceKey == _selectedStashInstanceKey);
+                await SelectItemAsync(
+                    _selectedItem,
+                    selectedInstance,
+                    _selectedStashInstanceKey is not null);
+                _refreshStatus = "Items & Market refreshed.";
+            }
+            else if (_query.Trim().Length >= Plugin.Settings.GetMinimumSearchCharacters())
+            {
+                await RunSearchAsync();
+                _refreshStatus = "Items & Market search refreshed.";
+            }
+            else
+            {
+                _refreshStatus = "Items & Market ready.";
+            }
+        }
+        catch (Exception ex)
+        {
+            _refreshStatus = HermesApiClient.DescribeFailure(ex, "Items & Market refresh");
+            Plugin.Log.LogError(ex);
+        }
+    }
+
     private async Task RefreshCurrentDataAsync(bool clearCaches = true)
     {
         if (_refreshingCurrent)
@@ -2394,6 +2447,51 @@ internal sealed class HermesWindow
         _detailStatus = "Select an item to inspect trader, flea, hideout, and crafting information.";
     }
 
+    internal HermesItemSummary? GetAssistantSelectedItem()
+    {
+        if (_selectedItem is null || !IsAssistantSelectedItemSuppressed())
+        {
+            return _selectedItem;
+        }
+
+        return null;
+    }
+
+    internal string? GetAssistantSelectedInstanceKey()
+    {
+        return GetAssistantSelectedItem() is null
+            ? null
+            : _selectedStashInstanceKey;
+    }
+
+    internal void ClearAssistantContext()
+    {
+        _assistantPanel.ClearContext();
+        if (_selectedItem is not null)
+        {
+            _suppressedAssistantContextItemKey = _selectedItem.ItemKey;
+            _suppressedAssistantContextInstanceKey = _selectedStashInstanceKey;
+        }
+        else
+        {
+            _suppressedAssistantContextItemKey = null;
+            _suppressedAssistantContextInstanceKey = null;
+        }
+    }
+
+    private bool IsAssistantSelectedItemSuppressed()
+    {
+        return _selectedItem is not null
+               && string.Equals(
+                   _suppressedAssistantContextItemKey,
+                   _selectedItem.ItemKey,
+                   StringComparison.OrdinalIgnoreCase)
+               && string.Equals(
+                   _suppressedAssistantContextInstanceKey ?? string.Empty,
+                   _selectedStashInstanceKey ?? string.Empty,
+                   StringComparison.OrdinalIgnoreCase);
+    }
+
     internal void OpenNativeNoticeTarget(string tabName)
     {
         OpenNoticeTarget(tabName);
@@ -2427,7 +2525,7 @@ internal sealed class HermesWindow
         SetActiveTab(tab);
     }
 
-    private void SetActiveTab(HermesTab tab)
+    private void SetActiveTab(HermesTab tab, bool refreshOnSelect = true)
     {
         if (tab == HermesTab.Assistant && !Plugin.Settings.EnableAssistantTab.Value)
         {
@@ -2452,11 +2550,26 @@ internal sealed class HermesWindow
         }
         var tabName = GetTabName(tab);
         Plugin.Settings.RememberTab(tabName);
-        HermesWorkspaceSnapshotCoordinator.Current?.OnWorkspaceSelected(tabName);
+        if (refreshOnSelect)
+        {
+            RefreshSelectedWorkspace(tabName);
+        }
         if (Plugin.Settings.DetailedLogging.Value)
         {
-            Plugin.Log.LogDebug($"HERMES active tab changed to {tabName}; prepared server summary refresh started.");
+            var refreshStatus = refreshOnSelect ? "refresh started" : "refresh skipped for direct item navigation";
+            Plugin.Log.LogDebug($"HERMES active tab changed to {tabName}; {refreshStatus}.");
         }
+    }
+
+    private void RefreshSelectedWorkspace(string tabName)
+    {
+        if (_activeTab == HermesTab.ItemSearch)
+        {
+            _ = RefreshItemSearchDataAsync();
+            return;
+        }
+
+        HermesWorkspaceSnapshotCoordinator.Current?.OnWorkspaceSelected(tabName, force: true);
     }
 
     private static HermesTab ParseTabName(string value)

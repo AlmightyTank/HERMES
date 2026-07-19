@@ -311,6 +311,13 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             70f,
             height: 28f,
             fontSize: 11.5f);
+        AddButton(
+            quickActions,
+            "CLEAR CONTEXT",
+            state.ClearAssistantContext,
+            122f,
+            height: 28f,
+            fontSize: 11.5f);
         AddFlexibleSpace(quickActions);
     }
 
@@ -520,6 +527,33 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
 
     private void RenderAssistantComposer(Transform parent, HermesNativeWorkspaceState state)
     {
+        if (Plugin.Settings.ShowAssistantSuggestedPrompts.Value)
+        {
+            var suggestions = state.AssistantSuggestedPrompts.Take(3).ToList();
+            if (suggestions.Count > 0)
+            {
+                var suggestionRow = CreateToolbar(parent);
+                AddToolbarLabel(suggestionRow, "FOLLOW-UP");
+                foreach (var prompt in suggestions)
+                {
+                    AddButton(
+                        suggestionRow,
+                        prompt,
+                        () =>
+                        {
+                            _assistantDraft = prompt;
+                            Invalidate(0.05f);
+                        },
+                        246f,
+                        !state.AssistantLoading,
+                        height: 28f,
+                        fontSize: 11f);
+                }
+
+                AddFlexibleSpace(suggestionRow);
+            }
+        }
+
         var composer = CreatePanel(parent, "AssistantComposer", HermesNativeUiFramework.HeaderColor);
         var composerLayout = composer.gameObject.AddComponent<HorizontalLayoutGroup>();
         composerLayout.padding = new RectOffset(7, 7, 4, 4);
