@@ -245,6 +245,32 @@ internal static class HermesApiClient
             });
     }
 
+    public static Task<HermesActionProposalResponse> ProposeInventoryTagActionAsync(
+        string operation,
+        string tagName,
+        string tagColor,
+        IReadOnlyCollection<string> instanceKeys)
+    {
+        var keySegment = string.Join(",", (instanceKeys ?? Array.Empty<string>())
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(key => key.Trim()));
+        var route = "/hermes/actions/propose/tag/"
+                    + Uri.EscapeDataString(operation ?? string.Empty)
+                    + "/"
+                    + Uri.EscapeDataString(tagName ?? string.Empty)
+                    + "/"
+                    + Uri.EscapeDataString(tagColor ?? string.Empty)
+                    + "/"
+                    + Uri.EscapeDataString(keySegment);
+        return GetDataAsync(
+            route,
+            () => new HermesActionProposalResponse
+            {
+                Found = false,
+                Message = "HERMES could not create an inventory tag action proposal."
+            });
+    }
+
     public static Task<HermesActionResultResponse> ConfirmActionAsync(string proposalId, string confirmationToken)
     {
         var route = "/hermes/actions/confirm/"

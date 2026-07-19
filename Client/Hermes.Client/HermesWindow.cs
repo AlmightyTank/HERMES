@@ -73,8 +73,31 @@ internal sealed class HermesWindow
     private HermesActionProposal? _actionProposal;
     private HermesActionResultResponse? _actionResult;
     private HermesActionHistoryResponse? _actionHistory;
-    private string _actionStatus = "Action confirmation pipeline ready. Alpha1 only supports a harmless test action.";
+    private string _actionStatus = "Action confirmation pipeline ready. HERMES 1.1 supports harmless tests and confirmed inventory tag actions.";
     private bool _actionLoading;
+    private string _tagActionMode = "apply";
+    private string _tagDraftName = string.Empty;
+    private string _tagDraftColor = "blue";
+    private string _tagEditorInstanceKey = string.Empty;
+    private string _tagEditorMode = "apply";
+    private readonly HashSet<string> _selectedTagActionInstanceKeys = new(StringComparer.OrdinalIgnoreCase);
+
+    private sealed record PendingClientTagMutation(
+        string Mode,
+        string TagName,
+        string TagColor,
+        IReadOnlyList<HermesStashInstanceSummary> Instances);
+
+    private static readonly (string Value, string Label)[] TagColorOptions =
+    [
+        ("red", "Red"),
+        ("orange", "Orange"),
+        ("yellow", "Yellow"),
+        ("green", "Green"),
+        ("blue", "Blue"),
+        ("violet", "Violet"),
+        ("grey", "Grey")
+    ];
 
     public HermesWindow()
     {
@@ -572,7 +595,6 @@ internal sealed class HermesWindow
         }
 
         DrawNavigationButton(HermesTab.ItemSearch, "Items & Market");
-        DrawNavigationButton(HermesTab.Actions, "Actions");
         DrawNavigationButton(HermesTab.Hideout, "Hideout");
         DrawNavigationButton(HermesTab.Crafts, "Crafts");
         DrawNavigationButton(HermesTab.Stash, "Stash");
@@ -580,7 +602,7 @@ internal sealed class HermesWindow
         DrawNavigationButton(HermesTab.RaidPlanner, "Raid Planner");
 
         GUILayout.FlexibleSpace();
-        GUILayout.Label("READ ONLY");
+        GUILayout.Label("CONFIRMED TAG ACTIONS");
         if (Plugin.Settings.ShowDiagnosticsFooter.Value)
         {
             GUILayout.Label(FormatCompactDiagnosticsStatus());
@@ -604,7 +626,6 @@ internal sealed class HermesWindow
             firstRow.Add((HermesTab.Assistant, "Assistant"));
         }
         firstRow.Add((HermesTab.ItemSearch, "Items"));
-        firstRow.Add((HermesTab.Actions, "Actions"));
         firstRow.Add((HermesTab.Hideout, "Hideout"));
         firstRow.Add((HermesTab.Crafts, "Crafts"));
 
@@ -657,6 +678,10 @@ internal sealed class HermesWindow
         {
             SetActiveTab(HermesTab.ItemSearch);
         }
+        else if (_activeTab == HermesTab.Actions)
+        {
+            SetActiveTab(HermesTab.ItemSearch);
+        }
     }
 
     private static string GetTabDisplayName(HermesTab tab)
@@ -665,7 +690,6 @@ internal sealed class HermesWindow
         {
             HermesTab.Assistant => "Assistant",
             HermesTab.ItemSearch => "Items & Market",
-            HermesTab.Actions => "Actions",
             HermesTab.Hideout => "Hideout",
             HermesTab.Crafts => "Crafts",
             HermesTab.Stash => "Stash",
@@ -682,6 +706,7 @@ internal sealed class HermesWindow
         {
             GUILayout.BeginArea(new Rect(0f, 0f, rect.width, rect.height));
             DrawActiveTabContent();
+            DrawActionConfirmationPopout(rect);
         }
         finally
         {
@@ -707,7 +732,7 @@ internal sealed class HermesWindow
                 _hideoutPanel.Draw();
                 break;
             case HermesTab.Actions:
-                DrawActionsTab();
+                DrawItemSearchTab();
                 break;
             case HermesTab.Crafts:
                 _craftPanel.Draw();
@@ -787,13 +812,93 @@ internal sealed class HermesWindow
         GUI.enabled = true;
         GUILayout.EndHorizontal();
 
+        GUILayout.Space(HermesUi.StandardSpace);
+        GUILayout.BeginVertical(GUI.skin.box);
+        GUILayout.Label("INVENTORY TAG ACTION");
+        GUILayout.BeginHorizontal();
+        if (GUILayout.Toggle(_tagActionMode == "apply", "Apply", GUI.skin.button, GUILayout.Width(90f)))
+        {
+            TagActionMode = "apply";
+        }
+        if (GUILayout.Toggle(_tagActionMode == "change", "Change", GUI.skin.button, GUILayout.Width(90f)))
+        {
+            TagActionMode = "change";
+        }
+        if (GUILayout.Toggle(_tagActionMode == "remove", "Remove", GUI.skin.button, GUILayout.Width(90f)))
+        {
+            TagActionMode = "remove";
+        }
+        GUILayout.EndHorizontal();
+        GUI.enabled = _tagActionMode != "remove";
+        GUILayout.BeginHorizontal();
+        GUILayout.Label("Name", GUILayout.Width(52f));
+        TagDraftName = GUILayout.TextField(_tagDraftName, GUILayout.Width(160f));
+        GUILayout.Label("Color", GUILayout.Width(48f));
+        var currentColorIndex = Math.Max(0, Array.FindIndex(
+            TagColorOptions,
+            option => string.Equals(option.Value, NormalizeTagColor(_tagDraftColor), StringComparison.OrdinalIgnoreCase)));
+        var selectedColorIndex = GUILayout.SelectionGrid(
+            currentColorIndex,
+            TagColorOptions.Select(option => option.Label).ToArray(),
+            4,
+            GUILayout.Width(300f));
+        TagDraftColor = TagColorOptions[Mathf.Clamp(selectedColorIndex, 0, TagColorOptions.Length - 1)].Value;
+        GUILayout.EndHorizontal();
+        GUI.enabled = true;
+
+        GUILayout.Label($"Selected matching copies: {_selectedTagActionInstanceKeys.Count:N0}");
+        GUILayout.BeginHorizontal();
+        GUI.enabled = _stashInstances.Count > 0;
+        if (GUILayout.Button("Select shown matching copies", GUILayout.Height(28f)))
+        {
+            SelectAllMatchingTagActionInstances();
+        }
+        GUI.enabled = _selectedTagActionInstanceKeys.Count > 0;
+        if (GUILayout.Button("Clear selected copies", GUILayout.Width(150f), GUILayout.Height(28f)))
+        {
+            ClearTagActionSelection();
+        }
+        GUI.enabled = true;
+        GUILayout.EndHorizontal();
+        foreach (var instance in _stashInstances.Take(8))
+        {
+            var selected = _selectedTagActionInstanceKeys.Contains(instance.InstanceKey);
+            if (GUILayout.Toggle(selected, $"{instance.Label} • {instance.Location} • Qty {instance.Quantity:N0}", GUI.skin.button))
+            {
+                if (!selected)
+                {
+                    ToggleTagActionInstance(instance.InstanceKey);
+                }
+            }
+            else if (selected)
+            {
+                ToggleTagActionInstance(instance.InstanceKey);
+            }
+        }
+
+        GUI.enabled = !_actionLoading
+                      && Plugin.Settings.EnableConfirmedActions.Value
+                      && Plugin.Settings.AllowInventoryTagActions.Value
+                      && _selectedTagActionInstanceKeys.Count > 0
+                      && (_tagActionMode == "remove" || !string.IsNullOrWhiteSpace(_tagDraftName));
+        if (GUILayout.Button("Create inventory tag proposal", GUILayout.Height(30f)))
+        {
+            _ = ProposeInventoryTagActionAsync();
+        }
+        GUI.enabled = true;
+        GUILayout.EndVertical();
+
         if (!Plugin.Settings.EnableConfirmedActions.Value)
         {
             HermesUi.DrawWarning("Confirmed actions are disabled by the master toggle.");
         }
         else if (!Plugin.Settings.AllowHarmlessTestActions.Value)
         {
-            HermesUi.DrawWarning("The harmless alpha1 test action is disabled in the Actions settings.");
+            HermesUi.DrawWarning("The harmless test action is disabled in the Actions settings.");
+        }
+        else if (!Plugin.Settings.AllowInventoryTagActions.Value)
+        {
+            HermesUi.DrawWarning("Inventory tag actions are disabled in the Actions settings.");
         }
 
         if (_actionProposal is not null)
@@ -858,6 +963,56 @@ internal sealed class HermesWindow
             GUILayout.Label(entry.HarmlessTestAction ? "Harmless test action" : "Inventory action");
             GUILayout.EndVertical();
         }
+    }
+
+    private void DrawActionConfirmationPopout(Rect parentRect)
+    {
+        if (_actionProposal is null)
+        {
+            return;
+        }
+
+        var width = Mathf.Min(720f, parentRect.width - 80f);
+        var height = Mathf.Min(560f, parentRect.height - 70f);
+        var rect = new Rect(
+            (parentRect.width - width) * 0.5f,
+            (parentRect.height - height) * 0.5f,
+            width,
+            height);
+
+        GUI.Box(new Rect(0f, 0f, parentRect.width, parentRect.height), GUIContent.none);
+        GUILayout.BeginArea(rect, GUI.skin.box);
+        GUILayout.Label("CONFIRM ACTION");
+        GUILayout.Label($"Action: {_actionProposal.Preview.ActionName}");
+        GUILayout.Label($"Item(s): {string.Join(", ", _actionProposal.Preview.AffectedItems)}");
+        GUILayout.Label($"Quantity: {_actionProposal.Preview.Quantity}");
+        GUILayout.Label($"Price / cost: {_actionProposal.Preview.PriceOrCost}");
+        GUILayout.Label($"Target: {_actionProposal.Preview.TraderStationOrDestination}");
+        GUILayout.Label($"Expected result: {_actionProposal.Preview.ExpectedResult}");
+        foreach (var warning in _actionProposal.Preview.Warnings)
+        {
+            GUILayout.Label("Warning: " + warning);
+        }
+        if (!string.IsNullOrWhiteSpace(_actionProposal.Preview.CannotExecuteReason))
+        {
+            HermesUi.DrawWarning(_actionProposal.Preview.CannotExecuteReason);
+        }
+        GUILayout.FlexibleSpace();
+        GUILayout.Label($"Token expires in {ActionSecondsRemaining(_actionProposal):N0}s.");
+        GUILayout.BeginHorizontal();
+        GUI.enabled = !_actionLoading;
+        if (GUILayout.Button("Cancel", GUILayout.Width(120f), GUILayout.Height(30f)))
+        {
+            _ = CancelActionAsync();
+        }
+        GUI.enabled = !_actionLoading && _actionProposal.CanExecute;
+        if (GUILayout.Button("Confirm", GUILayout.Width(120f), GUILayout.Height(30f)))
+        {
+            _ = ConfirmActionAsync();
+        }
+        GUI.enabled = true;
+        GUILayout.EndHorizontal();
+        GUILayout.EndArea();
     }
 
     private void DrawSearchBar()
@@ -1128,6 +1283,7 @@ internal sealed class HermesWindow
                     ? $" - {instance.Location} - root RUB {instance.RootConditionAdjustedReferenceValue:N0} + child items RUB {instance.InstalledComponentReferenceValue:N0}"
                     : string.Empty;
 
+                GUILayout.BeginVertical(GUI.skin.box);
                 if (GUILayout.Button(
                         (selected ? "● " : string.Empty) + instance.Label + valueText,
                         GUILayout.MinHeight(42f),
@@ -1135,6 +1291,8 @@ internal sealed class HermesWindow
                 {
                     _ = SelectStashInstanceAsync(instance.InstanceKey);
                 }
+                DrawOwnedCopyTagQuickEdit(instance);
+                GUILayout.EndVertical();
             }
 
             GUI.enabled = true;
@@ -1148,6 +1306,120 @@ internal sealed class HermesWindow
         }
 
         GUILayout.EndVertical();
+    }
+
+    private void DrawOwnedCopyTagQuickEdit(HermesStashInstanceSummary instance)
+    {
+        var hasTag = !string.IsNullOrWhiteSpace(instance.TagName);
+        GUILayout.Label(FormatStashInstanceTag(instance));
+
+        if (!Plugin.Settings.EnableConfirmedActions.Value || !Plugin.Settings.AllowInventoryTagActions.Value)
+        {
+            GUILayout.Label("Inventory tag edits are disabled.");
+            return;
+        }
+
+        GUILayout.BeginHorizontal();
+        GUI.enabled = !_actionLoading;
+        if (!hasTag)
+        {
+            if (GUILayout.Button(IsRowTagEditorOpen(instance, "apply") ? "Editing tag..." : "+ Tag", GUILayout.Width(110f), GUILayout.Height(26f)))
+            {
+                OpenRowTagEditor(instance, "apply");
+            }
+        }
+        else
+        {
+            if (GUILayout.Button(IsRowTagEditorOpen(instance, "change") ? "Editing change..." : "Change tag", GUILayout.Width(110f), GUILayout.Height(26f)))
+            {
+                OpenRowTagEditor(instance, "change");
+            }
+            if (GUILayout.Button("Reset tag", GUILayout.Width(110f), GUILayout.Height(26f)))
+            {
+                _ = ProposeInventoryTagActionAsync("remove", string.Empty, "blue", [instance.InstanceKey]);
+            }
+        }
+        GUI.enabled = true;
+        GUILayout.EndHorizontal();
+
+        if (!IsRowTagEditorOpen(instance, _tagEditorMode))
+        {
+            return;
+        }
+
+        GUILayout.BeginHorizontal();
+        GUILayout.Label(_tagEditorMode == "change" ? "New tag" : "Tag", GUILayout.Width(60f));
+        TagDraftName = GUILayout.TextField(_tagDraftName, GUILayout.Width(160f));
+        GUILayout.Label("Color", GUILayout.Width(48f));
+        var currentColorIndex = Math.Max(0, Array.FindIndex(
+            TagColorOptions,
+            option => string.Equals(option.Value, NormalizeTagColor(_tagDraftColor), StringComparison.OrdinalIgnoreCase)));
+        var selectedColorIndex = GUILayout.SelectionGrid(
+            currentColorIndex,
+            TagColorOptions.Select(option => option.Label).ToArray(),
+            4,
+            GUILayout.Width(300f));
+        TagDraftColor = TagColorOptions[Mathf.Clamp(selectedColorIndex, 0, TagColorOptions.Length - 1)].Value;
+        GUILayout.EndHorizontal();
+
+        GUILayout.BeginHorizontal();
+        GUI.enabled = CanProposeInventoryTagActionForInstance(instance, _tagEditorMode);
+        if (GUILayout.Button("Preview tag change", GUILayout.Width(160f), GUILayout.Height(28f)))
+        {
+            _ = ProposeInventoryTagActionAsync(_tagEditorMode, _tagDraftName, _tagDraftColor, [instance.InstanceKey]);
+        }
+        GUI.enabled = true;
+        if (GUILayout.Button("Cancel", GUILayout.Width(90f), GUILayout.Height(28f)))
+        {
+            _tagEditorInstanceKey = string.Empty;
+        }
+        GUILayout.EndHorizontal();
+    }
+
+    private void OpenRowTagEditor(HermesStashInstanceSummary instance, string mode)
+    {
+        _tagEditorInstanceKey = instance.InstanceKey;
+        _tagEditorMode = NormalizeTagActionMode(mode);
+        TagActionMode = _tagEditorMode;
+        if (_tagEditorMode == "change")
+        {
+            TagDraftName = instance.TagName ?? string.Empty;
+            TagDraftColor = string.IsNullOrWhiteSpace(instance.TagColor) ? "blue" : instance.TagColor;
+        }
+        else
+        {
+            TagDraftName = string.Empty;
+            TagDraftColor = "blue";
+        }
+    }
+
+    private bool IsRowTagEditorOpen(HermesStashInstanceSummary instance, string mode)
+        => string.Equals(_tagEditorInstanceKey, instance.InstanceKey, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(_tagEditorMode, NormalizeTagActionMode(mode), StringComparison.OrdinalIgnoreCase);
+
+    private bool CanProposeInventoryTagActionForInstance(HermesStashInstanceSummary instance, string mode)
+    {
+        if (_actionLoading
+            || !Plugin.Settings.EnableConfirmedActions.Value
+            || !Plugin.Settings.AllowInventoryTagActions.Value
+            || string.IsNullOrWhiteSpace(instance.InstanceKey))
+        {
+            return false;
+        }
+
+        var normalizedMode = NormalizeTagActionMode(mode);
+        if (normalizedMode != "remove" && string.IsNullOrWhiteSpace(_tagDraftName))
+        {
+            return false;
+        }
+
+        var hasTag = !string.IsNullOrWhiteSpace(instance.TagName);
+        return normalizedMode switch
+        {
+            "apply" => !hasTag,
+            "change" or "remove" => hasTag,
+            _ => false
+        };
     }
 
     private void DrawTraderSaleSection(HermesTraderSummaryResponse summary)
@@ -2091,6 +2363,60 @@ internal sealed class HermesWindow
         }
     }
 
+    internal IReadOnlyCollection<string> SelectedTagActionInstanceKeys => _selectedTagActionInstanceKeys;
+
+    internal string TagActionMode
+    {
+        get => _tagActionMode;
+        set => _tagActionMode = NormalizeTagActionMode(value);
+    }
+
+    internal string TagDraftName
+    {
+        get => _tagDraftName;
+        set => _tagDraftName = value ?? string.Empty;
+    }
+
+    internal string TagDraftColor
+    {
+        get => _tagDraftColor;
+        set => _tagDraftColor = NormalizeTagColor(value);
+    }
+
+    internal void ToggleTagActionInstance(string instanceKey)
+    {
+        if (string.IsNullOrWhiteSpace(instanceKey))
+        {
+            return;
+        }
+
+        if (!_selectedTagActionInstanceKeys.Add(instanceKey.Trim()))
+        {
+            _selectedTagActionInstanceKeys.Remove(instanceKey.Trim());
+        }
+
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+    }
+
+    internal void ClearTagActionSelection()
+    {
+        _selectedTagActionInstanceKeys.Clear();
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+    }
+
+    internal void SelectAllMatchingTagActionInstances()
+    {
+        foreach (var instance in _stashInstances)
+        {
+            if (!string.IsNullOrWhiteSpace(instance.InstanceKey))
+            {
+                _selectedTagActionInstanceKeys.Add(instance.InstanceKey);
+            }
+        }
+
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+    }
+
     internal async Task ProposeTestActionAsync()
     {
         if (_actionLoading)
@@ -2101,13 +2427,14 @@ internal sealed class HermesWindow
         if (!Plugin.Settings.EnableConfirmedActions.Value)
         {
             _actionStatus = "Confirmed actions are disabled by the master toggle.";
+            _detailStatus = _actionStatus;
             HermesNativeWorkspaceRuntime.RequestClientRefresh();
             return;
         }
 
         if (!Plugin.Settings.AllowHarmlessTestActions.Value)
         {
-            _actionStatus = "The harmless alpha1 test action is disabled.";
+            _actionStatus = "The harmless test action is disabled.";
             HermesNativeWorkspaceRuntime.RequestClientRefresh();
             return;
         }
@@ -2137,6 +2464,120 @@ internal sealed class HermesWindow
         }
     }
 
+    internal async Task ProposeInventoryTagActionAsync()
+        => await ProposeInventoryTagActionAsync(
+            _tagActionMode,
+            _tagDraftName,
+            _tagDraftColor,
+            _selectedTagActionInstanceKeys);
+
+    internal async Task ProposeInventoryTagActionAsync(
+        string mode,
+        string tagName,
+        string tagColor,
+        IEnumerable<string> instanceKeys)
+    {
+        if (_actionLoading)
+        {
+            return;
+        }
+
+        if (!Plugin.Settings.EnableConfirmedActions.Value)
+        {
+            _actionStatus = "Confirmed actions are disabled by the master toggle.";
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+            return;
+        }
+
+        if (!Plugin.Settings.AllowInventoryTagActions.Value)
+        {
+            _actionStatus = "Inventory tag actions are disabled in the Actions settings.";
+            _detailStatus = _actionStatus;
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+            return;
+        }
+
+        var normalizedMode = NormalizeTagActionMode(mode);
+        var selectedKeys = instanceKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(key => key.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (selectedKeys.Length == 0)
+        {
+            _actionStatus = "Choose an owned copy before proposing an inventory tag action.";
+            _detailStatus = _actionStatus;
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+            return;
+        }
+
+        if (!normalizedMode.Equals("remove", StringComparison.OrdinalIgnoreCase)
+            && string.IsNullOrWhiteSpace(tagName))
+        {
+            _actionStatus = "Enter a tag name before proposing an inventory tag action.";
+            _detailStatus = _actionStatus;
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+            return;
+        }
+
+        var selectedInstances = _stashInstances
+            .Where(instance => selectedKeys.Contains(instance.InstanceKey, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+        if (!IsTagSelectionReady(normalizedMode, selectedInstances))
+        {
+            _actionStatus = normalizedMode switch
+            {
+                "apply" => "Apply tag is only available on untagged owned copies.",
+                "change" => "Change tag is only available on owned copies that already have a tag.",
+                "remove" => "Reset tag is only available on owned copies that already have a tag.",
+                _ => "Choose a tag action."
+            };
+            _detailStatus = _actionStatus;
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+            return;
+        }
+
+        _tagActionMode = normalizedMode;
+        _tagDraftName = tagName ?? string.Empty;
+        _tagDraftColor = NormalizeTagColor(tagColor);
+        _selectedTagActionInstanceKeys.Clear();
+        foreach (var key in selectedKeys)
+        {
+            _selectedTagActionInstanceKeys.Add(key);
+        }
+
+        _actionLoading = true;
+        _actionStatus = "Requesting an inventory tag action proposal...";
+        _detailStatus = _actionStatus;
+        HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        try
+        {
+            var response = await HermesApiClient.ProposeInventoryTagActionAsync(
+                normalizedMode,
+                _tagDraftName.Trim(),
+                _tagDraftColor,
+                selectedKeys);
+            _actionProposal = response.Proposal;
+            _actionResult = null;
+            _actionStatus = response.Found && response.Proposal is not null
+                ? response.Message ?? "Inventory tag confirmation window ready."
+                : response.Message ?? "HERMES could not create an inventory tag action proposal.";
+            _detailStatus = _actionStatus;
+            await RefreshActionHistoryAsync(setLoading: false);
+        }
+        catch (Exception ex)
+        {
+            _actionStatus = HermesApiClient.DescribeFailure(ex, "Inventory tag action proposal");
+            _detailStatus = _actionStatus;
+            Plugin.Log.LogError(ex);
+        }
+        finally
+        {
+            _actionLoading = false;
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        }
+    }
+
     internal async Task ConfirmActionAsync()
     {
         if (_actionLoading || _actionProposal is null)
@@ -2147,6 +2588,7 @@ internal sealed class HermesWindow
         _actionLoading = true;
         _actionStatus = "Confirming action with one-time token...";
         HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        var pendingTagMutation = BuildPendingClientTagMutation();
         try
         {
             var result = await HermesApiClient.ConfirmActionAsync(
@@ -2154,14 +2596,25 @@ internal sealed class HermesWindow
                 _actionProposal.ConfirmationToken);
             _actionResult = result;
             _actionStatus = result.Message;
+            _detailStatus = _actionStatus;
             _actionProposal = result.Found && !result.Executed && !result.Cancelled && !result.Expired
                 ? result.Proposal
                 : null;
+            if (result.Executed)
+            {
+                ApplyConfirmedTagMutationToClient(pendingTagMutation);
+            }
+
+            if (result.Executed && _activeTab == HermesTab.ItemSearch)
+            {
+                await RefreshItemSearchDataAsync();
+            }
             await RefreshActionHistoryAsync(setLoading: false);
         }
         catch (Exception ex)
         {
             _actionStatus = HermesApiClient.DescribeFailure(ex, "Action confirmation");
+            _detailStatus = _actionStatus;
             Plugin.Log.LogError(ex);
         }
         finally
@@ -2188,12 +2641,14 @@ internal sealed class HermesWindow
                 _actionProposal.ConfirmationToken);
             _actionResult = result;
             _actionStatus = result.Message;
+            _detailStatus = _actionStatus;
             _actionProposal = null;
             await RefreshActionHistoryAsync(setLoading: false);
         }
         catch (Exception ex)
         {
             _actionStatus = HermesApiClient.DescribeFailure(ex, "Action cancellation");
+            _detailStatus = _actionStatus;
             Plugin.Log.LogError(ex);
         }
         finally
@@ -2243,13 +2698,123 @@ internal sealed class HermesWindow
         _actionProposal = null;
         _actionResult = null;
         _actionHistory = null;
-        _actionStatus = "Action confirmation pipeline ready. Alpha1 only supports a harmless test action.";
+        _selectedTagActionInstanceKeys.Clear();
+        _actionStatus = "Action confirmation pipeline ready. HERMES 1.1 supports harmless tests and confirmed inventory tag actions.";
         _actionLoading = false;
         HermesNativeWorkspaceRuntime.RequestClientRefresh();
     }
 
     private static int ActionSecondsRemaining(HermesActionProposal proposal)
         => (int)Math.Max(0L, proposal.ExpiresUnixTime - DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+    private static string NormalizeTagActionMode(string? mode)
+        => (mode ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "change" => "change",
+            "remove" => "remove",
+            _ => "apply"
+        };
+
+    private static string NormalizeTagColor(string? value)
+    {
+        var normalized = string.IsNullOrWhiteSpace(value) ? "blue" : value.Trim();
+        return TagColorOptions.Any(option => string.Equals(option.Value, normalized, StringComparison.OrdinalIgnoreCase))
+            ? normalized.ToLowerInvariant()
+            : "blue";
+    }
+
+    private List<HermesStashInstanceSummary> GetSelectedTagActionInstances()
+        => _stashInstances
+            .Where(instance => _selectedTagActionInstanceKeys.Contains(instance.InstanceKey))
+            .ToList();
+
+    private PendingClientTagMutation? BuildPendingClientTagMutation()
+    {
+        if (_actionProposal?.ActionKind != "HERMES_INVENTORY_TAG")
+        {
+            return null;
+        }
+
+        var instances = GetSelectedTagActionInstances()
+            .Where(instance => !string.IsNullOrWhiteSpace(instance.ProfileItemId))
+            .ToList();
+        return instances.Count == 0
+            ? null
+            : new PendingClientTagMutation(_tagActionMode, _tagDraftName, _tagDraftColor, instances);
+    }
+
+    private void ApplyConfirmedTagMutationToClient(PendingClientTagMutation? mutation)
+    {
+        if (mutation is null)
+        {
+            return;
+        }
+
+        var liveUpdated = HermesLiveInventoryTagBridge.ApplyTagMutation(
+            mutation.Instances,
+            mutation.Mode,
+            mutation.TagName,
+            mutation.TagColor);
+        ApplyConfirmedTagMutationToLocalSummaries(mutation);
+
+        if (liveUpdated > 0)
+        {
+            Plugin.Log?.LogDebug($"HERMES updated {liveUpdated:N0} live EFT inventory tag component(s).");
+        }
+    }
+
+    private void ApplyConfirmedTagMutationToLocalSummaries(PendingClientTagMutation mutation)
+    {
+        var selectedIds = mutation.Instances
+            .Select(instance => instance.ProfileItemId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (selectedIds.Count == 0)
+        {
+            return;
+        }
+
+        var reset = string.Equals(mutation.Mode, "remove", StringComparison.OrdinalIgnoreCase);
+        foreach (var instance in _stashInstances.Where(instance => selectedIds.Contains(instance.ProfileItemId)))
+        {
+            instance.TagName = reset ? string.Empty : mutation.TagName.Trim();
+            instance.TagColor = reset ? string.Empty : NormalizeTagColor(mutation.TagColor);
+        }
+    }
+
+    private bool CanProposeInventoryTagActionFromItem()
+    {
+        var selectedInstances = GetSelectedTagActionInstances();
+        return !_actionLoading
+               && Plugin.Settings.EnableConfirmedActions.Value
+               && Plugin.Settings.AllowInventoryTagActions.Value
+               && IsTagSelectionReady(_tagActionMode, selectedInstances)
+               && (_tagActionMode == "remove" || !string.IsNullOrWhiteSpace(_tagDraftName));
+    }
+
+    private static bool IsTagSelectionReady(
+        string mode,
+        IReadOnlyCollection<HermesStashInstanceSummary> selectedInstances)
+    {
+        if (selectedInstances.Count == 0)
+        {
+            return false;
+        }
+
+        return mode switch
+        {
+            "apply" => selectedInstances.All(instance => string.IsNullOrWhiteSpace(instance.TagName)),
+            "change" or "remove" => selectedInstances.All(instance => !string.IsNullOrWhiteSpace(instance.TagName)),
+            _ => false
+        };
+    }
+
+    private static string FormatStashInstanceTag(HermesStashInstanceSummary instance)
+        => string.IsNullOrWhiteSpace(instance.TagName)
+            ? "Tag none"
+            : string.IsNullOrWhiteSpace(instance.TagColor)
+                ? $"Tag {instance.TagName}"
+                : $"Tag {instance.TagName} / {NormalizeTagColor(instance.TagColor)}";
 
     private async Task RefreshItemSearchDataAsync()
     {
@@ -2350,8 +2915,8 @@ internal sealed class HermesWindow
             switch (_activeTab)
             {
                 case HermesTab.Actions:
-                    await RefreshActionHistoryAsync();
-                    _refreshStatus = "Action history refreshed.";
+                    await RefreshItemSearchDataAsync();
+                    _refreshStatus = "Items & Market refreshed.";
                     break;
                 case HermesTab.Assistant:
                     HermesWorkspaceSnapshotCoordinator.Current?.RefreshNoticesFromLoadedData(manual: true);
@@ -2415,7 +2980,7 @@ internal sealed class HermesWindow
                 _hideoutPanel.Clear();
                 break;
             case HermesTab.Actions:
-                ClearActionState();
+                Clear();
                 break;
             case HermesTab.Crafts:
                 _craftPanel.Clear();
@@ -2454,6 +3019,7 @@ internal sealed class HermesWindow
         _hideoutUsage = null;
         _stashInstances = [];
         _selectedStashInstanceKey = null;
+        _selectedTagActionInstanceKeys.Clear();
         _loadingInstancePrice = false;
         _saleComparisonExpanded = Plugin.Settings.ExpandTraderComparisonByDefault.Value;
         _marketExpanded = Plugin.Settings.ExpandMarketByDefault.Value;
@@ -2527,6 +3093,7 @@ internal sealed class HermesWindow
         _hideoutUsage = null;
         _stashInstances = [];
         _selectedStashInstanceKey = null;
+        _selectedTagActionInstanceKeys.Clear();
         _loadingInstancePrice = false;
         ResetSectionExpansionDefaults();
         _loadingDetails = true;
@@ -2894,7 +3461,7 @@ internal sealed class HermesWindow
 
         if (_activeTab == HermesTab.Actions)
         {
-            _ = RefreshActionHistoryAsync();
+            _ = RefreshItemSearchDataAsync();
             return;
         }
 
@@ -2934,7 +3501,7 @@ internal sealed class HermesWindow
         var tab = value.Trim().ToLowerInvariant() switch
         {
             "assistant" or "chat" => HermesTab.Assistant,
-            "actions" or "action" or "confirmed actions" => HermesTab.Actions,
+            "actions" or "action" or "confirmed actions" => HermesTab.ItemSearch,
             "hideout" => HermesTab.Hideout,
             "crafts" or "craft" => HermesTab.Crafts,
             "stash" => HermesTab.Stash,
@@ -2953,7 +3520,7 @@ internal sealed class HermesWindow
         return tab switch
         {
             HermesTab.Assistant => "Assistant",
-            HermesTab.Actions => "Actions",
+            HermesTab.Actions => "ItemSearch",
             HermesTab.Hideout => "Hideout",
             HermesTab.Crafts => "Crafts",
             HermesTab.Stash => "Stash",

@@ -41,10 +41,11 @@ internal sealed class HermesNativeInventoryScreenPatch : ModulePatch
     }
 
     [PatchPostfix]
-    private static void Postfix(InventoryScreen __instance)
+    private static void Postfix(InventoryScreen __instance, InventoryController __1)
     {
         try
         {
+            HermesLiveInventoryTagBridge.SetCurrentInventoryController(__1);
             HermesNativeScreenHost.AttachOrRefresh(__instance);
         }
         catch (Exception ex)

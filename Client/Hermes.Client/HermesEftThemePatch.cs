@@ -265,7 +265,7 @@ internal static class HermesEftTheme
         _toolbar.margin = new RectOffset(0, 0, 0, 5);
         _searchField = new GUIStyle(_skin.textField)
         {
-            fontSize = 13,
+            fontSize = HermesNativeUiFramework.ScaleFontSize(13),
             padding = new RectOffset(9, 9, 5, 5),
             margin = new RectOffset(0, 4, 0, 0)
         };
@@ -320,19 +320,19 @@ internal static class HermesEftTheme
 
         _smallButton = new GUIStyle(_headerAction)
         {
-            fontSize = 11,
+            fontSize = HermesNativeUiFramework.ScaleFontSize(11),
             padding = new RectOffset(10, 10, 4, 4),
             margin = new RectOffset(2, 0, 0, 0)
         };
 
         _tab = new GUIStyle(_filter)
         {
-            fontSize = 12,
+            fontSize = HermesNativeUiFramework.ScaleFontSize(12),
             padding = new RectOffset(11, 11, 5, 5)
         };
         _selectedTab = new GUIStyle(_selectedFilter)
         {
-            fontSize = 12,
+            fontSize = HermesNativeUiFramework.ScaleFontSize(12),
             padding = new RectOffset(11, 11, 5, 5)
         };
     }
@@ -385,7 +385,7 @@ internal static class HermesEftTheme
     {
         var style = new GUIStyle
         {
-            fontSize = fontSize,
+            fontSize = HermesNativeUiFramework.ScaleFontSize(fontSize),
             alignment = TextAnchor.MiddleCenter,
             padding = new RectOffset(8, 8, 5, 5),
             margin = new RectOffset(0, 0, 0, 0),
@@ -431,7 +431,7 @@ internal static class HermesEftTheme
     {
         var style = new GUIStyle(GUI.skin.label)
         {
-            fontSize = fontSize,
+            fontSize = HermesNativeUiFramework.ScaleFontSize(fontSize),
             fontStyle = fontStyle,
             alignment = alignment,
             wordWrap = wordWrap,
@@ -480,7 +480,7 @@ internal static class HermesEftTheme
         style.border = new RectOffset(0, 0, 0, 0);
         style.padding = new RectOffset(10, 10, 6, 6);
         style.margin = new RectOffset(0, 0, 0, 2);
-        style.fontSize = 12;
+        style.fontSize = HermesNativeUiFramework.ScaleFontSize(12);
         style.richText = true;
     }
 
@@ -497,13 +497,13 @@ internal static class HermesEftTheme
         style.border = new RectOffset(1, 1, 1, 1);
         style.padding = new RectOffset(9, 9, 5, 5);
         style.margin = new RectOffset(0, 0, 0, 0);
-        style.fontSize = 13;
+        style.fontSize = HermesNativeUiFramework.ScaleFontSize(13);
     }
 
     private static void ConfigureLabel(GUIStyle style)
     {
         style.normal.textColor = Text;
-        style.fontSize = 12;
+        style.fontSize = HermesNativeUiFramework.ScaleFontSize(12);
         style.richText = true;
         style.wordWrap = true;
         style.padding = new RectOffset(1, 1, 1, 1);
@@ -823,7 +823,7 @@ internal sealed class HermesEftNavigationRailPatch : ModulePatch
         GUILayout.FlexibleSpace();
         if (Plugin.Settings.ShowDiagnosticsFooter.Value)
         {
-            GUILayout.Label("READ ONLY", HermesEftTheme.NavigationHeading);
+            GUILayout.Label("CONFIRMED TAG ACTIONS", HermesEftTheme.NavigationHeading);
             GUILayout.Label(HermesEftWindowReflection.FormatDiagnostics(__instance), HermesEftTheme.DiagnosticText);
             if (GUILayout.Button("COPY DIAGNOSTICS", HermesEftTheme.SmallButton, GUILayout.Height(25f)))
             {

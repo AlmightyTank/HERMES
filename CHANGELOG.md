@@ -1,11 +1,21 @@
 # Changelog
 
-## 2.0.0-alpha1
+## 1.1.0
 
-Initial alpha for the HERMES 2.0.0 development line.
+Feature release after HERMES 1.0.0. HERMES is staying on the 1.x line while the larger 2.0.0 shape develops.
 
-- Promoted the shared client, server, and package version to **2.0.0-alpha1**.
-- Updated active release documentation to use the 2.0.0-alpha1 package label.
+- Added confirmed inventory tag actions for explicitly selected owned items in Items & Market.
+- Added **Interface -> Font size percent** so the native HERMES workspace can be scaled from 80% to 130%.
+- Added scalable button sizing with default sizes and maximum growth caps so larger font settings keep labels readable.
+- Moved the native HERMES inventory tab to the slot immediately after Tasks.
+- Kept tab placement collision-aware by opening one tab-width of space and preserving the relative order of later tabs, improving compatibility with mods such as WeekendDrops that add tabs after Prestige.
+
+## 1.1.0-alpha1
+
+Initial alpha for the HERMES 1.1.0 development line.
+
+- Promoted the shared client, server, and package version to **1.1.0-alpha1**.
+- Updated active release documentation to use the 1.1.0-alpha1 package label.
 - Added the first confirmed-action pipeline with a master toggle, per-action permission settings, proposal model, confirmation preview, cancel/confirm controls, one-time tokens, expiration, duplicate proposal protection, result messages, and basic action history.
 - Added a harmless alpha1 test action so the whole confirmation flow can be verified without changing inventory or profile data.
 

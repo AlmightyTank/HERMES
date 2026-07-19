@@ -23,6 +23,17 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
     private const float CompactMetricHeight = 46f;
     private const float CompactSectionHeight = 30f;
 
+    private static readonly (string Value, string Label)[] TagColorOptions =
+    [
+        ("red", "RED"),
+        ("orange", "ORANGE"),
+        ("yellow", "YELLOW"),
+        ("green", "GREEN"),
+        ("blue", "BLUE"),
+        ("violet", "VIOLET"),
+        ("grey", "GREY")
+    ];
+
     private readonly Dictionary<string, float> _savedScrollPositions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ScrollRect> _activeScrolls = new(StringComparer.Ordinal);
     private readonly Dictionary<string, GameObject> _workspaceRoots = new(StringComparer.Ordinal);
@@ -52,6 +63,11 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
     private string _stashView = "OVERVIEW";
     private string _loadoutView = "OVERVIEW";
     private string _raidSearch = string.Empty;
+    private string _tagEditorInstanceKey = string.Empty;
+    private string _tagEditorMode = "apply";
+    private string _tagEditorDraftName = string.Empty;
+    private string _tagEditorDraftColor = "blue";
+    private bool _tagColorDropdownOpen;
     private string _lastItemResultSetKey = string.Empty;
     private string _lastSelectedItemKey = string.Empty;
 
@@ -201,9 +217,6 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                 case "Assistant":
                     RenderAssistant(contentRect);
                     break;
-                case "Actions":
-                    RenderActions(contentRect);
-                    break;
                 case "Hideout":
                     RenderHideout(contentRect);
                     break;
@@ -223,6 +236,8 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
                     RenderItemSearch(contentRect);
                     break;
             }
+
+            RenderActionConfirmationPopout(contentRect);
         }
         catch (Exception ex)
         {
@@ -690,7 +705,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         AddMetricGrid(root,
             ("MASTER TOGGLE", Plugin.Settings.EnableConfirmedActions.Value ? "ON" : "OFF"),
             ("TEST ACTION", Plugin.Settings.AllowHarmlessTestActions.Value ? "ALLOWED" : "BLOCKED"),
-            ("REAL INVENTORY ACTIONS", "OFF"),
+            ("INVENTORY TAGS", Plugin.Settings.AllowInventoryTagActions.Value ? "ALLOWED" : "BLOCKED"),
             ("HISTORY", (state.ActionHistory?.TotalActions ?? 0).ToString("N0")));
 
         var toolbar = CreateToolbar(root);
@@ -722,14 +737,318 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             fontSize: 11.5f);
         AddFlexibleSpace(toolbar);
 
-        var split = HermesNativeUiFramework.CreateSplitView(root, 440f);
+        RenderInventoryTagActionControls(root, state);
+
+        var split = HermesNativeUiFramework.CreateSplitView(root, 620f);
         var splitElement = split.Root.gameObject.AddComponent<LayoutElement>();
         splitElement.minHeight = 180f;
         splitElement.flexibleHeight = 1f;
         splitElement.flexibleWidth = 1f;
 
-        RenderActionConfirmation(split.Left, state);
+        AddVerticalLayout(split.Left, 6, 6, 6, 6, 4f);
+        var confirmation = CreateScroll(split.Left, "action-confirmation", true);
+        confirmation.Scroll.verticalNormalizedPosition = 1f;
+        RenderActionConfirmation(confirmation.Content, state);
         RenderActionHistory(split.Right, state);
+    }
+
+    private void RenderInventoryTagActionControls(Transform parent, HermesNativeWorkspaceState state)
+    {
+        AddSectionHeader(parent, "INVENTORY TAGS");
+        var controls = CreateToolbar(parent);
+        AddButton(controls, "APPLY", () =>
+        {
+            state.TagActionMode = "apply";
+            Invalidate(0.05f);
+        }, 76f, selected: state.TagActionMode == "apply");
+        AddButton(controls, "CHANGE", () =>
+        {
+            state.TagActionMode = "change";
+            Invalidate(0.05f);
+        }, 86f, selected: state.TagActionMode == "change");
+        AddButton(controls, "RESET", () =>
+        {
+            state.TagActionMode = "remove";
+            _tagColorDropdownOpen = false;
+            Invalidate(0.05f);
+        }, 86f, selected: state.TagActionMode == "remove");
+
+        Button? proposeTagButton = null;
+        var nameInput = AddInput(controls, "Tag name", state.TagDraftName, 160f);
+        nameInput.interactable = state.TagActionMode != "remove";
+        nameInput.onValueChanged.AddListener(value =>
+        {
+            state.TagDraftName = value;
+            if (proposeTagButton != null)
+            {
+                proposeTagButton.interactable = CanProposeInventoryTagAction(state);
+            }
+        });
+
+        AddTagColorDropdown(controls, state, state.TagActionMode != "remove");
+        AddFlexibleSpace(controls);
+
+        if (_tagColorDropdownOpen && state.TagActionMode != "remove")
+        {
+            RenderTagColorOptions(parent, state);
+        }
+
+        var selectedInstances = GetSelectedTagActionInstances(state);
+        var selection = CreateToolbar(parent);
+        AddToolbarLabel(selection, $"SELECTED {selectedInstances.Count:N0}");
+        AddButton(
+            selection,
+            "SELECT MATCHING",
+            () =>
+            {
+                state.SelectAllMatchingTagActionInstances();
+                Invalidate(0.05f);
+            },
+            132f,
+            state.StashInstances.Count > 0,
+            height: 28f,
+            fontSize: 11.5f);
+        AddButton(
+            selection,
+            "CLEAR",
+            () =>
+            {
+                state.ClearTagActionSelection();
+                Invalidate(0.05f);
+            },
+            72f,
+            state.SelectedTagActionInstanceKeys.Count > 0,
+            height: 28f,
+            fontSize: 11.5f);
+        proposeTagButton = AddButton(
+            selection,
+            "PROPOSE TAG ACTION",
+            () =>
+            {
+                state.ProposeInventoryTagAction();
+                Invalidate(0.20f);
+            },
+            156f,
+            CanProposeInventoryTagAction(state),
+            height: 28f,
+            fontSize: 11.5f,
+            selected: selectedInstances.Count > 0);
+        AddFlexibleSpace(selection);
+
+        if (selectedInstances.Count > 0 && !IsTagSelectionReady(state.TagActionMode, selectedInstances))
+        {
+            var taggedCount = selectedInstances.Count(instance => !string.IsNullOrWhiteSpace(instance.TagName));
+            var untaggedCount = selectedInstances.Count - taggedCount;
+            var reason = state.TagActionMode switch
+            {
+                "apply" => "Apply is only available when every selected copy is currently untagged.",
+                "change" => "Change is only available when every selected copy already has a tag.",
+                "remove" => "Reset is only available when every selected copy already has a tag.",
+                _ => "Choose a tag action mode."
+            };
+            AddCard(parent, "SELECTION NOT READY", $"{reason} Tagged {taggedCount:N0}, untagged {untaggedCount:N0}.", "ITEM ACTION");
+        }
+
+        if (!Plugin.Settings.EnableConfirmedActions.Value)
+        {
+            AddEmptyState(parent, "Confirmed actions are disabled.", "Enable the Actions master toggle before proposing inventory tag changes.");
+            return;
+        }
+
+        if (!Plugin.Settings.AllowInventoryTagActions.Value)
+        {
+            AddEmptyState(parent, "Inventory tag actions are disabled.", "Enable the individual inventory tag action setting before proposing tag changes.");
+            return;
+        }
+
+        if (state.SelectedItem is null)
+        {
+            AddEmptyState(parent, "No item selected.", "Open Items & Market and select an owned item with matching stash copies.");
+            return;
+        }
+
+        if (state.StashInstances.Count == 0)
+        {
+            AddEmptyState(parent, "No matching owned copies.", "The selected item has no visible matching PMC inventory copies to select.");
+            return;
+        }
+
+        foreach (var instance in state.StashInstances.Take(10))
+        {
+            var selected = state.SelectedTagActionInstanceKeys.Contains(instance.InstanceKey);
+            AddCard(
+                parent,
+                selected ? $"SELECTED: {instance.Label}" : instance.Label,
+                $"{instance.Location} | Qty {FormatCount(instance.Quantity)} | {instance.ConditionDescription} | {FormatInstanceTag(instance)}",
+                selected ? "CLICK TO REMOVE FROM TAG SELECTION" : "CLICK TO INCLUDE IN TAG SELECTION",
+                () =>
+                {
+                    state.ToggleTagActionInstance(instance.InstanceKey);
+                    Invalidate(0.05f);
+                },
+                selected ? new Color(0.11f, 0.16f, 0.13f, 0.88f) : HermesNativeUiFramework.RowColor);
+        }
+    }
+
+    private static bool CanProposeInventoryTagAction(HermesNativeWorkspaceState state)
+    {
+        var selectedInstances = GetSelectedTagActionInstances(state);
+        return !state.ActionLoading
+               && Plugin.Settings.EnableConfirmedActions.Value
+               && Plugin.Settings.AllowInventoryTagActions.Value
+               && IsTagSelectionReady(state.TagActionMode, selectedInstances)
+               && (state.TagActionMode == "remove" || !string.IsNullOrWhiteSpace(state.TagDraftName));
+    }
+
+    private static bool CanProposeInventoryTagActionForInstance(
+        HermesNativeWorkspaceState state,
+        HermesStashInstanceSummary instance,
+        string mode,
+        string tagName)
+    {
+        if (state.ActionLoading
+            || !Plugin.Settings.EnableConfirmedActions.Value
+            || !Plugin.Settings.AllowInventoryTagActions.Value
+            || string.IsNullOrWhiteSpace(instance.InstanceKey))
+        {
+            return false;
+        }
+
+        var normalizedMode = NormalizeTagActionMode(mode);
+        if (normalizedMode != "remove" && string.IsNullOrWhiteSpace(tagName))
+        {
+            return false;
+        }
+
+        var hasTag = !string.IsNullOrWhiteSpace(instance.TagName);
+        return normalizedMode switch
+        {
+            "apply" => !hasTag,
+            "change" or "remove" => hasTag,
+            _ => false
+        };
+    }
+
+    private static List<HermesStashInstanceSummary> GetSelectedTagActionInstances(HermesNativeWorkspaceState state)
+        => state.StashInstances
+            .Where(instance => state.SelectedTagActionInstanceKeys.Contains(instance.InstanceKey))
+            .ToList();
+
+    private static bool IsTagSelectionReady(
+        string mode,
+        IReadOnlyCollection<HermesStashInstanceSummary> selectedInstances)
+    {
+        if (selectedInstances.Count == 0)
+        {
+            return false;
+        }
+
+        return mode switch
+        {
+            "apply" => selectedInstances.All(instance => string.IsNullOrWhiteSpace(instance.TagName)),
+            "change" or "remove" => selectedInstances.All(instance => !string.IsNullOrWhiteSpace(instance.TagName)),
+            _ => false
+        };
+    }
+
+    private static string FormatInstanceTag(HermesStashInstanceSummary instance)
+        => string.IsNullOrWhiteSpace(instance.TagName)
+            ? "Tag none"
+            : string.IsNullOrWhiteSpace(instance.TagColor)
+                ? $"Tag {instance.TagName}"
+                : $"Tag {instance.TagName} / {TagColorLabel(NormalizeTagColor(instance.TagColor))}";
+
+    private void AddTagColorDropdown(Transform parent, HermesNativeWorkspaceState state, bool interactable)
+    {
+        var selectedColor = NormalizeTagColor(state.TagDraftColor);
+        if (!string.Equals(state.TagDraftColor, selectedColor, StringComparison.OrdinalIgnoreCase))
+        {
+            state.TagDraftColor = selectedColor;
+        }
+
+        AddButton(
+            parent,
+            $"COLOR: {TagColorLabel(selectedColor)}",
+            () =>
+            {
+                _tagColorDropdownOpen = !_tagColorDropdownOpen;
+                Invalidate(0.05f);
+            },
+            128f,
+            interactable,
+            height: 28f,
+            fontSize: 11.5f,
+            selected: _tagColorDropdownOpen);
+    }
+
+    private void RenderTagColorOptions(Transform parent, HermesNativeWorkspaceState state)
+    {
+        var colors = CreateToolbar(parent);
+        AddToolbarLabel(colors, "COLOR");
+
+        var current = NormalizeTagColor(state.TagDraftColor);
+        foreach (var option in TagColorOptions)
+        {
+            AddButton(
+                colors,
+                option.Label,
+                () =>
+                {
+                    state.TagDraftColor = option.Value;
+                    _tagColorDropdownOpen = false;
+                    Invalidate(0.05f);
+                },
+                76f,
+                selected: string.Equals(current, option.Value, StringComparison.OrdinalIgnoreCase),
+                height: 28f,
+                fontSize: 11.5f);
+        }
+
+        AddFlexibleSpace(colors);
+    }
+
+    private void AddRowTagColorDropdown(Transform parent, bool interactable)
+    {
+        _tagEditorDraftColor = NormalizeTagColor(_tagEditorDraftColor);
+        AddButton(
+            parent,
+            $"COLOR: {TagColorLabel(_tagEditorDraftColor)}",
+            () =>
+            {
+                _tagColorDropdownOpen = !_tagColorDropdownOpen;
+                Invalidate(0.05f);
+            },
+            128f,
+            interactable,
+            height: 28f,
+            fontSize: 11.5f,
+            selected: _tagColorDropdownOpen);
+    }
+
+    private void RenderRowTagColorOptions(Transform parent)
+    {
+        var colors = CreateToolbar(parent);
+        AddToolbarLabel(colors, "COLOR");
+
+        var current = NormalizeTagColor(_tagEditorDraftColor);
+        foreach (var option in TagColorOptions)
+        {
+            AddButton(
+                colors,
+                option.Label,
+                () =>
+                {
+                    _tagEditorDraftColor = option.Value;
+                    _tagColorDropdownOpen = false;
+                    Invalidate(0.05f);
+                },
+                76f,
+                selected: string.Equals(current, option.Value, StringComparison.OrdinalIgnoreCase),
+                height: 28f,
+                fontSize: 11.5f);
+        }
+
+        AddFlexibleSpace(colors);
     }
 
     private void RenderActionConfirmation(RectTransform parent, HermesNativeWorkspaceState state)
@@ -744,36 +1063,53 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             return;
         }
 
-        if (!Plugin.Settings.AllowHarmlessTestActions.Value)
+        if (!Plugin.Settings.AllowHarmlessTestActions.Value && !Plugin.Settings.AllowInventoryTagActions.Value)
         {
-            AddEmptyState(parent, "Harmless test action disabled.", "Alpha1 exposes only the test action, and it is blocked by the individual permission setting.");
+            AddEmptyState(parent, "All action permissions disabled.", "Enable an individual action permission before requesting proposals.");
             return;
         }
 
         if (proposal is null)
         {
-            AddEmptyState(parent, "No pending action proposal.", "Create the alpha1 harmless test proposal to verify confirmation without changing the profile.");
+            if (state.ActionResult is not null)
+            {
+                AddCard(
+                    parent,
+                    $"LAST RESULT: {state.ActionResult.Status}",
+                    state.ActionResult.Message,
+                    state.ActionResult.Executed ? "CONFIRMED" : state.ActionResult.Cancelled ? "CANCELLED" : "RESULT");
+                return;
+            }
+
+            AddEmptyState(parent, "No pending action proposal.", "Create a harmless test proposal or inventory tag proposal to open the confirmation window.");
             return;
         }
 
         var preview = proposal.Preview;
-        var card = AddCard(
+        var previewLines = new[]
+        {
+            PreviewLine("ACTION", preview.ActionName),
+            PreviewLine("ITEMS", preview.AffectedItems.Count == 0 ? "None" : string.Join(", ", preview.AffectedItems)),
+            PreviewLine("QUANTITY", preview.Quantity),
+            PreviewLine("PRICE / COST", preview.PriceOrCost),
+            PreviewLine("DESTINATION", preview.TraderStationOrDestination),
+            PreviewLine("EXPECTED RESULT", preview.ExpectedResult),
+            PreviewLine("BLOCKED REASON", string.IsNullOrWhiteSpace(preview.CannotExecuteReason) ? "None" : preview.CannotExecuteReason!)
+        };
+
+        AddCard(
             parent,
             proposal.DisplayName,
-            proposal.IsHarmlessTestAction ? "Harmless alpha1 verification action. No real inventory action will run." : "Inventory action proposal.",
-            proposal.CanExecute ? $"EXPIRES IN {ActionSecondsRemaining(proposal):N0}s" : "BLOCKED",
+            (proposal.IsHarmlessTestAction
+                ? "Harmless verification action. No real inventory action will run."
+                : "Inventory action proposal.")
+            + "\n\n"
+            + string.Join("\n", previewLines),
+            proposal.CanExecute ? "TOKEN ACTIVE" : "BLOCKED",
             null,
             proposal.CanExecute
                 ? new Color(0.08f, 0.12f, 0.11f, 0.82f)
                 : new Color(0.20f, 0.08f, 0.07f, 0.82f));
-
-        AddPreviewRow(card, "ACTION", preview.ActionName);
-        AddPreviewRow(card, "ITEMS", preview.AffectedItems.Count == 0 ? "None" : string.Join(", ", preview.AffectedItems));
-        AddPreviewRow(card, "QUANTITY", preview.Quantity);
-        AddPreviewRow(card, "PRICE / COST", preview.PriceOrCost);
-        AddPreviewRow(card, "TRADER / STATION / DESTINATION", preview.TraderStationOrDestination);
-        AddPreviewRow(card, "EXPECTED RESULT", preview.ExpectedResult);
-        AddPreviewRow(card, "CANNOT EXECUTE", string.IsNullOrWhiteSpace(preview.CannotExecuteReason) ? "None" : preview.CannotExecuteReason!);
 
         AddSectionHeader(parent, "WARNINGS");
         if (preview.Warnings.Count == 0)
@@ -830,15 +1166,35 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         }
     }
 
-    private static void AddPreviewRow(Transform parent, string label, string value)
+    private void RenderActionConfirmationPopout(RectTransform parent)
     {
-        AddText(
-            parent,
-            $"{label}: {value}",
-            12.5f,
-            label is "ACTION" or "EXPECTED RESULT",
-            HermesNativeUiFramework.NormalTextColor);
+        var state = _state;
+        if (state?.ActionProposal is null)
+        {
+            return;
+        }
+
+        var overlay = new GameObject("ActionConfirmationPopout", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        overlay.transform.SetParent(parent, false);
+        var overlayRect = (RectTransform)overlay.transform;
+        HermesNativeUiFramework.Stretch(overlayRect, 0f, 0f, 0f, 0f);
+        var overlayImage = overlay.GetComponent<Image>();
+        overlayImage.color = new Color(0f, 0f, 0f, 0.58f);
+        overlayImage.raycastTarget = true;
+
+        var frame = CreatePanel(overlay.transform, "ActionConfirmationFrame", new Color(0.035f, 0.042f, 0.043f, 0.98f));
+        frame.anchorMin = new Vector2(0.16f, 0.08f);
+        frame.anchorMax = new Vector2(0.84f, 0.92f);
+        frame.offsetMin = Vector2.zero;
+        frame.offsetMax = Vector2.zero;
+        AddVerticalLayout(frame, 8, 8, 8, 8, 5f);
+
+        var scroll = CreateScroll(frame, "action-confirmation-popout", true);
+        RenderActionConfirmation(scroll.Content, state);
     }
+
+    private static string PreviewLine(string label, string value)
+        => $"{label}: {value}";
 
     private void RenderActionHistory(RectTransform parent, HermesNativeWorkspaceState state)
     {
@@ -991,17 +1347,14 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
             foreach (var instance in _state.StashInstances.Take(30))
             {
                 var selected = string.Equals(_state.SelectedStashInstanceKey, instance.InstanceKey, StringComparison.OrdinalIgnoreCase);
-                AddCard(
+                var card = AddCard(
                     parent,
                     instance.Label,
                     $"{instance.Location} • {FormatCount(instance.Quantity)} unit(s) • {instance.ConditionPercent}% {instance.ConditionDescription} • {instance.ChildItemCount} child item(s)",
                     $"REFERENCE {Money(instance.ConditionAdjustedReferenceValue)}{(instance.FoundInRaid ? " • FIR" : string.Empty)}",
-                    () =>
-                    {
-                        _state.SelectStashInstance(instance.InstanceKey);
-                        Invalidate(0.20f);
-                    },
+                    null,
                     selected ? new Color(0.20f, 0.22f, 0.20f, 0.78f) : null);
+                RenderOwnedCopyRowTagControls(card, instance, selected);
             }
         }
 
@@ -1009,6 +1362,160 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         RenderMarketSummary(parent, _state.MarketSummary);
         RenderItemUsage(parent, _state.ItemUsage);
     }
+
+    private void RenderOwnedCopyRowTagControls(Transform parent, HermesStashInstanceSummary instance, bool selectedForPricing)
+    {
+        var hasTag = !string.IsNullOrWhiteSpace(instance.TagName);
+        var row = CreateToolbar(parent);
+        AddButton(
+            row,
+            selectedForPricing ? "PRICING SELECTED" : "USE FOR PRICING",
+            () =>
+            {
+                _state!.SelectStashInstance(instance.InstanceKey);
+                Invalidate(0.20f);
+            },
+            132f,
+            !_state!.DetailLoading,
+            height: 28f,
+            fontSize: 11.5f,
+            selected: selectedForPricing);
+        AddToolbarLabel(row, FormatInstanceTag(instance).ToUpperInvariant());
+        AddFlexibleSpace(row);
+
+        if (!Plugin.Settings.EnableConfirmedActions.Value || !Plugin.Settings.AllowInventoryTagActions.Value)
+        {
+            AddToolbarLabel(row, "TAG EDITS DISABLED");
+            return;
+        }
+
+        if (!hasTag)
+        {
+            AddButton(
+                row,
+                "+ TAG",
+                () =>
+                {
+                    OpenRowTagEditor(instance, "apply");
+                    Invalidate(0.05f);
+                },
+                72f,
+                !(_state?.ActionLoading ?? true),
+                height: 28f,
+                fontSize: 11.5f,
+                selected: IsRowTagEditorOpen(instance, "apply"));
+        }
+        else
+        {
+            AddButton(
+                row,
+                "CHANGE",
+                () =>
+                {
+                    OpenRowTagEditor(instance, "change");
+                    Invalidate(0.05f);
+                },
+                82f,
+                !(_state?.ActionLoading ?? true),
+                height: 28f,
+                fontSize: 11.5f,
+                selected: IsRowTagEditorOpen(instance, "change"));
+            AddButton(
+                row,
+                "RESET",
+                () =>
+                {
+                    _state!.ProposeInventoryTagAction("remove", string.Empty, "blue", instance.InstanceKey);
+                    Invalidate(0.20f);
+                },
+                82f,
+                !(_state?.ActionLoading ?? true),
+                height: 28f,
+                fontSize: 11.5f);
+        }
+
+        if (IsRowTagEditorOpen(instance, _tagEditorMode))
+        {
+            RenderOwnedCopyRowTagEditor(parent, instance);
+        }
+    }
+
+    private void RenderOwnedCopyRowTagEditor(Transform parent, HermesStashInstanceSummary instance)
+    {
+        var editor = CreateToolbar(parent);
+        AddToolbarLabel(editor, _tagEditorMode == "change" ? "NEW TAG" : "TAG");
+        Button? previewButton = null;
+        var nameInput = AddInput(editor, "Tag name", _tagEditorDraftName, 180f);
+        nameInput.onValueChanged.AddListener(value =>
+        {
+            _tagEditorDraftName = value;
+            if (previewButton != null)
+            {
+                previewButton.interactable = CanProposeInventoryTagActionForInstance(_state!, instance, _tagEditorMode, _tagEditorDraftName);
+            }
+        });
+        AddRowTagColorDropdown(editor, true);
+        previewButton = AddButton(
+            editor,
+            "PREVIEW",
+            () =>
+            {
+                _state!.ProposeInventoryTagAction(_tagEditorMode, _tagEditorDraftName, _tagEditorDraftColor, instance.InstanceKey);
+                Invalidate(0.20f);
+            },
+            90f,
+            CanProposeInventoryTagActionForInstance(_state!, instance, _tagEditorMode, _tagEditorDraftName),
+            height: 28f,
+            fontSize: 11.5f);
+        AddButton(
+            editor,
+            "CANCEL",
+            () =>
+            {
+                _tagEditorInstanceKey = string.Empty;
+                _tagColorDropdownOpen = false;
+                Invalidate(0.05f);
+            },
+            82f,
+            height: 28f,
+            fontSize: 11.5f);
+        AddFlexibleSpace(editor);
+
+        if (_tagColorDropdownOpen)
+        {
+            RenderRowTagColorOptions(parent);
+        }
+    }
+
+    private void OpenRowTagEditor(HermesStashInstanceSummary instance, string mode)
+    {
+        _tagEditorInstanceKey = instance.InstanceKey;
+        _tagEditorMode = NormalizeTagActionMode(mode);
+        _tagColorDropdownOpen = false;
+        _state!.TagActionMode = _tagEditorMode;
+        if (_tagEditorMode == "change")
+        {
+            _tagEditorDraftName = instance.TagName ?? string.Empty;
+            _tagEditorDraftColor = string.IsNullOrWhiteSpace(instance.TagColor) ? "blue" : instance.TagColor;
+        }
+        else
+        {
+            _tagEditorDraftName = string.Empty;
+            _tagEditorDraftColor = "blue";
+        }
+    }
+
+    private bool IsRowTagEditorOpen(HermesStashInstanceSummary instance, string mode)
+        => string.Equals(_tagEditorInstanceKey, instance.InstanceKey, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(_tagEditorMode, NormalizeTagActionMode(mode), StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeTagActionMode(string? mode)
+        => (mode ?? string.Empty).Trim().ToLowerInvariant() switch
+        {
+            "change" => "change",
+            "remove" => "remove",
+            _ => "apply"
+        };
 
     private void RenderTraderSummary(Transform parent, HermesTraderSummaryResponse? summary)
     {
@@ -2595,6 +3102,17 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         return input;
     }
 
+    private static string NormalizeTagColor(string? value)
+    {
+        var normalized = string.IsNullOrWhiteSpace(value) ? "blue" : value.Trim();
+        return TagColorOptions.Any(option => string.Equals(option.Value, normalized, StringComparison.OrdinalIgnoreCase))
+            ? normalized.ToLowerInvariant()
+            : "blue";
+    }
+
+    private static string TagColorLabel(string? value)
+        => TagColorOptions.First(option => string.Equals(option.Value, NormalizeTagColor(value), StringComparison.OrdinalIgnoreCase)).Label;
+
     private static float AssistantActionButtonWidth(string label)
     {
         var normalized = string.IsNullOrWhiteSpace(label) ? "OPEN" : label.Trim();
@@ -2928,11 +3446,15 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         colors.disabledColor = new Color(0.12f, 0.13f, 0.13f, 0.55f);
         button.colors = colors;
         var layout = root.GetComponent<LayoutElement>();
-        layout.minWidth = width;
-        layout.preferredWidth = width;
+        HermesNativeUiFramework.SetScalableButtonSize(
+            layout,
+            defaultPreferredWidth: width,
+            defaultMinWidth: width,
+            defaultPreferredHeight: height,
+            defaultMinHeight: height,
+            maxPreferredHeight: Math.Max(height * HermesNativeUiFramework.DefaultButtonMaxWidthScale, height + 8f),
+            maxMinHeight: Math.Max(height * HermesNativeUiFramework.DefaultButtonMaxWidthScale, height + 8f));
         layout.flexibleWidth = 0f;
-        layout.minHeight = height;
-        layout.preferredHeight = height;
         layout.flexibleHeight = 0f;
         var label = HermesNativeUiFramework.CreateText("Label", root.transform, fontSize, true, TextAlignmentOptions.Center);
         label.text = text;
@@ -2965,7 +3487,7 @@ internal sealed class HermesNativeWorkspaceBody : MonoBehaviour
         {
             layout.flexibleWidth = 1f;
         }
-        layout.minHeight = Math.Max(18f, size + 5f);
+        layout.minHeight = Math.Max(18f, HermesNativeUiFramework.ScaleFontSize(size) + 5f);
         layout.flexibleHeight = 0f;
         var fitter = label.gameObject.AddComponent<ContentSizeFitter>();
         fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;

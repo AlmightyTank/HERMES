@@ -2,9 +2,9 @@
 
 HERMES stands for **Hideout, Economy, Resource, Market, and Equipment System**.
 
-It is a read-only in-game assistant for SPT **4.0.13**. HERMES adds a native **HERMES** tab to the Character screen and in-raid inventory screen, then analyzes the active PMC profile using local SPT data.
+It is a mostly read-only in-game assistant for SPT **4.0.13**. HERMES adds a native **HERMES** tab to the Character screen and in-raid inventory screen, then analyzes the active PMC profile using local SPT data.
 
-HERMES does not use an external AI service, does not send your profile anywhere, and does not perform game actions. It reads local profile, trader, item, quest, Hideout, craft, and Flea data, then presents the results inside the game.
+HERMES does not use an external AI service and does not send your profile anywhere. Most workspaces read local profile, trader, item, quest, Hideout, craft, and Flea data; Items & Market can perform explicitly confirmed inventory tag edits on selected owned copies only.
 
 ## What HERMES Does
 
@@ -20,7 +20,7 @@ HERMES does not use an external AI service, does not send your profile anywhere,
 - Includes a Raid Planner with map-specific pre-raid readiness
 - Connects active quests to required access keys and maps through embedded quest-key knowledge
 - Supports a configurable pre-raid food-and-water requirement, including custom consumables when item data exposes hydration or energy effects
-- Includes an alpha confirmed-action pipeline with a harmless test action only; HERMES still performs no real inventory or profile actions
+- Includes alpha inventory tag actions in Items & Market with confirmation popouts for explicitly selected owned copies
 
 ## Main Workspaces
 
@@ -30,7 +30,7 @@ Ask local, profile-aware questions about next steps, raids, items, stash, crafts
 
 ### Items & Market
 
-Look up an item and see owned-copy value, installed child-part value, trader prices, Flea estimates, quest usage, quest-key knowledge, Hideout needs, and craft associations. HERMES tries to resolve the exact owned item instance when opened from stash or equipment.
+Look up an item and see owned-copy value, installed child-part value, trader prices, Flea estimates, quest usage, quest-key knowledge, Hideout needs, and craft associations. HERMES tries to resolve the exact owned item instance when opened from stash or equipment, and selected owned copies can propose apply/change/reset inventory tag actions.
 
 ### Stash
 
@@ -112,7 +112,7 @@ dotnet build .\Hermes.Build.csproj -c Release -p:SptRoot="D:\Games\SPT"
 The build creates the release package at the repository root. The package name uses the value in `Version.props`; with the current source it is:
 
 ```text
-HERMES-2.0.0-alpha1.zip
+HERMES-1.1.0.zip
 ```
 
 It also stages the install payload under:
@@ -156,14 +156,16 @@ dist/                       Generated install payload
 
 ## Configuration
 
-HERMES creates its BepInEx configuration after first launch. Open the in-game Configuration Manager with **F12** to adjust Assistant, market, Hideout, craft, stash, loadout, Raid Planner, notification, and interface settings.
+HERMES creates its BepInEx configuration after first launch. Open the in-game Configuration Manager with **F12** to adjust Assistant, market, Hideout, craft, stash, loadout, Raid Planner, notification, and interface settings, including **Interface -> Font size percent**.
 
 The top **Refresh** button performs a stronger source recheck when gear, stash contents, Hideout state, quest progress, or other profile data has changed and you want HERMES to reread it immediately.
 
 ## Important Notes
 
-- HERMES is read-only. It will not buy, sell, move, craft, repair, insure, accept quests, complete quests, or edit your profile.
-- The alpha Actions workspace verifies proposal, confirmation, result, and history flow with a no-op test action only.
+- HERMES will not buy, sell, move, craft, repair, insure, accept quests, complete quests, or alter inventory structure.
+- Items & Market supports confirmed apply/change/reset inventory tag actions for explicitly selected owned copies.
+- Inventory tag confirmations open as a popout preview before writing.
+- Inventory tag confirmations show old and new tag values, reject missing or moved items, and reject stale confirmations before writing.
 - HERMES uses the installed SPT database and active profile as the source of truth.
 - Flea and trader values are estimates based on available local SPT data and may not match every economy setup or heavily customized mod list.
 - Quest-key knowledge is embedded and resolved against installed SPT data. Entries that do not match SPT 4.0.13 are ignored safely.
@@ -182,7 +184,7 @@ The top **Refresh** button performs a stronger source recheck when gear, stash c
 
 Built for SPT **4.0.13**.
 
-HERMES is designed to be read-only and should avoid profile-writing conflicts with other mods. Mods that heavily alter item templates, trader offers, quests, Hideout data, or Flea pricing may affect the analysis HERMES displays.
+HERMES is designed to keep profile writes narrow and confirmation-gated. Mods that heavily alter item templates, trader offers, quests, Hideout data, Flea pricing, or inventory item tag schemas may affect the analysis and alpha tag actions HERMES displays.
 
 ## Credits
 

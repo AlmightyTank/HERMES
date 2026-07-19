@@ -1,6 +1,6 @@
-# HERMES 2.0.0-alpha1 release checklist
+# HERMES 1.1.0 release checklist
 
-Build and test against a clean SPT 4.0.13 installation before publishing `2.0.0-alpha1`.
+Build and test against a clean SPT 4.0.13 installation before publishing `1.1.0`.
 
 ## Build and package
 
@@ -65,7 +65,7 @@ Build and test against a clean SPT 4.0.13 installation before publishing `2.0.0-
 
 - [ ] No reproducible crash, profile mix-up, incorrect-map quest warning, tab-selection defect, or request loop remains.
 - [ ] Any remaining slow first calculation is documented and completes within the configured long-request budget.
-- [ ] Confirm `Version.props` is `2.0.0-alpha1`, rebuild Release, and repeat the package-content/version checks.
+- [ ] Confirm `Version.props` is `1.1.0`, rebuild Release, and repeat the package-content/version checks.
 
 ### Pre-raid and Hideout regression checks
 

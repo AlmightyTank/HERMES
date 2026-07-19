@@ -24,6 +24,7 @@ internal sealed class HermesClientSettings
 
     public ConfigEntry<bool> EnableConfirmedActions { get; private set; } = null!;
     public ConfigEntry<bool> AllowHarmlessTestActions { get; private set; } = null!;
+    public ConfigEntry<bool> AllowInventoryTagActions { get; private set; } = null!;
     public ConfigEntry<bool> AllowTraderPurchaseActions { get; private set; } = null!;
     public ConfigEntry<bool> AllowTraderSaleActions { get; private set; } = null!;
     public ConfigEntry<bool> AllowFleaListingActions { get; private set; } = null!;
@@ -60,6 +61,7 @@ internal sealed class HermesClientSettings
     public ConfigEntry<int> MinimumAssistantNoticeStashValue { get; private set; } = null!;
 
     public ConfigEntry<bool> UseNativeInventoryTabs { get; private set; } = null!;
+    public ConfigEntry<int> InterfaceFontSizePercent { get; private set; } = null!;
 
     public ConfigEntry<bool> CompactMode { get; private set; } = null!;
     public ConfigEntry<bool> ShowHelpText { get; private set; } = null!;
@@ -241,37 +243,42 @@ internal sealed class HermesClientSettings
             "Actions",
             "Enable confirmed actions",
             true,
-            "Master switch for the HERMES action-confirmation pipeline. Alpha1 still performs no real inventory actions.");
+            "Master switch for the HERMES action-confirmation pipeline.");
         AllowHarmlessTestActions = config.Bind(
             "Actions",
             "Allow harmless test actions",
             true,
-            "Allows the alpha1 no-op test action used to verify proposal, confirmation, token, result, and history flow.");
+            "Allows the no-op test action used to verify proposal, confirmation, token, result, and history flow.");
+        AllowInventoryTagActions = config.Bind(
+            "Actions",
+            "Allow inventory tag actions",
+            true,
+            "Allows 1.1 confirmed actions that apply, change, or reset tags on explicitly selected PMC inventory items.");
         AllowTraderPurchaseActions = config.Bind(
             "Actions",
             "Allow trader purchase actions",
             false,
-            "Reserved for a future release. Alpha1 will not buy items.");
+            "Reserved for a future release. HERMES will not buy items yet.");
         AllowTraderSaleActions = config.Bind(
             "Actions",
             "Allow trader sale actions",
             false,
-            "Reserved for a future release. Alpha1 will not sell items.");
+            "Reserved for a future release. HERMES will not sell items yet.");
         AllowFleaListingActions = config.Bind(
             "Actions",
             "Allow flea listing actions",
             false,
-            "Reserved for a future release. Alpha1 will not create Flea listings.");
+            "Reserved for a future release. HERMES will not create Flea listings yet.");
         AllowCraftActions = config.Bind(
             "Actions",
             "Allow craft actions",
             false,
-            "Reserved for a future release. Alpha1 will not start or collect crafts.");
+            "Reserved for a future release. HERMES will not start or collect crafts yet.");
         AllowHideoutUpgradeActions = config.Bind(
             "Actions",
             "Allow hideout upgrade actions",
             false,
-            "Reserved for a future release. Alpha1 will not start hideout upgrades.");
+            "Reserved for a future release. HERMES will not start hideout upgrades yet.");
 
         EnableAssistantTab = config.Bind(
             "Assistant",
@@ -415,6 +422,13 @@ internal sealed class HermesClientSettings
             "Enable HERMES inventory tab",
             true,
             "Adds the inventory-only HERMES workspace to both the main Character screen and the inventory opened during a raid. HERMES has no floating-window fallback and keeps the native EFT navigation visible.");
+        InterfaceFontSizePercent = config.Bind(
+            "Interface",
+            "Font size percent",
+            100,
+            new ConfigDescription(
+                "Scales HERMES native workspace text. Button dimensions grow up to a capped maximum so larger text remains readable. Range: 80-130.",
+                new AcceptableValueRange<int>(80, 130)));
         CompactMode = config.Bind(
             "Interface",
             "Compact mode",
@@ -966,6 +980,7 @@ internal sealed class HermesClientSettings
     public int GetMinimumAssistantNoticeCraftProfit() => Math.Clamp(MinimumAssistantNoticeCraftProfit.Value, 0, 10_000_000);
     public int GetMinimumAssistantNoticeStashValue() => Math.Clamp(MinimumAssistantNoticeStashValue.Value, 0, 100_000_000);
     public int GetHighValueUninsuredThreshold() => Math.Clamp(HighValueUninsuredThreshold.Value, 0, 10_000_000);
+    public int GetInterfaceFontSizePercent() => Math.Clamp(InterfaceFontSizePercent.Value, 80, 130);
     public int GetMaximumRowsPerSection() => Math.Clamp(MaximumRowsPerSection.Value, 25, 120);
     public int GetMaximumSearchResults() => Math.Clamp(MaximumSearchResults.Value, 5, 50);
     public int GetMinimumSearchCharacters() => Math.Clamp(MinimumSearchCharacters.Value, 1, 10);

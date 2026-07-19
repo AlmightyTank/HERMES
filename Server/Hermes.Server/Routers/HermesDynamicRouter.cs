@@ -214,28 +214,46 @@ public sealed class HermesDynamicRouter(
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(
-                "/hermes/actions/confirm/",
+                "/hermes/actions/propose/tag/",
                 (url, _, sessionId, _) =>
                 {
-                    var segments = GetTail(url, "/hermes/actions/confirm/")
-                        .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                    var response = actionService.Confirm(
+                    var segments = GetTail(url, "/hermes/actions/propose/tag/")
+                        .Split('/', StringSplitOptions.TrimEntries)
+                        .Select(Uri.UnescapeDataString)
+                        .ToList();
+                    var keys = (segments.ElementAtOrDefault(3) ?? string.Empty)
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var response = actionService.ProposeInventoryTagAction(
                         sessionId,
                         segments.ElementAtOrDefault(0) ?? string.Empty,
-                        segments.ElementAtOrDefault(1) ?? string.Empty);
+                        segments.ElementAtOrDefault(1) ?? string.Empty,
+                        segments.ElementAtOrDefault(2) ?? string.Empty,
+                        keys);
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(
-                "/hermes/actions/cancel/",
-                (url, _, sessionId, _) =>
+                "/hermes/actions/confirm/",
+                async (url, _, sessionId, _) =>
                 {
-                    var segments = GetTail(url, "/hermes/actions/cancel/")
+                    var segments = GetTail(url, "/hermes/actions/confirm/")
                         .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                    var response = actionService.Cancel(
+                    var response = await actionService.ConfirmAsync(
                         sessionId,
                         segments.ElementAtOrDefault(0) ?? string.Empty,
                         segments.ElementAtOrDefault(1) ?? string.Empty);
-                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                    return httpResponseUtil.GetBody(response);
+                }),
+            new RouteAction(
+                "/hermes/actions/cancel/",
+                async (url, _, sessionId, _) =>
+                {
+                    var segments = GetTail(url, "/hermes/actions/cancel/")
+                        .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var response = await actionService.CancelAsync(
+                        sessionId,
+                        segments.ElementAtOrDefault(0) ?? string.Empty,
+                        segments.ElementAtOrDefault(1) ?? string.Empty);
+                    return httpResponseUtil.GetBody(response);
                 }),
             new RouteAction(
                 "/hermes/actions/history",

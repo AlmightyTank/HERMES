@@ -142,8 +142,11 @@ public sealed record HermesStashInstanceSelectionResponse(
 
 public sealed record HermesStashInstanceSummary(
     string InstanceKey,
+    string ProfileItemId,
     string Label,
     string Location,
+    string TagName,
+    string TagColor,
     double Quantity,
     int ConditionPercent,
     string ConditionDescription,

@@ -364,6 +364,9 @@ public sealed class HermesStashService(
         var weaponAttachmentCount = components.Count(component => component.Kind == HermesSaleComponentKind.WeaponAttachment);
         var armorInsertCount = components.Count(component => component.Kind == HermesSaleComponentKind.ArmorInsert);
         var foundInRaid = ReadBool(root.Upd, false, "SpawnedInSession", "spawnedInSession");
+        var tag = GetProperty(root.Upd, "Tag", "tag");
+        var tagName = ReadString(tag, "Name", "name") ?? string.Empty;
+        var tagColor = NormalizeTagColorText(ReadString(tag, "Color", "color"));
         var label = BuildLabel(
             quantity,
             condition,
@@ -374,8 +377,11 @@ public sealed class HermesStashService(
 
         return new HermesStashInstanceSummary(
             CreateInstanceKey(sessionId, root.Id),
+            root.Id,
             label,
             location,
+            tagName,
+            tagColor,
             quantity,
             condition.DisplayPercent,
             condition.Description,
@@ -389,6 +395,28 @@ public sealed class HermesStashService(
             rootValue,
             installedValue,
             totalValue);
+    }
+
+    private static string NormalizeTagColorText(string? value)
+    {
+        var normalized = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        return normalized switch
+        {
+            "0" => "red",
+            "1" => "orange",
+            "2" => "yellow",
+            "3" => "green",
+            "4" => "blue",
+            "5" or "purple" => "violet",
+            "6" or "gray" or "black" or "white" or "default" => "grey",
+            "red" or "orange" or "yellow" or "green" or "blue" or "violet" or "grey" => normalized,
+            _ => string.Empty
+        };
     }
 
     private IReadOnlyList<HermesTraderSaleComponent> BuildSaleComponents(

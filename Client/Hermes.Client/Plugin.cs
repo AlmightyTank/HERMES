@@ -10,7 +10,7 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.amightytank.hermes.client";
     public const string PluginName = "HERMES Client";
-    public const string PluginVersion = "2.0.0";
+    public const string PluginVersion = "1.1.0";
 
     internal static ManualLogSource Log { get; private set; } = null!;
     internal static Plugin? Instance { get; private set; }

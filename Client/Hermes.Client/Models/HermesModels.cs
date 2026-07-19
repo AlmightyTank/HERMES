@@ -166,8 +166,11 @@ public sealed class HermesStashInstanceSelectionResponse
 public sealed class HermesStashInstanceSummary
 {
     public string InstanceKey { get; set; } = string.Empty;
+    public string ProfileItemId { get; set; } = string.Empty;
     public string Label { get; set; } = string.Empty;
     public string Location { get; set; } = string.Empty;
+    public string TagName { get; set; } = string.Empty;
+    public string TagColor { get; set; } = string.Empty;
     public double Quantity { get; set; }
     public int ConditionPercent { get; set; }
     public string ConditionDescription { get; set; } = string.Empty;

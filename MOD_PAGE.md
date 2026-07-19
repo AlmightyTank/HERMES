@@ -2,11 +2,11 @@
 
 HERMES stands for **Hideout, Economy, Resource, Market, and Equipment System**.
 
-It is a read-only in-game assistant for SPT that helps you understand your active PMC profile without changing it.
+It is a mostly read-only in-game assistant for SPT that helps you understand your active PMC profile, with alpha inventory tag edits available only through explicit confirmation.
 
 It adds a native **HERMES** tab to the Character screen and in-raid inventory screen, then brings together item values, trader choices, Flea estimates, stash cleanup, crafts, Hideout upgrades, loadout readiness, quest-key knowledge, and pre-raid planning in one place.
 
-HERMES does not use an external AI service, does not send your profile anywhere, and does not perform game actions. It only reads local SPT data and presents analysis inside the game.
+HERMES does not use an external AI service and does not send your profile anywhere. Most of HERMES only reads local SPT data and presents analysis inside the game; Items & Market can apply, change, or reset inventory tags on selected owned copies after a confirmation popout.
 
 ## Requirements
 
@@ -21,6 +21,7 @@ HERMES does not use an external AI service, does not send your profile anywhere,
 - Adds **Ask HERMES** item actions for stash, equipment, traders, Flea previews, crafts, and Hideout items
 - Compares trader purchase and sale options using your active profile
 - Estimates Flea Market value, listing fees, and trader-versus-Flea sale choices
+- Applies, changes, or removes selected owned-copy inventory tags from Items & Market after explicit confirmation
 - Reviews Hideout upgrade requirements and active production status
 - Checks craft readiness, acquisition costs, profit, and availability
 - Finds stash cleanup opportunities, duplicates, damaged gear, reserves, valuables, and sale destinations
@@ -74,13 +75,14 @@ SPT/user/mods/HERMES/Hermes.Server.dll
 
 ## Configuration
 
-HERMES creates its BepInEx configuration after first launch. Open the in-game Configuration Manager with **F12** to adjust Assistant, market, Hideout, craft, stash, loadout, Raid Planner, notification, and interface settings.
+HERMES creates its BepInEx configuration after first launch. Open the in-game Configuration Manager with **F12** to adjust Assistant, market, Hideout, craft, stash, loadout, Raid Planner, notification, and interface settings, including **Interface -> Font size percent**.
 
 The top **Refresh** button performs a stronger source recheck when you have changed gear, stash contents, Hideout state, quest progress, or other profile data and want HERMES to reread it immediately.
 
 ## Important Notes
 
-- HERMES is read-only. It will not buy, sell, move, craft, repair, insure, accept quests, complete quests, or edit your profile.
+- HERMES will not buy, sell, move, craft, repair, insure, accept quests, complete quests, or alter inventory structure.
+- Inventory tag edits are limited to explicitly selected owned copies, show old and new tag values in a confirmation popout, and reject missing, moved, or stale items before writing.
 - HERMES uses the installed SPT database and your active profile as the source of truth.
 - Flea and trader values are estimates based on available local SPT data and may not match every economy setup or heavily customized mod list.
 - Quest-key knowledge is embedded and resolved against your installed SPT data. Entries that do not match your SPT version are ignored safely.
@@ -99,7 +101,7 @@ The top **Refresh** button performs a stronger source recheck when you have chan
 
 Built for SPT **4.0.13**.
 
-HERMES is designed to be read-only and should avoid profile-writing conflicts with other mods. Mods that heavily alter item templates, trader offers, quests, Hideout data, or Flea pricing may affect the analysis HERMES displays.
+HERMES is designed to keep profile writes narrow and confirmation-gated. Mods that heavily alter item templates, trader offers, quests, Hideout data, Flea pricing, or inventory item tag schemas may affect the analysis and alpha tag actions HERMES displays.
 
 ## Credits
 

@@ -97,6 +97,22 @@ internal sealed class HermesNativeWorkspaceState
     internal HermesActionHistoryResponse? ActionHistory => GetField<HermesActionHistoryResponse>(_window, "_actionHistory");
     internal string ActionStatus => GetField<string>(_window, "_actionStatus") ?? string.Empty;
     internal bool ActionLoading => GetField<bool>(_window, "_actionLoading");
+    internal IReadOnlyCollection<string> SelectedTagActionInstanceKeys => _window.SelectedTagActionInstanceKeys;
+    internal string TagActionMode
+    {
+        get => _window.TagActionMode;
+        set => _window.TagActionMode = value;
+    }
+    internal string TagDraftName
+    {
+        get => _window.TagDraftName;
+        set => _window.TagDraftName = value;
+    }
+    internal string TagDraftColor
+    {
+        get => _window.TagDraftColor;
+        set => _window.TagDraftColor = value;
+    }
 
     internal string AssistantContextLabel
     {
@@ -263,6 +279,12 @@ internal sealed class HermesNativeWorkspaceState
     }
 
     internal void ProposeTestAction() => _ = _window.ProposeTestActionAsync();
+    internal void ProposeInventoryTagAction() => _ = _window.ProposeInventoryTagActionAsync();
+    internal void ProposeInventoryTagAction(string mode, string tagName, string tagColor, params string[] instanceKeys)
+        => _ = _window.ProposeInventoryTagActionAsync(mode, tagName, tagColor, instanceKeys);
+    internal void ToggleTagActionInstance(string instanceKey) => _window.ToggleTagActionInstance(instanceKey);
+    internal void SelectAllMatchingTagActionInstances() => _window.SelectAllMatchingTagActionInstances();
+    internal void ClearTagActionSelection() => _window.ClearTagActionSelection();
     internal void ConfirmAction() => _ = _window.ConfirmActionAsync();
     internal void CancelAction() => _ = _window.CancelActionAsync();
     internal void RefreshActionHistory() => _ = _window.RefreshActionHistoryAsync();
@@ -313,23 +335,41 @@ internal sealed class HermesNativeWorkspaceState
                 ItemUsage?.QuestKeyUses.Count,
                 ItemUsage?.UpgradeUses.Count,
                 ItemUsage?.ProducedBy.Count,
-                ItemUsage?.UsedBy.Count),
+                ItemUsage?.UsedBy.Count,
+                ActionStatus,
+                ActionLoading,
+                Identity(ActionProposal),
+                ActionProposal?.ProposalId,
+                ActionProposalExpiryState(ActionProposal),
+                ActionProposal?.CanExecute,
+                Identity(ActionResult),
+                ActionResult?.Status,
+                ActionResult?.Message,
+                TagActionMode,
+                TagDraftName,
+                TagDraftColor,
+                Plugin.Settings.AllowInventoryTagActions.Value,
+                string.Join(",", SelectedTagActionInstanceKeys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase)),
+                string.Join(",", StashInstances.Select(instance => $"{instance.InstanceKey}:{instance.TagName}:{instance.TagColor}"))),
             "Actions" => string.Join("|",
                 tab,
                 ActionStatus,
                 ActionLoading,
                 Identity(ActionProposal),
                 ActionProposal?.ProposalId,
-                ActionProposal is null
-                    ? 0
-                    : Math.Max(0L, ActionProposal.ExpiresUnixTime - DateTimeOffset.UtcNow.ToUnixTimeSeconds()),
+                ActionProposalExpiryState(ActionProposal),
                 ActionProposal?.CanExecute,
                 Identity(ActionResult),
                 ActionResult?.Status,
                 ActionResult?.Message,
                 Identity(ActionHistory),
                 ActionHistory?.TotalActions,
-                ActionHistory?.Entries.FirstOrDefault()?.HistoryId),
+                ActionHistory?.Entries.FirstOrDefault()?.HistoryId,
+                TagActionMode,
+                Plugin.Settings.AllowInventoryTagActions.Value,
+                string.Join(",", SelectedTagActionInstanceKeys.OrderBy(key => key, StringComparer.OrdinalIgnoreCase)),
+                StashInstances.Count,
+                SelectedItem?.ItemKey),
             "Hideout" => string.Join("|",
                 tab,
                 HideoutStatus,
@@ -378,6 +418,18 @@ internal sealed class HermesNativeWorkspaceState
                 LoadoutSummary?.ValueSummary.Items.Count),
             _ => tab
         };
+    }
+
+    private static string ActionProposalExpiryState(HermesActionProposal? proposal)
+    {
+        if (proposal is null)
+        {
+            return "none";
+        }
+
+        return DateTimeOffset.UtcNow.ToUnixTimeSeconds() >= proposal.ExpiresUnixTime
+            ? $"{proposal.ExpiresUnixTime}:expired"
+            : $"{proposal.ExpiresUnixTime}:active";
     }
 
     private static int Identity(object? value)
