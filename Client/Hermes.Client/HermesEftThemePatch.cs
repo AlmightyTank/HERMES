@@ -701,7 +701,12 @@ internal static class HermesEftWindowReflection
     internal static void Select(HermesWindow window, string tabName)
     {
         var value = Enum.Parse(ActiveTabField.FieldType, tabName);
-        SetActiveTabMethod.Invoke(window, [value]);
+        var parameters = SetActiveTabMethod.GetParameters();
+        SetActiveTabMethod.Invoke(
+            window,
+            parameters.Length == 1
+                ? [value]
+                : [value, true]);
     }
 
     internal static void Clear(HermesWindow window)

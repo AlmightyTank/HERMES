@@ -71,11 +71,16 @@ Build `HERMES.sln` or `Hermes.Build.csproj` in **Release**. The build project cr
 HERMES-0.1.0-rc.2.4.1.zip
 ```
 
-Automatic deployment is disabled by default for release safety. To copy the DLLs into a test installation during a build, set:
+By default, building `Hermes.Build.csproj` also installs the generated server DLL, client DLL, and client assets into the test SPT root for local validation. The default test root is `C:\RealSPT`; override it with:
 
 ```text
-DeployToTestEnvironment=true
 TestSptRoot=C:\RealSPT
+```
+
+To package without installing into the test SPT root, set:
+
+```text
+DeployToTestEnvironment=false
 ```
 
 ## Troubleshooting

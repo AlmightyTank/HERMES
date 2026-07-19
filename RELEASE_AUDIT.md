@@ -24,7 +24,7 @@ The audit checked project XML, source delimiter structure, unfinished markers, s
 - Removed the duplicate TextMeshPro project-reference setup.
 - Added explicit validation for every client assembly reference.
 - Added the missing README, changelog, MIT license, release checklist, validation summary, and `.gitignore`.
-- Changed automatic installation into `C:\RealSPT` from default-on to explicit opt-in.
+- Restored automatic installation into `C:\RealSPT` for local package builds, with `DeployToTestEnvironment=false` available for package-only builds.
 - Added `SPT_ROOT` and `SptRoot` path overrides.
 - Removed the obsolete client watch entry point and disabled legacy continuous Loadout polling.
 - Excluded the unused Ragfair UI dump implementation from Release builds.

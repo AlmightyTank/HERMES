@@ -118,13 +118,9 @@ internal sealed class HermesWindow
     private void OnPresentationOpened()
     {
         // Rebuild the visible native presentation immediately and refresh the active workspace
-        // from the prepared server data every time the player swaps into HERMES.
+        // from current server sources without putting the navigation shell into button-refresh mode.
         HermesNativeWorkspaceRuntime.RequestClientRefresh();
-        HermesWorkspaceSnapshotCoordinator.Current?.OnPresentationOpened();
-        if (_activeTab == HermesTab.ItemSearch)
-        {
-            _ = RefreshItemSearchDataAsync();
-        }
+        RefreshSelectedWorkspace();
     }
 
     internal void OpenForInventoryItem(string profileItemId)
@@ -1984,6 +1980,10 @@ internal sealed class HermesWindow
             _refreshStatus = HermesApiClient.DescribeFailure(ex, "Items & Market refresh");
             Plugin.Log.LogError(ex);
         }
+        finally
+        {
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        }
     }
 
     private async Task RefreshCurrentDataAsync(bool clearCaches = true)
@@ -2552,7 +2552,7 @@ internal sealed class HermesWindow
         Plugin.Settings.RememberTab(tabName);
         if (refreshOnSelect)
         {
-            RefreshSelectedWorkspace(tabName);
+            RefreshSelectedWorkspace();
         }
         if (Plugin.Settings.DetailedLogging.Value)
         {
@@ -2561,7 +2561,7 @@ internal sealed class HermesWindow
         }
     }
 
-    private void RefreshSelectedWorkspace(string tabName)
+    private void RefreshSelectedWorkspace()
     {
         if (_activeTab == HermesTab.ItemSearch)
         {
@@ -2569,7 +2569,35 @@ internal sealed class HermesWindow
             return;
         }
 
-        HermesWorkspaceSnapshotCoordinator.Current?.OnWorkspaceSelected(tabName, force: true);
+        var tabName = GetTabName(_activeTab);
+        var displayName = GetTabDisplayName(_activeTab);
+        _ = RefreshSelectedProfileWorkspaceAsync(tabName, displayName);
+    }
+
+    private async Task RefreshSelectedProfileWorkspaceAsync(string tabName, string displayName)
+    {
+        var coordinator = HermesWorkspaceSnapshotCoordinator.Current;
+        if (coordinator is null)
+        {
+            _refreshStatus = "HERMES workspace coordinator is unavailable.";
+            return;
+        }
+
+        try
+        {
+            _refreshStatus = $"Refreshing {displayName} from current PMC sources...";
+            await coordinator.RefreshWorkspaceAsync(tabName, manual: true);
+            _refreshStatus = $"{displayName} refreshed from current PMC sources.";
+        }
+        catch (Exception ex)
+        {
+            _refreshStatus = HermesApiClient.DescribeFailure(ex, $"{displayName} refresh");
+            Plugin.Log.LogError(ex);
+        }
+        finally
+        {
+            HermesNativeWorkspaceRuntime.RequestClientRefresh();
+        }
     }
 
     private static HermesTab ParseTabName(string value)

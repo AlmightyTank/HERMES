@@ -13,8 +13,8 @@
     <SptRoot Condition="'$(SptRoot)' == '' and '$(SPT_ROOT)' != ''">$(SPT_ROOT)</SptRoot>
     <SptRoot Condition="'$(SptRoot)' == ''">C:\RealSPT</SptRoot>
 
-    <!-- Set DeployToTestEnvironment=true to package and install into the test SPT root. -->
-    <DeployToTestEnvironment Condition="'$(DeployToTestEnvironment)' == ''">false</DeployToTestEnvironment>
+    <!-- Package and install into the shared test SPT root by default. -->
+    <DeployToTestEnvironment Condition="'$(DeployToTestEnvironment)' == ''">true</DeployToTestEnvironment>
     <TestSptRoot Condition="'$(TestSptRoot)' == ''">$(SptRoot)</TestSptRoot>
     <TestServerDir>$(TestSptRoot)\SPT\user\mods\HERMES</TestServerDir>
     <TestClientDir>$(TestSptRoot)\BepInEx\plugins\HERMES</TestClientDir>
@@ -107,8 +107,16 @@
           Retries="3"
           RetryDelayMilliseconds="500" />
 
+    <Copy SourceFiles="@(ClientIconFiles)"
+          DestinationFolder="$(TestClientDir)"
+          SkipUnchangedFiles="true"
+          OverwriteReadOnlyFiles="true"
+          Retries="3"
+          RetryDelayMilliseconds="500" />
+
     <Message Importance="high" Text="HERMES deployed to test SPT root: $(TestSptRoot)" />
     <Message Importance="high" Text="Server DLL: $(TestServerDir)\Hermes.Server.dll" />
     <Message Importance="high" Text="Client DLL: $(TestClientDir)\Hermes.Client.dll" />
+    <Message Importance="high" Text="Client assets: $(TestClientDir)" />
   </Target>
 </Project>
