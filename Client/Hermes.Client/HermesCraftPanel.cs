@@ -225,11 +225,23 @@ internal sealed class HermesCraftPanel
         GUILayout.Label("SHOW", GUILayout.Width(48f));
         DrawFilterButton(CraftFilter.All, "All", 62f);
         DrawFilterButton(CraftFilter.Available, "Available Crafts", 132f);
-        DrawFilterButton(CraftFilter.Ready, "Ready Now", 92f);
+        DrawFilterButton(CraftFilter.Ready, "Ready to Collect", 128f);
         DrawFilterButton(CraftFilter.Profitable, "Profitable", 92f);
         DrawFilterButton(CraftFilter.Overnight, "Overnight", 92f);
         DrawFilterButton(CraftFilter.Active, "Active", 76f);
         GUILayout.FlexibleSpace();
+        var completedKeys = _response?.Crafts
+            .Where(craft => craft.IsComplete && !string.IsNullOrWhiteSpace(craft.ProductionKey))
+            .Select(craft => craft.ProductionKey)
+            .ToArray() ?? [];
+        GUI.enabled = Plugin.Settings.EnableConfirmedActions.Value
+                      && Plugin.Settings.AllowCraftActions.Value
+                      && completedKeys.Length > 0;
+        if (GUILayout.Button("Collect All Complete", GUILayout.Width(158f), GUILayout.Height(HermesUi.ToolbarHeight)))
+        {
+            _ = Plugin.Instance?.Window.ProposeCraftCollectActionAsync(completedKeys, collectAllCompleted: true);
+        }
+        GUI.enabled = true;
         GUILayout.EndHorizontal();
 
         GUILayout.BeginHorizontal();
@@ -288,7 +300,7 @@ internal sealed class HermesCraftPanel
         var cashProfit = craft.EstimatedCashProfit >= 0 ? $"+₽{craft.EstimatedCashProfit:N0}" : $"-₽{Math.Abs(craft.EstimatedCashProfit):N0}";
         var economicProfit = craft.EstimatedEconomicProfit >= 0 ? $"+₽{craft.EstimatedEconomicProfit:N0}" : $"-₽{Math.Abs(craft.EstimatedEconomicProfit):N0}";
         var percent = GetProfitPercent(craft);
-        var badge = craft.IsComplete ? "COMPLETE" : craft.IsActive ? "ACTIVE" : craft.CanStartNow ? "READY" : craft.IsAvailable ? "AVAILABLE" : craft.Status.ToUpperInvariant();
+        var badge = craft.IsComplete ? "READY" : craft.IsActive ? "ACTIVE" : craft.CanStartNow ? "STARTABLE" : craft.IsAvailable ? "AVAILABLE" : craft.Status.ToUpperInvariant();
         var label = $"{(selected ? "▶ " : string.Empty)}{craft.OutputQuantity:N0} × {craft.OutputName}\n" +
                     $"{craft.StationName} • your L{craft.CurrentStationLevel} / required L{craft.RequiredStationLevel} • {FormatDuration(craft.DurationSeconds)} • [{badge}]\n" +
                     $"Cash {cashProfit} • Economic {economicProfit} ({percent:N1}%) • ₽{craft.EstimatedEconomicProfitPerHour:N0}/h";
@@ -297,6 +309,15 @@ internal sealed class HermesCraftPanel
         if (GUILayout.Button(label, GUILayout.MinHeight(76f), GUILayout.ExpandWidth(true)))
         {
             _ = SelectCraftAsync(craft);
+        }
+        if (craft.IsComplete && !string.IsNullOrWhiteSpace(craft.ProductionKey))
+        {
+            GUI.enabled = Plugin.Settings.EnableConfirmedActions.Value && Plugin.Settings.AllowCraftActions.Value;
+            if (GUILayout.Button("Collect", GUILayout.Width(92f), GUILayout.MinHeight(76f)))
+            {
+                _ = Plugin.Instance?.Window.ProposeCraftCollectActionAsync([craft.ProductionKey]);
+            }
+            GUI.enabled = true;
         }
         if (!string.IsNullOrWhiteSpace(craft.OutputTemplateId)
             && GUILayout.Button("Ask HERMES", GUILayout.Width(104f), GUILayout.MinHeight(76f)))
@@ -346,7 +367,7 @@ internal sealed class HermesCraftPanel
         {
             Plugin.Instance?.OpenForPreviewItem(craft.OutputTemplateId, "craft output");
         }
-        GUILayout.Label(craft.CanStartNow ? "READY NOW" : craft.IsAvailable ? "AVAILABLE" : craft.Status.ToUpperInvariant());
+        GUILayout.Label(craft.IsComplete ? "READY TO COLLECT" : craft.CanStartNow ? "STARTABLE" : craft.IsAvailable ? "AVAILABLE" : craft.Status.ToUpperInvariant());
         GUILayout.EndHorizontal();
         GUILayout.Label($"Station: {craft.StationName} • your level {craft.CurrentStationLevel} / required {craft.RequiredStationLevel} • Base duration: {FormatDuration(craft.DurationSeconds)}");
         GUILayout.Label($"Status: {craft.Status} • Can start now: {(craft.CanStartNow ? "Yes" : "No")}");
@@ -490,7 +511,7 @@ internal sealed class HermesCraftPanel
             return _filter switch
             {
                 CraftFilter.Available => craft.StationLevelMet,
-                CraftFilter.Ready => craft.CanStartNow,
+                CraftFilter.Ready => craft.IsComplete,
                 CraftFilter.Profitable => craft.EstimatedBestSaleProfit >= minProfit && GetProfitPercent(craft) >= minPercent,
                 CraftFilter.Overnight => craft.DurationSeconds >= overnightMin && craft.DurationSeconds <= overnightMax,
                 CraftFilter.Active => craft.IsActive || craft.IsComplete,

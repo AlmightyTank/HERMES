@@ -390,6 +390,7 @@ public sealed record HermesCraftsResponse(
 
 public sealed record HermesCraftSummary(
     string CraftKey,
+    string ProductionKey,
     string StationName,
     int CurrentStationLevel,
     int RequiredStationLevel,

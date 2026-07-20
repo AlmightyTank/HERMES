@@ -13,7 +13,7 @@ internal static class HermesVersionInfo
             .InformationalVersion;
         if (string.IsNullOrWhiteSpace(informational))
         {
-            return "1.1.0";
+            return "1.2.0";
         }
 
         var metadataIndex = informational.IndexOf('+');

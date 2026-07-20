@@ -272,8 +272,8 @@ internal sealed class HermesClientSettings
         AllowCraftActions = config.Bind(
             "Actions",
             "Allow craft actions",
-            false,
-            "Reserved for a future release. HERMES will not start or collect crafts yet.");
+            true,
+            "Allows 1.2 confirmed actions that collect regular completed Hideout crafts after player confirmation. HERMES will not start crafts yet.");
         AllowHideoutUpgradeActions = config.Bind(
             "Actions",
             "Allow hideout upgrade actions",

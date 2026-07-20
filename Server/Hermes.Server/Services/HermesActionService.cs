@@ -5,8 +5,14 @@ using System.Text;
 using System.Text.Json.Nodes;
 using Hermes.Server.Models;
 using SPTarkov.DI.Annotations;
+using SPTarkov.Server.Core.Controllers;
 using SPTarkov.Server.Core.Helpers;
+using SPTarkov.Server.Core.Models.Eft.Common.Tables;
+using SPTarkov.Server.Core.Models.Eft.Hideout;
+using SPTarkov.Server.Core.Models.Eft.Inventory;
 using SPTarkov.Server.Core.Models.Common;
+using SPTarkov.Server.Core.Models.Eft.ItemEvent;
+using SPTarkov.Server.Core.Routers;
 using SPTarkov.Server.Core.Servers;
 
 namespace Hermes.Server.Services;
@@ -19,13 +25,19 @@ public sealed class HermesActionService(
     HermesCacheService cacheService,
     HermesStashAnalysisService stashAnalysisService,
     HermesLoadoutService loadoutService,
+    HermesHideoutService hideoutService,
     HermesChangeTrackingService changeTrackingService,
+    InventoryHelper inventoryHelper,
+    ItemHelper itemHelper,
+    HideoutController hideoutController,
+    EventOutputHolder eventOutputHolder,
     SaveServer saveServer)
 {
     private const int ProposalTtlSeconds = 90;
     private const int DuplicateProposalWindowSeconds = 12;
     private const int MaximumHistoryEntriesPerSession = 24;
     private const string InventoryTagActionKind = "HERMES_INVENTORY_TAG";
+    private const string CraftCollectActionKind = "HERMES_CRAFT_COLLECT";
 
     private static readonly Dictionary<string, int> TagColorIds = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -265,6 +277,107 @@ public sealed class HermesActionService(
         }
     }
 
+    public HermesActionProposalResponse ProposeCraftCollectAction(
+        MongoId sessionId,
+        IEnumerable<string> productionKeys,
+        bool collectAllCompleted)
+    {
+        PurgeExpired();
+
+        var now = Now();
+        var sessionKey = sessionId.ToString();
+        var selectedKeys = productionKeys
+            .Select(key => (key ?? string.Empty).Trim())
+            .Where(key => key.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var snapshot = BuildCraftCollectionSnapshot(sessionId, selectedKeys, collectAllCompleted);
+        if (snapshot.ProfileMissing)
+        {
+            return MissingProposal("HERMES could not read the active PMC profile for a craft collection proposal.");
+        }
+
+        if (snapshot.Targets.Count == 0 && snapshot.MissingKeys.Count == 0)
+        {
+            return MissingProposal(collectAllCompleted
+                ? "No completed regular crafts are currently available to collect."
+                : "Select a completed craft before proposing collection.");
+        }
+
+        var cannotExecuteReason = ValidateCraftCollectionSnapshot(snapshot);
+        var affected = snapshot.Targets
+            .Select(target => $"{target.StationName}: {target.OutputQuantity:N0} x {target.OutputName} [{ShortKey(target.ProductionKey)}]")
+            .Concat(snapshot.MissingKeys.Select(key => $"Missing completed craft [{ShortKey(key)}]"))
+            .ToList();
+        var warnings = new List<string>
+        {
+            "Only the production keys listed in this proposal are eligible for collection.",
+            "HERMES rechecks production key, recipe id, completion state, station, and stash capacity before confirming.",
+            "No craft collection rule is created; every collection requires a player confirmation."
+        };
+        if (snapshot.HasUnsupportedProductions)
+        {
+            warnings.Add("Continuous, bitcoin, scav case, and cultist circle productions are blocked in 1.2.0.");
+        }
+
+        var hasUnresolvedOutput = snapshot.Targets.Any(target => target.ProductSets.Count == 0);
+        if (hasUnresolvedOutput)
+        {
+            warnings.Add("HERMES could not identify the output item for one or more selected crafts ahead of time; SPT resolves the recipe and validates stash space directly when you confirm.");
+        }
+
+        var targetKeys = snapshot.Targets
+            .Select(target => target.ProductionKey)
+            .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var fingerprint = $"{sessionKey}:{CraftCollectActionKind}:{string.Join(",", targetKeys)}";
+        var displayName = collectAllCompleted ? "Collect all completed crafts" : "Collect completed craft";
+        var totalQuantity = snapshot.Targets.Sum(target => Math.Max(1, target.OutputQuantity));
+        lock (_sync)
+        {
+            if (TryReuseProposal(fingerprint, now, out var reused))
+            {
+                return new HermesActionProposalResponse(
+                    true,
+                    "Reused the existing pending craft-collection proposal instead of creating a duplicate request.",
+                    reused);
+            }
+
+            var proposal = CreateProposal(
+                now,
+                CraftCollectActionKind,
+                displayName,
+                cannotExecuteReason is null,
+                isHarmlessTestAction: false,
+                new HermesActionPreview(
+                    displayName,
+                    affected,
+                    $"{snapshot.Targets.Count:N0} craft(s), {totalQuantity:N0} output item(s)",
+                    snapshot.FitsInStash
+                        ? hasUnresolvedOutput ? "0 roubles; stash space verified by SPT at confirmation" : "0 roubles; stash space validated"
+                        : "0 roubles; no available stash space",
+                    string.Join(", ", snapshot.Targets.Select(target => target.StationName).Distinct(StringComparer.OrdinalIgnoreCase)),
+                    snapshot.FitsInStash
+                        ? "Selected completed craft outputs will be placed into the PMC stash."
+                        : "No output will be collected unless stash capacity validates at confirmation.",
+                    warnings,
+                    cannotExecuteReason));
+
+            _pendingById[proposal.ProposalId] = new PendingAction(
+                sessionKey,
+                fingerprint,
+                proposal,
+                new CraftCollectActionPayload(targetKeys, snapshot.Targets),
+                false,
+                false,
+                null);
+            _pendingByFingerprint[fingerprint] = proposal.ProposalId;
+            return new HermesActionProposalResponse(true, null, proposal);
+        }
+    }
+
     public ValueTask<HermesActionResultResponse> ConfirmAsync(MongoId sessionId, string proposalId, string token)
         => ResolveAsync(sessionId, proposalId, token, cancel: false);
 
@@ -464,9 +577,14 @@ public sealed class HermesActionService(
             return CreateHistoryEntry(
                 pending.Proposal,
                 "Succeeded",
-                "Harmless HERMES 1.1 test action confirmed. The confirmation pipeline worked and no inventory/profile action was performed.",
+                "Harmless HERMES test action confirmed. The confirmation pipeline worked and no inventory/profile action was performed.",
                 now,
                 executed: true);
+        }
+
+        if (pending.Payload is CraftCollectActionPayload craftCollectAction)
+        {
+            return await ExecuteCraftCollectionAsync(sessionId, pending, craftCollectAction);
         }
 
         if (pending.Payload is not InventoryTagActionPayload tagAction)
@@ -566,6 +684,467 @@ public sealed class HermesActionService(
             $"Inventory tag action applied to {tagAction.Items.Count:N0} selected item(s) and saved in {saveSeconds:N3}s.",
             Now(),
             executed: true);
+    }
+
+    private async ValueTask<HermesActionHistoryEntry> ExecuteCraftCollectionAsync(
+        MongoId sessionId,
+        PendingAction pending,
+        CraftCollectActionPayload action)
+    {
+        var now = Now();
+        var snapshot = BuildCraftCollectionSnapshot(sessionId, action.ProductionKeys, collectAllCompleted: false);
+        var validation = ValidateCraftCollectionSnapshot(snapshot);
+        if (validation is not null)
+        {
+            return CreateHistoryEntry(
+                pending.Proposal with
+                {
+                    CanExecute = false,
+                    Preview = pending.Proposal.Preview with { CannotExecuteReason = validation }
+                },
+                "Rejected",
+                validation,
+                now,
+                executed: false);
+        }
+
+        var profile = profileHelper.GetPmcProfile(sessionId);
+        if (profile is null)
+        {
+            return CreateHistoryEntry(
+                pending.Proposal,
+                "Rejected",
+                "HERMES could not read the active PMC profile at confirmation time. No profile data was changed.",
+                now,
+                executed: false);
+        }
+
+        if (profile.Hideout?.Production is null)
+        {
+            return CreateHistoryEntry(
+                pending.Proposal,
+                "Rejected",
+                "HERMES could not read hideout production state at confirmation time. No profile data was changed.",
+                now,
+                executed: false);
+        }
+
+        eventOutputHolder.ResetOutput(sessionId);
+        var output = eventOutputHolder.GetOutput(sessionId);
+        foreach (var target in snapshot.Targets)
+        {
+            if (!MongoId.IsValidMongoId(target.RecipeId))
+            {
+                return CreateHistoryEntry(
+                    pending.Proposal,
+                    "Rejected",
+                    $"Selected craft {ShortKey(target.ProductionKey)} no longer has a valid recipe id. Request a fresh proposal.",
+                    now,
+                    executed: false);
+            }
+
+            hideoutController.TakeProduction(
+                profile,
+                new HideoutTakeProductionRequestData
+                {
+                    RecipeId = new MongoId(target.RecipeId),
+                    Timestamp = Convert.ToInt32(DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+                },
+                sessionId);
+            if (output.Warnings is { Count: > 0 })
+            {
+                var warning = DescribeOutputWarnings(output);
+                return CreateHistoryEntry(
+                    pending.Proposal,
+                    "Rejected",
+                    $"SPT rejected craft collection while finalizing hideout output: {warning}",
+                    now,
+                    executed: false);
+            }
+        }
+
+        eventOutputHolder.UpdateOutputProperties(sessionId);
+        preparedProfiles.Invalidate(sessionId);
+        hideoutService.InvalidateMaterializedSummaries(reason: "Confirmed craft collection action");
+        stashAnalysisService.Clear("Confirmed craft collection action");
+        loadoutService.Clear("Confirmed craft collection action");
+        cacheService.Clear("Confirmed craft collection action");
+        changeTrackingService.RequestRecheck(sessionId, "Confirmed craft collection action");
+        var saveSeconds = await saveServer.SaveProfileAsync(sessionId);
+
+        return CreateHistoryEntry(
+            pending.Proposal,
+            "Succeeded",
+            $"Collected {snapshot.Targets.Count:N0} completed craft(s) and saved in {saveSeconds:N3}s.",
+            Now(),
+            executed: true);
+    }
+
+    private CraftCollectionSnapshot BuildCraftCollectionSnapshot(
+        MongoId sessionId,
+        IReadOnlyList<string> requestedProductionKeys,
+        bool collectAllCompleted)
+    {
+        var profile = profileHelper.GetPmcProfile(sessionId);
+        if (profile is null)
+        {
+            return new CraftCollectionSnapshot(true, [], requestedProductionKeys, false, false);
+        }
+
+        var productions = profile.Hideout?.Production;
+        if (productions is null)
+        {
+            return new CraftCollectionSnapshot(true, [], requestedProductionKeys, false, false);
+        }
+
+        hideoutService.InvalidateMaterializedSummaries(hideout: false, crafts: true, reason: "Craft collection proposal recheck");
+        var craftSummary = hideoutService.GetCrafts(sessionId);
+        var completedCrafts = craftSummary.Crafts
+            .Where(craft => craft.IsComplete && !string.IsNullOrWhiteSpace(craft.ProductionKey))
+            .GroupBy(craft => craft.ProductionKey, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var keys = collectAllCompleted
+            ? productions
+                .Where(pair => pair.Value is not null
+                               && IsProductionComplete(pair.Value)
+                               && !IsUnsupportedCraftCollectionProduction(pair.Value))
+                .Select(pair => pair.Key.ToString())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                .ToList()
+            : requestedProductionKeys
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(key => key, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+        var targets = new List<CraftCollectionTarget>();
+        var missing = new List<string>();
+        var productSets = new List<List<Item>>();
+        var hasUnsupported = false;
+        foreach (var key in keys)
+        {
+            if (!MongoId.IsValidMongoId(key)
+                || !productions.TryGetValue(new MongoId(key), out var production)
+                || production is null)
+            {
+                missing.Add(key);
+                continue;
+            }
+
+            if (IsUnsupportedCraftCollectionProduction(production))
+            {
+                hasUnsupported = true;
+            }
+
+            var recipeId = production.RecipeId.ToString();
+            completedCrafts.TryGetValue(key, out var craft);
+            var productSetsForTarget = BuildCraftRewardProductSets(production, craft);
+            var rootProduct = productSetsForTarget.SelectMany(productSet => productSet).FirstOrDefault();
+            var outputTemplateId = craft?.OutputTemplateId ?? ReadProductTemplateId(rootProduct);
+            var outputName = craft?.OutputName ?? ResolveItemName(outputTemplateId) ?? "Hideout production";
+            var outputQuantity = craft?.OutputQuantity ?? ReadProductQuantity(productSetsForTarget);
+            var stationName = craft?.StationName ?? "Hideout station";
+            var isComplete = IsProductionComplete(production);
+
+            targets.Add(new CraftCollectionTarget(
+                key,
+                recipeId,
+                stationName,
+                outputName,
+                outputTemplateId,
+                Math.Max(1, outputQuantity),
+                isComplete,
+                production.InProgress == true,
+                production.SptIsContinuous == true,
+                production.SptIsScavCase == true,
+                production.SptIsCultistCircle == true,
+                productSetsForTarget));
+
+            if (productSetsForTarget.Count > 0)
+            {
+                productSets.AddRange(productSetsForTarget);
+            }
+        }
+
+        // Targets with an empty ProductSets are crafts whose recipe HERMES's own static
+        // index could not resolve (e.g. a modded recipe it failed to parse at startup).
+        // SPT's HideoutController.TakeProduction looks the recipe up independently from
+        // the same database and performs its own CanPlaceItemsInInventory + stash check
+        // at confirmation time, so HERMES only needs to pre-validate the sets it *can* see.
+        var fits = targets.Count > 0
+                   && missing.Count == 0
+                   && !hasUnsupported
+                   && inventoryHelper.CanPlaceItemsInInventory(sessionId, productSets);
+        return new CraftCollectionSnapshot(false, targets, missing, fits, hasUnsupported);
+    }
+
+    private string? ValidateCraftCollectionSnapshot(CraftCollectionSnapshot snapshot)
+    {
+        if (snapshot.ProfileMissing)
+        {
+            return "HERMES could not read the current PMC hideout production state.";
+        }
+
+        if (snapshot.MissingKeys.Count > 0)
+        {
+            return "One or more selected completed crafts are missing or already collected. Request a fresh proposal.";
+        }
+
+        if (snapshot.Targets.Count == 0)
+        {
+            return "No completed craft production was selected.";
+        }
+
+        if (snapshot.Targets.Any(target => !target.IsComplete))
+        {
+            return "A selected craft is no longer completed. Request a fresh proposal.";
+        }
+
+        if (snapshot.Targets.Any(target => target.IsContinuous || target.IsScavCase || target.IsCultistCircle))
+        {
+            return "HERMES 1.2.0 only collects regular completed crafts; continuous, scav case, bitcoin, and cultist circle outputs are blocked.";
+        }
+
+        if (!snapshot.FitsInStash)
+        {
+            return "Stash capacity validation failed for the selected craft output. Make space and request a fresh proposal.";
+        }
+
+        return null;
+    }
+
+    private static bool IsProductionComplete(Production production)
+    {
+        if (production.SptIsComplete == true || production.AvailableForFinish == true)
+        {
+            return true;
+        }
+
+        var productionTime = production.ProductionTime ?? 0d;
+        if (productionTime <= 0d)
+        {
+            return false;
+        }
+
+        var progress = production.Progress ?? 0d;
+        if (progress >= productionTime)
+        {
+            return true;
+        }
+
+        if (production.InProgress != true || production.StartTimestamp is not > 0L)
+        {
+            return false;
+        }
+
+        var startSeconds = NormalizeUnixSeconds(production.StartTimestamp.Value);
+        var elapsed = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - startSeconds;
+        if (elapsed <= 0d)
+        {
+            return false;
+        }
+
+        var effectiveProgress = Math.Max(progress, elapsed + Math.Max(0d, production.SkipTime ?? 0d));
+        return effectiveProgress >= productionTime;
+    }
+
+    private static bool IsUnsupportedCraftCollectionProduction(Production production)
+        => production.SptIsContinuous == true
+           || production.SptIsScavCase == true
+           || production.SptIsCultistCircle == true;
+
+    private List<List<Item>> BuildCraftRewardProductSets(Production production, HermesCraftSummary? craft)
+    {
+        var productSets = BuildProductSets(production.Products ?? []);
+        if (productSets.Count > 0)
+        {
+            return productSets;
+        }
+
+        var templateId = craft?.OutputTemplateId;
+        if (string.IsNullOrWhiteSpace(templateId) || !MongoId.IsValidMongoId(templateId))
+        {
+            return [];
+        }
+
+        var quantity = Math.Max(1, craft?.OutputQuantity ?? 1);
+        var template = new MongoId(templateId);
+        if (itemHelper.IsItemTplStackable(template).GetValueOrDefault(false))
+        {
+            var item = new Item
+            {
+                Id = new MongoId(),
+                Template = template,
+                Upd = new Upd
+                {
+                    StackObjectsCount = quantity
+                }
+            };
+
+            return itemHelper.SplitStackIntoSeparateItems(item).ToList();
+        }
+
+        var output = new List<List<Item>>(quantity);
+        for (var index = 0; index < quantity; index++)
+        {
+            output.Add(
+            [
+                new Item
+                {
+                    Id = new MongoId(),
+                    Template = template
+                }
+            ]);
+        }
+
+        return output;
+    }
+
+    private static List<List<Item>> BuildProductSets(List<Item> products)
+    {
+        if (products.Count == 0)
+        {
+            return [];
+        }
+
+        if (products.Count == 1)
+        {
+            return [products];
+        }
+
+        var byId = products
+            .Select(item => (Item: item, Id: ReadItemId(item)))
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Id))
+            .GroupBy(pair => pair.Id!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Item, StringComparer.OrdinalIgnoreCase);
+        var childrenByParent = products
+            .Select(item => (Item: item, ParentId: ReadItemParentId(item)))
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.ParentId))
+            .GroupBy(pair => pair.ParentId!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Select(pair => pair.Item).ToList(), StringComparer.OrdinalIgnoreCase);
+        var roots = products
+            .Where(item =>
+            {
+                var parentId = ReadItemParentId(item);
+                return string.IsNullOrWhiteSpace(parentId) || !byId.ContainsKey(parentId);
+            })
+            .ToList();
+
+        if (roots.Count == 0)
+        {
+            return [products];
+        }
+
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<List<Item>>();
+        foreach (var root in roots)
+        {
+            var set = new List<Item>();
+            var stack = new Stack<Item>();
+            stack.Push(root);
+            while (stack.Count > 0)
+            {
+                var current = stack.Pop();
+                var currentId = ReadItemId(current);
+                if (!string.IsNullOrWhiteSpace(currentId) && !visited.Add(currentId))
+                {
+                    continue;
+                }
+
+                set.Add(current);
+                if (!string.IsNullOrWhiteSpace(currentId)
+                    && childrenByParent.TryGetValue(currentId, out var children))
+                {
+                    foreach (var child in children)
+                    {
+                        stack.Push(child);
+                    }
+                }
+            }
+
+            if (set.Count > 0)
+            {
+                result.Add(set);
+            }
+        }
+
+        foreach (var product in products)
+        {
+            var itemId = ReadItemId(product);
+            if (string.IsNullOrWhiteSpace(itemId) || !visited.Contains(itemId))
+            {
+                result.Add([product]);
+            }
+        }
+
+        return result;
+    }
+
+    private static long NormalizeUnixSeconds(long timestamp)
+        => timestamp > 10_000_000_000L ? timestamp / 1000L : timestamp;
+
+    private string? ResolveItemName(string? templateId)
+        => !string.IsNullOrWhiteSpace(templateId) && MongoId.IsValidMongoId(templateId)
+            ? catalogService.GetPlayerFacingName(new MongoId(templateId))
+            : null;
+
+    private static string? ReadProductTemplateId(Item? product)
+        => GetMember(product, "TemplateId", "Template", "_tpl")?.ToString();
+
+    private static string? ReadItemId(Item? product)
+        => GetMember(product, "Id", "_id")?.ToString();
+
+    private static string? ReadItemParentId(Item? product)
+        => GetMember(product, "ParentId", "parentId")?.ToString();
+
+    private static int ReadProductQuantity(Item? product)
+    {
+        var upd = GetMember(product, "Upd", "upd");
+        var count = GetMember(upd, "StackObjectsCount", "stackObjectsCount");
+        if (count is null)
+        {
+            return 1;
+        }
+
+        return double.TryParse(Convert.ToString(count, System.Globalization.CultureInfo.InvariantCulture), out var parsed)
+            ? Convert.ToInt32(Math.Max(1d, parsed))
+            : 1;
+    }
+
+    private static int ReadProductQuantity(IReadOnlyList<List<Item>> productSets)
+    {
+        var quantity = 0;
+        foreach (var productSet in productSets)
+        {
+            var root = productSet.FirstOrDefault(item =>
+            {
+                var parentId = ReadItemParentId(item);
+                return string.IsNullOrWhiteSpace(parentId)
+                       || productSet.All(candidate => !string.Equals(ReadItemId(candidate), parentId, StringComparison.OrdinalIgnoreCase));
+            }) ?? productSet.FirstOrDefault();
+            quantity += ReadProductQuantity(root);
+        }
+
+        return Math.Max(1, quantity);
+    }
+
+    private static string DescribeOutputWarnings(ItemEventRouterResponse output)
+    {
+        if (output.Warnings is not { Count: > 0 })
+        {
+            return "Unknown inventory warning.";
+        }
+
+        var messages = output.Warnings
+            .Select(warning => GetMember(warning, "Message", "message", "Error", "error", "Code", "code")?.ToString() ?? warning.ToString())
+            .Where(message => !string.IsNullOrWhiteSpace(message))
+            .Distinct(StringComparer.Ordinal)
+            .Take(3)
+            .ToList();
+        return messages.Count > 0
+            ? string.Join(" ", messages)
+            : "Unknown inventory warning.";
     }
 
     private string? ValidateTagConfirmation(MongoId sessionId, InventoryTagActionPayload tagAction)
@@ -1286,6 +1865,10 @@ public sealed class HermesActionService(
         string TagColor,
         IReadOnlyList<TagActionItem> Items) : ActionPayload;
 
+    private sealed record CraftCollectActionPayload(
+        IReadOnlyList<string> ProductionKeys,
+        IReadOnlyList<CraftCollectionTarget> ProposalTargets) : ActionPayload;
+
     private sealed record TagActionItem(
         string ItemId,
         string PublicInstanceKey,
@@ -1308,6 +1891,27 @@ public sealed class HermesActionService(
     private sealed record InventorySnapshot(
         IReadOnlyList<InventoryItemNode> Items,
         IReadOnlyDictionary<string, InventoryItemNode> ById);
+
+    private sealed record CraftCollectionSnapshot(
+        bool ProfileMissing,
+        IReadOnlyList<CraftCollectionTarget> Targets,
+        IReadOnlyList<string> MissingKeys,
+        bool FitsInStash,
+        bool HasUnsupportedProductions);
+
+    private sealed record CraftCollectionTarget(
+        string ProductionKey,
+        string RecipeId,
+        string StationName,
+        string OutputName,
+        string? OutputTemplateId,
+        int OutputQuantity,
+        bool IsComplete,
+        bool InProgress,
+        bool IsContinuous,
+        bool IsScavCase,
+        bool IsCultistCircle,
+        IReadOnlyList<List<Item>> ProductSets);
 
     private sealed record PendingAction(
         string SessionKey,

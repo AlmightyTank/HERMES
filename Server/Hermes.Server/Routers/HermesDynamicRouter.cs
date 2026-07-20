@@ -232,6 +232,18 @@ public sealed class HermesDynamicRouter(
                     return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
                 }),
             new RouteAction(
+                "/hermes/actions/propose/craft-collect/",
+                (url, _, sessionId, _) =>
+                {
+                    var tail = Uri.UnescapeDataString(GetTail(url, "/hermes/actions/propose/craft-collect/"));
+                    var collectAll = tail.Equals("all", StringComparison.OrdinalIgnoreCase);
+                    var keys = collectAll
+                        ? []
+                        : tail.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    var response = actionService.ProposeCraftCollectAction(sessionId, keys, collectAll);
+                    return ValueTask.FromResult<object>(httpResponseUtil.GetBody(response));
+                }),
+            new RouteAction(
                 "/hermes/actions/confirm/",
                 async (url, _, sessionId, _) =>
                 {

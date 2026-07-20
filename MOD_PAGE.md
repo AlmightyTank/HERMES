@@ -2,11 +2,11 @@
 
 HERMES stands for **Hideout, Economy, Resource, Market, and Equipment System**.
 
-It is a mostly read-only in-game assistant for SPT that helps you understand your active PMC profile, with alpha inventory tag edits available only through explicit confirmation.
+It is a mostly read-only in-game assistant for SPT that helps you understand your active PMC profile, with selected inventory tag edits and completed regular craft collection available only through explicit confirmation.
 
 It adds a native **HERMES** tab to the Character screen and in-raid inventory screen, then brings together item values, trader choices, Flea estimates, stash cleanup, crafts, Hideout upgrades, loadout readiness, quest-key knowledge, and pre-raid planning in one place.
 
-HERMES does not use an external AI service and does not send your profile anywhere. Most of HERMES only reads local SPT data and presents analysis inside the game; Items & Market can apply, change, or reset inventory tags on selected owned copies after a confirmation popout.
+HERMES does not use an external AI service and does not send your profile anywhere. Most of HERMES only reads local SPT data and presents analysis inside the game; Items & Market can apply, change, or reset inventory tags on selected owned copies, and Crafts can collect selected completed regular crafts after a confirmation popout.
 
 ## Requirements
 
@@ -22,6 +22,7 @@ HERMES does not use an external AI service and does not send your profile anywhe
 - Compares trader purchase and sale options using your active profile
 - Estimates Flea Market value, listing fees, and trader-versus-Flea sale choices
 - Applies, changes, or removes selected owned-copy inventory tags from Items & Market after explicit confirmation
+- Collects one or all currently completed regular Hideout crafts after explicit confirmation
 - Reviews Hideout upgrade requirements and active production status
 - Checks craft readiness, acquisition costs, profit, and availability
 - Finds stash cleanup opportunities, duplicates, damaged gear, reserves, valuables, and sale destinations
@@ -50,7 +51,7 @@ Check readiness before a raid, including ammo, armor, medical coverage, insuranc
 
 ### Crafts & Hideout
 
-See craft readiness, missing ingredients, output value, estimated profit, active production, and Hideout upgrade requirements.
+See craft readiness, missing ingredients, output value, estimated profit, active production, completed-craft collection proposals, and Hideout upgrade requirements.
 
 ### Raid Planner
 
@@ -81,7 +82,7 @@ The top **Refresh** button performs a stronger source recheck when you have chan
 
 ## Important Notes
 
-- HERMES will not buy, sell, move, craft, repair, insure, accept quests, complete quests, or alter inventory structure.
+- HERMES will not buy, sell, move, start crafts, automatically collect crafts, repair, insure, accept quests, complete quests, or alter inventory structure.
 - Inventory tag edits are limited to explicitly selected owned copies, show old and new tag values in a confirmation popout, and reject missing, moved, or stale items before writing.
 - HERMES uses the installed SPT database and your active profile as the source of truth.
 - Flea and trader values are estimates based on available local SPT data and may not match every economy setup or heavily customized mod list.

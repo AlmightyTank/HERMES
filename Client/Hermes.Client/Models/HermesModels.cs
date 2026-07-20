@@ -442,6 +442,7 @@ public sealed class HermesCraftsResponse
 public sealed class HermesCraftSummary
 {
     public string CraftKey { get; set; } = string.Empty;
+    public string ProductionKey { get; set; } = string.Empty;
     public string StationName { get; set; } = string.Empty;
     public int CurrentStationLevel { get; set; }
     public int RequiredStationLevel { get; set; }

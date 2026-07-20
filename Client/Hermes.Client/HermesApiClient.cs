@@ -271,6 +271,25 @@ internal static class HermesApiClient
             });
     }
 
+    public static Task<HermesActionProposalResponse> ProposeCraftCollectActionAsync(
+        IReadOnlyCollection<string> productionKeys,
+        bool collectAllCompleted = false)
+    {
+        var keySegment = collectAllCompleted
+            ? "all"
+            : string.Join(",", (productionKeys ?? Array.Empty<string>())
+                .Where(key => !string.IsNullOrWhiteSpace(key))
+                .Select(key => key.Trim()));
+        var route = "/hermes/actions/propose/craft-collect/" + Uri.EscapeDataString(keySegment);
+        return GetDataAsync(
+            route,
+            () => new HermesActionProposalResponse
+            {
+                Found = false,
+                Message = "HERMES could not create a craft collection action proposal."
+            });
+    }
+
     public static Task<HermesActionResultResponse> ConfirmActionAsync(string proposalId, string confirmationToken)
     {
         var route = "/hermes/actions/confirm/"

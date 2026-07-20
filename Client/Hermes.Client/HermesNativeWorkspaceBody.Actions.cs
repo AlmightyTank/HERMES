@@ -385,12 +385,6 @@ internal sealed partial class HermesNativeWorkspaceBody
             return;
         }
 
-        if (!Plugin.Settings.AllowHarmlessTestActions.Value && !Plugin.Settings.AllowInventoryTagActions.Value)
-        {
-            AddEmptyState(parent, "All action permissions disabled.", "Enable an individual action permission before requesting proposals.");
-            return;
-        }
-
         if (proposal is null)
         {
             if (state.ActionResult is not null)
@@ -403,7 +397,7 @@ internal sealed partial class HermesNativeWorkspaceBody
                 return;
             }
 
-            AddEmptyState(parent, "No pending action proposal.", "Create a harmless test proposal or inventory tag proposal to open the confirmation window.");
+            AddEmptyState(parent, "No pending action proposal.", "Propose a test action, inventory tag action, or craft collection to open the confirmation window.");
             return;
         }
 

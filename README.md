@@ -4,7 +4,7 @@ HERMES stands for **Hideout, Economy, Resource, Market, and Equipment System**.
 
 It is a mostly read-only in-game assistant for SPT **4.0.13**. HERMES adds a native **HERMES** tab to the Character screen and in-raid inventory screen, then analyzes the active PMC profile using local SPT data.
 
-HERMES does not use an external AI service and does not send your profile anywhere. Most workspaces read local profile, trader, item, quest, Hideout, craft, and Flea data; Items & Market can perform explicitly confirmed inventory tag edits on selected owned copies only.
+HERMES does not use an external AI service and does not send your profile anywhere. Most workspaces read local profile, trader, item, quest, Hideout, craft, and Flea data; confirmed actions can edit selected owned-copy inventory tags and collect selected completed regular crafts only after a confirmation popout.
 
 ## What HERMES Does
 
@@ -20,7 +20,7 @@ HERMES does not use an external AI service and does not send your profile anywhe
 - Includes a Raid Planner with map-specific pre-raid readiness
 - Connects active quests to required access keys and maps through embedded quest-key knowledge
 - Supports a configurable pre-raid food-and-water requirement, including custom consumables when item data exposes hydration or energy effects
-- Includes alpha inventory tag actions in Items & Market with confirmation popouts for explicitly selected owned copies
+- Includes confirmed inventory tag actions in Items & Market and completed-craft collection in Crafts, both behind confirmation popouts
 
 ## Main Workspaces
 
@@ -42,7 +42,7 @@ Check raid readiness, including ammo, armor, medical coverage, insurance, value 
 
 ### Crafts & Hideout
 
-See craft readiness, missing ingredients, output value, estimated profit, active production, and Hideout upgrade requirements.
+See craft readiness, missing ingredients, output value, estimated profit, active production, completed-craft collection proposals, and Hideout upgrade requirements.
 
 ### Raid Planner
 
@@ -112,7 +112,7 @@ dotnet build .\Hermes.Build.csproj -c Release -p:SptRoot="D:\Games\SPT"
 The build creates the release package at the repository root. The package name uses the value in `Version.props`; with the current source it is:
 
 ```text
-HERMES-1.1.0.zip
+HERMES-1.2.0.zip
 ```
 
 It also stages the install payload under:
@@ -162,7 +162,7 @@ The top **Refresh** button performs a stronger source recheck when gear, stash c
 
 ## Important Notes
 
-- HERMES will not buy, sell, move, craft, repair, insure, accept quests, complete quests, or alter inventory structure.
+- HERMES will not buy, sell, move, start crafts, automatically collect crafts, repair, insure, accept quests, complete quests, or alter inventory structure.
 - Items & Market supports confirmed apply/change/reset inventory tag actions for explicitly selected owned copies.
 - Inventory tag confirmations open as a popout preview before writing.
 - Inventory tag confirmations show old and new tag values, reject missing or moved items, and reject stale confirmations before writing.

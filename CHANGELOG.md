@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.2.0
+
+Feature release focused on player-confirmed completed craft collection.
+
+- Added confirmed collection for one completed regular Hideout craft from Crafts.
+- Added collect-all-completed proposal support that expands into explicit production keys before confirmation.
+- Reworked the native Crafts workspace to open on a Now dashboard, with the deeper recipe browser behind a Recipes segment.
+- Added confirmation previews with station, crafted output, quantity, stash-capacity validation, and safety warnings.
+- Rechecks production key, recipe id, completion state, unsupported production type, and stash capacity at confirmation time.
+- Keeps automatic craft collection out of 1.2.0; no collection rule is created and the player confirms every collection.
+
 ## 1.1.0
 
 Feature release after HERMES 1.0.0. HERMES is staying on the 1.x line while the larger 2.0.0 shape develops.
