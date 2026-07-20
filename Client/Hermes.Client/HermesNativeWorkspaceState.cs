@@ -282,6 +282,8 @@ internal sealed class HermesNativeWorkspaceState
     internal void ProposeInventoryTagAction() => _ = _window.ProposeInventoryTagActionAsync();
     internal void ProposeInventoryTagAction(string mode, string tagName, string tagColor, params string[] instanceKeys)
         => _ = _window.ProposeInventoryTagActionAsync(mode, tagName, tagColor, instanceKeys);
+    internal void ProposeCraftCollectAction(bool collectAllCompleted, params string[] productionKeys)
+        => _ = _window.ProposeCraftCollectActionAsync(productionKeys, collectAllCompleted);
     internal void ToggleTagActionInstance(string instanceKey) => _window.ToggleTagActionInstance(instanceKey);
     internal void SelectAllMatchingTagActionInstances() => _window.SelectAllMatchingTagActionInstances();
     internal void ClearTagActionSelection() => _window.ClearTagActionSelection();
