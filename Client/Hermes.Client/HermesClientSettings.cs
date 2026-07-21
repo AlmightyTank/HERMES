@@ -12,7 +12,6 @@ internal sealed class HermesClientSettings
     public ConfigEntry<bool> RememberLastSelectedTab { get; private set; } = null!;
     public ConfigEntry<bool> AutomaticallyRefreshWhenOpened { get; private set; } = null!;
     public ConfigEntry<bool> EnableLiveBackgroundRefresh { get; private set; } = null!;
-    public ConfigEntry<int> LiveBackgroundRefreshSeconds { get; private set; } = null!;
     public ConfigEntry<bool> SaveProfileWhileHermesOpen { get; private set; } = null!;
     public ConfigEntry<int> ProfileSaveWhileHermesOpenSeconds { get; private set; } = null!;
     public ConfigEntry<int> RequestTimeoutSeconds { get; private set; } = null!;
@@ -39,7 +38,6 @@ internal sealed class HermesClientSettings
     public ConfigEntry<int> MaximumAssistantMessages { get; private set; } = null!;
 
     public ConfigEntry<bool> EnableProactiveAssistantNotices { get; private set; } = null!;
-    public ConfigEntry<int> AssistantNoticeCheckIntervalMinutes { get; private set; } = null!;
     public ConfigEntry<bool> ShowAssistantNoticesWhenClosed { get; private set; } = null!;
     public ConfigEntry<bool> ShowAssistantNoticesDuringRaid { get; private set; } = null!;
     public ConfigEntry<bool> NotifyLoadoutReadiness { get; private set; } = null!;
@@ -181,12 +179,7 @@ internal sealed class HermesClientSettings
             "General",
             "Live background refresh",
             true,
-            "Keeps HERMES workspace data and Assistant alerts synchronized with the SPT server even when the HERMES tab or workspace is not open.");
-        LiveBackgroundRefreshSeconds = config.Bind(
-            "General",
-            "Live background refresh seconds",
-            15,
-            "Seconds between lightweight server revision checks. Changed domains are refreshed and the Assistant alert feed is rebuilt automatically. Range: 10-300.");
+            "Keeps Assistant alerts synchronized with the SPT server, even when the HERMES tab is not open, over a dedicated WebSocket connection the server pushes updates through. This only covers alerts: Hideout, Crafts, Stash, and Loadout data are never pushed in the background and always refresh on demand when a workspace is opened, a tab is switched, or Refresh is pressed. Disabling this skips opening the connection (takes effect on next game launch); alerts then only refresh when Assistant is opened or Check is pressed.");
         SaveProfileWhileHermesOpen = config.Bind(
             "General",
             "Save profile while HERMES is open",
@@ -310,11 +303,6 @@ internal sealed class HermesClientSettings
             "Enable alerts",
             true,
             "Checks current read-only HERMES data and shows one compact alert at a time for meaningful loadout, hideout, craft, insurance, and optional stash conditions.");
-        AssistantNoticeCheckIntervalMinutes = config.Bind(
-            "Assistant Alerts",
-            "Check interval minutes",
-            5,
-            "Minutes between automatic alert checks. A compact Check button remains available in the Assistant workspace. Range: 1-60.");
         ShowAssistantNoticesWhenClosed = config.Bind(
             "Assistant Alerts",
             "Show alerts while HERMES tab is inactive",
@@ -914,7 +902,6 @@ internal sealed class HermesClientSettings
     // Legacy per-panel timers remain disabled. The coordinator owns one shared live background
     // refresh loop so every workspace and the Assistant alert feed move together.
     public int GetAutomaticRefreshSeconds() => 0;
-    public int GetLiveBackgroundRefreshSeconds() => Math.Clamp(LiveBackgroundRefreshSeconds.Value, 10, 300);
     public int GetProfileSaveWhileHermesOpenSeconds() => Math.Clamp(ProfileSaveWhileHermesOpenSeconds.Value, 15, 300);
     public int GetRequestTimeoutSeconds() => Math.Clamp(RequestTimeoutSeconds.Value, 5, 60);
     public int GetLongRequestTimeoutSeconds() => Math.Max(30, GetRequestTimeoutSeconds());
@@ -925,7 +912,6 @@ internal sealed class HermesClientSettings
     public int GetMaximumAssistantAmbiguityChoices() => Math.Clamp(MaximumAssistantAmbiguityChoices.Value, 2, 10);
     public int GetMaximumAssistantRecommendations() => Math.Clamp(MaximumAssistantRecommendations.Value, 3, 10);
     public int GetMaximumAssistantContextSubjects() => Math.Clamp(MaximumAssistantContextSubjects.Value, 1, 12);
-    public int GetAssistantNoticeCheckIntervalMinutes() => Math.Clamp(AssistantNoticeCheckIntervalMinutes.Value, 1, 60);
     public int GetMinimumAssistantNoticeCraftProfit() => Math.Clamp(MinimumAssistantNoticeCraftProfit.Value, 0, 10_000_000);
     public int GetMinimumAssistantNoticeStashValue() => Math.Clamp(MinimumAssistantNoticeStashValue.Value, 0, 100_000_000);
     public int GetHighValueUninsuredThreshold() => Math.Clamp(HighValueUninsuredThreshold.Value, 0, 10_000_000);

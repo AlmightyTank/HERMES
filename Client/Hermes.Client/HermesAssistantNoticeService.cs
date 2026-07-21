@@ -1,4 +1,3 @@
-using System.Reflection;
 using Hermes.Client.Models;
 using UnityEngine;
 
@@ -8,7 +7,6 @@ internal sealed class HermesAssistantNoticeService
 {
     private const int MaximumRetainedNotices = 8;
     private const long PreparedFeedReuseMilliseconds = 2000;
-    private const float PreparedFeedWarmupRetrySeconds = 2f;
 
     private readonly List<HermesAssistantNotice> _notices = [];
     private readonly HashSet<string> _dismissedFingerprints = new(StringComparer.Ordinal);
@@ -26,7 +24,8 @@ internal sealed class HermesAssistantNoticeService
     private long _serverRevision;
     private bool _serverSnapshotStale;
     private long _lastPreparedFeedFetchUnixMilliseconds;
-    private float _nextPreparedFeedCheckAt;
+    private readonly object _pushedAlertsSync = new();
+    private (HermesAssistantAlertsResponse Alerts, bool Manual)? _pendingPushedAlerts;
 
     public int ActiveNoticeCount => _notices.Count(notice => !notice.Dismissed);
 
@@ -50,12 +49,69 @@ internal sealed class HermesAssistantNoticeService
     {
         _hermesVisible = hermesVisible;
         _assistantVisible = assistantVisible;
-        CheckPreparedServerFeed();
+        ApplyPendingPushedAlerts();
         PublishPendingNativeNotices();
     }
 
     public Task RefreshNowAsync()
         => RefreshFromPreparedServerAsync(manual: true);
+
+    /// <summary>
+    /// Called from the WebSocket receive thread (via HermesWorkspaceSnapshotCoordinator) when the
+    /// server pushes a recomputed Assistant alert feed. Only stores the payload; applying it
+    /// touches Unity APIs (Time.realtimeSinceStartup, native notification UI) and must happen on
+    /// the main thread from Tick() instead.
+    /// </summary>
+    internal void EnqueuePushedAlerts(HermesAssistantAlertsResponse alerts)
+        => EnqueuePendingAlerts(alerts, manual: false);
+
+    /// <summary>
+    /// Called from a background workspace-refresh task (see
+    /// HermesWorkspaceSnapshotCoordinator.RefreshWorkspaceCoreAsync) right after
+    /// /hermes/assistant/prepare/ returns, since that response now carries the freshly prepared
+    /// alerts directly. This lets a manual tab refresh display current alerts without a separate
+    /// follow-up call to /hermes/assistant/alerts for data the server just handed over. Only stores
+    /// the payload for the same main-thread-only reason as <see cref="EnqueuePushedAlerts"/>.
+    /// </summary>
+    internal void EnqueuePreparedFeedAlerts(HermesAssistantPrepareResponse prepared, bool manual)
+    {
+        var alerts = new HermesAssistantAlertsResponse
+        {
+            Found = prepared.Prepared,
+            Message = prepared.Message,
+            ContextToken = prepared.ContextToken,
+            Revision = prepared.Revision,
+            IsStale = prepared.IsStale,
+            TotalAlerts = prepared.TotalAlerts,
+            Alerts = prepared.Alerts
+        };
+        EnqueuePendingAlerts(alerts, manual);
+    }
+
+    private void EnqueuePendingAlerts(HermesAssistantAlertsResponse alerts, bool manual)
+    {
+        lock (_pushedAlertsSync)
+        {
+            _pendingPushedAlerts = (alerts, manual);
+        }
+    }
+
+    private void ApplyPendingPushedAlerts()
+    {
+        (HermesAssistantAlertsResponse Alerts, bool Manual)? pending;
+        lock (_pushedAlertsSync)
+        {
+            pending = _pendingPushedAlerts;
+            _pendingPushedAlerts = null;
+        }
+
+        if (pending is null || !Plugin.Settings.EnableProactiveAssistantNotices.Value)
+        {
+            return;
+        }
+
+        ApplyAlertsResponse(pending.Value.Alerts, pending.Value.Manual);
+    }
 
     public void UpdateFromWorkspaceData(
         string? profileToken,
@@ -63,7 +119,8 @@ internal sealed class HermesAssistantNoticeService
         HermesHideoutSummaryResponse? hideout,
         HermesCraftsResponse? crafts,
         HermesStashSummaryResponse? stash,
-        bool manual = false)
+        bool manual = false,
+        bool skipServerRefresh = false)
     {
         if (!string.IsNullOrWhiteSpace(_profileToken)
             && !string.IsNullOrWhiteSpace(profileToken)
@@ -106,7 +163,10 @@ internal sealed class HermesAssistantNoticeService
 
         // The server owns alert construction in the materialized workspace pipeline. The client keeps these summaries
         // only as an offline/transport fallback and for native workspace rendering.
-        if (manual || (_serverRevision == 0 && HasCompleteFallbackSnapshot()))
+        // skipServerRefresh is set when the caller already applied a freshly prepared alert feed
+        // for this exact refresh (see EnqueuePreparedFeedAlerts), so fetching again here would just
+        // repeat the same /hermes/assistant/alerts round-trip for data already in hand.
+        if (!skipServerRefresh && (manual || (_serverRevision == 0 && HasCompleteFallbackSnapshot())))
         {
             _ = RefreshFromPreparedServerAsync(manual);
         }
@@ -140,72 +200,17 @@ internal sealed class HermesAssistantNoticeService
         if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
         {
             _status = "Alerts are disabled in F12 configuration.";
-            _nextPreparedFeedCheckAt = Time.realtimeSinceStartup + GetPreparedFeedCheckIntervalSeconds();
             return;
         }
 
         _checking = true;
-        var nextCheckSeconds = GetPreparedFeedCheckIntervalSeconds();
         try
         {
             var response = await HermesRevisionApiClient.GetAssistantAlertsAsync();
-            if (!response.Found)
-            {
-                nextCheckSeconds = PreparedFeedWarmupRetrySeconds;
-                var hasFallback = HasCompleteFallbackSnapshot();
-                RefreshFromCachedWorkspaceData(manual);
-                if (!hasFallback && !string.IsNullOrWhiteSpace(response.Message))
-                {
-                    _status = response.Message;
-                }
-                return;
-            }
-
-            if (!string.IsNullOrWhiteSpace(_profileToken)
-                && !string.IsNullOrWhiteSpace(response.ContextToken)
-                && !string.Equals(_profileToken, response.ContextToken, StringComparison.Ordinal))
-            {
-                HermesNativeNotificationBridge.DismissAll();
-                _notices.Clear();
-                _activeFingerprints.Clear();
-                _dismissedFingerprints.Clear();
-            }
-
-            if (!string.IsNullOrWhiteSpace(response.ContextToken))
-            {
-                _profileToken = response.ContextToken;
-            }
-
-            _serverRevision = response.Revision;
-            _serverSnapshotStale = response.IsStale;
-            _lastPreparedFeedFetchUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            if (response.IsStale && HasCompleteFallbackSnapshot())
-            {
-                nextCheckSeconds = PreparedFeedWarmupRetrySeconds;
-                RefreshFromCachedWorkspaceData(manual);
-                _status += " • server feed will be rematerialized by the next full or manual Refresh";
-                _status = _status.Replace(
-                    "server feed will be rematerialized by the next full or manual Refresh",
-                    "server feed is being rematerialized by live sync");
-                return;
-            }
-
-            var candidates = response.Alerts
-                .Where(IsServerAlertEnabled)
-                .Select(alert => new HermesAssistantNoticeCandidate(
-                    alert.Fingerprint,
-                    alert.Severity,
-                    alert.Category,
-                    alert.Title,
-                    alert.Message,
-                    alert.TargetTab))
-                .ToList();
-            ApplyCandidates(candidates);
-            UpdateStatusFromCandidates(candidates, manual, response.IsStale, response.Message);
+            ApplyAlertsResponse(response, manual);
         }
         catch (Exception ex)
         {
-            nextCheckSeconds = PreparedFeedWarmupRetrySeconds;
             if (Plugin.Settings.DetailedLogging.Value)
             {
                 Plugin.Log.LogWarning($"HERMES prepared Assistant feed used the local fallback: {ex.Message}");
@@ -217,8 +222,67 @@ internal sealed class HermesAssistantNoticeService
         {
             _checking = false;
             _serverRefreshTask = null;
-            _nextPreparedFeedCheckAt = Time.realtimeSinceStartup + nextCheckSeconds;
         }
+    }
+
+    /// <summary>
+    /// Applies a prepared Assistant alert feed, whether it arrived from an explicit HTTP fetch
+    /// (<see cref="RefreshFromPreparedServerCoreAsync"/>) or a live WebSocket push
+    /// (<see cref="ApplyPendingPushedAlerts"/>). Must run on the Unity main thread.
+    /// </summary>
+    private void ApplyAlertsResponse(HermesAssistantAlertsResponse response, bool manual)
+    {
+        if (!response.Found)
+        {
+            var hasFallback = HasCompleteFallbackSnapshot();
+            RefreshFromCachedWorkspaceData(manual);
+            if (!hasFallback && !string.IsNullOrWhiteSpace(response.Message))
+            {
+                _status = response.Message;
+            }
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(_profileToken)
+            && !string.IsNullOrWhiteSpace(response.ContextToken)
+            && !string.Equals(_profileToken, response.ContextToken, StringComparison.Ordinal))
+        {
+            HermesNativeNotificationBridge.DismissAll();
+            _notices.Clear();
+            _activeFingerprints.Clear();
+            _dismissedFingerprints.Clear();
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.ContextToken))
+        {
+            _profileToken = response.ContextToken;
+        }
+
+        _serverRevision = response.Revision;
+        _serverSnapshotStale = response.IsStale;
+        _lastPreparedFeedFetchUnixMilliseconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (response.IsStale && HasCompleteFallbackSnapshot())
+        {
+            RefreshFromCachedWorkspaceData(manual);
+            _status += " • server feed will be rematerialized by the next full or manual Refresh";
+            _status = _status.Replace(
+                "server feed will be rematerialized by the next full or manual Refresh",
+                "server feed is being rematerialized by live sync");
+            return;
+        }
+
+        var candidates = response.Alerts
+            .Where(IsServerAlertEnabled)
+            .Select(alert => new HermesAssistantNoticeCandidate(
+                alert.Fingerprint,
+                alert.Severity,
+                alert.Category,
+                alert.Title,
+                alert.Message,
+                alert.TargetTab))
+            .ToList();
+        ApplyCandidates(candidates);
+        UpdateStatusFromCandidates(candidates, manual, response.IsStale, response.Message);
     }
 
     private bool IsServerAlertEnabled(HermesAssistantAlertSummary alert)
@@ -235,36 +299,6 @@ internal sealed class HermesAssistantNoticeService
                                                     && alert.NumericValue >= Plugin.Settings.GetMinimumAssistantNoticeStashValue(),
             _ => true
         };
-
-    private void CheckPreparedServerFeed()
-    {
-        if (!Plugin.Settings.EnableProactiveAssistantNotices.Value)
-        {
-            return;
-        }
-
-        if (_checking
-            || _serverRefreshTask is { IsCompleted: false }
-            || Time.realtimeSinceStartup < _nextPreparedFeedCheckAt)
-        {
-            return;
-        }
-
-        if (!Plugin.Settings.ShowAssistantNoticesDuringRaid.Value && IsRaidActive())
-        {
-            return;
-        }
-
-        _ = RefreshFromPreparedServerAsync(manual: false);
-    }
-
-    private static float GetPreparedFeedCheckIntervalSeconds()
-    {
-        var noticeIntervalSeconds = Plugin.Settings.GetAssistantNoticeCheckIntervalMinutes() * 60f;
-        return Plugin.Settings.EnableLiveBackgroundRefresh.Value
-            ? Math.Min(noticeIntervalSeconds, Plugin.Settings.GetLiveBackgroundRefreshSeconds())
-            : noticeIntervalSeconds;
-    }
 
     private bool HasCompleteFallbackSnapshot()
         => _cachedLoadout is { Found: true }
@@ -653,7 +687,7 @@ internal sealed class HermesAssistantNoticeService
     {
         if (!Plugin.Settings.EnableProactiveAssistantNotices.Value
             || (_hermesVisible && _assistantVisible)
-            || (!Plugin.Settings.ShowAssistantNoticesDuringRaid.Value && IsRaidActive())
+            || (!Plugin.Settings.ShowAssistantNoticesDuringRaid.Value && HermesWorkspaceSnapshotCoordinator.IsRaidActive())
             || (!_hermesVisible && !Plugin.Settings.ShowAssistantNoticesWhenClosed.Value))
         {
             return;
@@ -755,50 +789,6 @@ internal sealed class HermesAssistantNoticeService
             "warning" => 2,
             _ => 1
         };
-    }
-
-    private static bool IsRaidActive()
-    {
-        try
-        {
-            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
-            var gameWorldType = assemblies
-                .Select(assembly => assembly.GetType("EFT.GameWorld", false))
-                .FirstOrDefault(type => type is not null);
-            if (gameWorldType is null)
-            {
-                return false;
-            }
-
-            var directInstance = gameWorldType
-                .GetProperty("Instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                ?.GetValue(null)
-                ?? gameWorldType
-                    .GetField("Instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                    ?.GetValue(null);
-            if (directInstance is not null)
-            {
-                return true;
-            }
-
-            var singletonType = assemblies
-                .Select(assembly => assembly.GetType("Comfort.Common.Singleton`1", false))
-                .FirstOrDefault(type => type is not null);
-            if (singletonType is null)
-            {
-                return false;
-            }
-
-            var closedSingleton = singletonType.MakeGenericType(gameWorldType);
-            var singletonInstance = closedSingleton
-                .GetProperty("Instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                ?.GetValue(null);
-            return singletonInstance is not null;
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private sealed class HermesAssistantNotice

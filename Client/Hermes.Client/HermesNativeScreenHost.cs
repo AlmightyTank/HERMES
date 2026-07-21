@@ -786,12 +786,15 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
             return;
         }
 
+        // A LayoutGroup recalculates position from sibling order automatically, so re-asserting
+        // sibling order under one is safe and cheap (SetSiblingIndex is a normal supported
+        // operation here) — it is not skipped anymore. Skipping it left the seam against
+        // whichever tab sits to HERMES's right (normally Achievements) uncorrected for the rest
+        // of the session if anything ever shifted sibling order after the one-time placement that
+        // runs when the tab is (re)created, instead of continuously matching how every other
+        // native tab pair keeps a fixed, selection-independent draw order.
         var layoutGroup = parent.GetComponent<LayoutGroup>();
-        if (layoutGroup != null && layoutGroup.isActiveAndEnabled)
-        {
-            // Layout groups own geometry. Placement already keeps HERMES after Tasks.
-            return;
-        }
+        var usesLayoutGroup = layoutGroup != null && layoutGroup.isActiveAndEnabled;
 
         var anchorTab = ResolveRightEdgeAnchor(parent, _hermesTabObject.transform);
         var placeAfterAnchor = false;
@@ -809,45 +812,47 @@ internal sealed class HermesNativeScreenHost : MonoBehaviour
 
         var hermesIndex = _hermesTabObject.transform.GetSiblingIndex();
         var anchorIndex = anchorTab.transform.GetSiblingIndex();
+        int? newSiblingIndex = null;
         if (placeAfterAnchor)
         {
-            if (hermesIndex == anchorIndex + 1)
+            if (hermesIndex != anchorIndex + 1)
             {
-                return;
+                newSiblingIndex = hermesIndex < anchorIndex
+                    ? anchorIndex
+                    : Math.Min(anchorIndex + 1, Math.Max(0, parent.childCount - 1));
             }
-
-            var afterTarget = hermesIndex < anchorIndex
-                ? anchorIndex
-                : Math.Min(anchorIndex + 1, Math.Max(0, parent.childCount - 1));
-            _hermesTabObject.transform.SetSiblingIndex(afterTarget);
-            return;
         }
-
-        if (selected)
+        else if (selected)
         {
-            if (hermesIndex == anchorIndex + 1)
+            if (hermesIndex != anchorIndex + 1)
             {
-                return;
+                // When HERMES is currently before the anchor, removing it shifts the anchor
+                // left by one, so the original anchor index becomes the after position.
+                newSiblingIndex = hermesIndex < anchorIndex
+                    ? anchorIndex
+                    : Math.Min(anchorIndex + 1, Math.Max(0, parent.childCount - 1));
             }
-
-            // When HERMES is currently before the anchor, removing it shifts the anchor
-            // left by one, so the original anchor index becomes the after position.
-            var targetIndex = hermesIndex < anchorIndex
-                ? anchorIndex
-                : Math.Min(anchorIndex + 1, Math.Max(0, parent.childCount - 1));
-            _hermesTabObject.transform.SetSiblingIndex(targetIndex);
-            return;
+        }
+        else if (hermesIndex + 1 != anchorIndex)
+        {
+            // Steady state: HERMES sits immediately before its right-edge neighbor in draw
+            // order, the same fixed relationship every other adjacent native tab pair has,
+            // whether HERMES is selected or not.
+            newSiblingIndex = hermesIndex < anchorIndex
+                ? Math.Max(0, anchorIndex - 1)
+                : anchorIndex;
         }
 
-        if (hermesIndex + 1 == anchorIndex)
+        if (newSiblingIndex is not { } targetIndex || targetIndex == hermesIndex)
         {
             return;
         }
 
-        var inactiveTarget = hermesIndex < anchorIndex
-            ? Math.Max(0, anchorIndex - 1)
-            : anchorIndex;
-        _hermesTabObject.transform.SetSiblingIndex(inactiveTarget);
+        _hermesTabObject.transform.SetSiblingIndex(targetIndex);
+        if (usesLayoutGroup && parent is RectTransform layoutParentRect)
+        {
+            LayoutRebuilder.ForceRebuildLayoutImmediate(layoutParentRect);
+        }
     }
 
     private void PositionHermesAfterTasksTab(

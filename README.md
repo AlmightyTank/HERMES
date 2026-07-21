@@ -111,7 +111,7 @@ dotnet build .\Hermes.Build.csproj -c Release -p:SptRoot="D:\Games\SPT"
 The build creates the release package at the repository root. The package name uses the value in `Version.props`; with the current source it is:
 
 ```text
-HERMES-1.0.2.zip
+HERMES-1.0.3.zip
 ```
 
 It also stages the install payload under:

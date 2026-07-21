@@ -2617,6 +2617,27 @@ internal sealed class HermesWindow
         }
 
         var tabName = GetTabName(_activeTab);
+        var coordinator = HermesWorkspaceSnapshotCoordinator.Current;
+        if (coordinator is not null)
+        {
+            if (_activeTab == HermesTab.Assistant)
+            {
+                // Assistant is where actionable alerts live, so opening it deliberately still
+                // forces a real source recheck (same as the explicit Refresh button), unlike
+                // switching between the other workspace tabs below.
+                _ = coordinator.RefreshWorkspaceAsync(tabName, manual: true);
+                return;
+            }
+
+            // Switching between the other tabs just reads the server's already-prepared summary
+            // for that one domain — a debounced, non-forcing read. It must not force a source
+            // recheck (recheck bypasses the static-database/market-fingerprint throttles
+            // entirely) or re-register the Assistant feed; only the explicit Refresh button
+            // (RefreshCurrentDataAsync) and opening Assistant do that.
+            coordinator.OnWorkspaceSelected(tabName);
+            return;
+        }
+
         var displayName = GetTabDisplayName(_activeTab);
         _ = RefreshSelectedProfileWorkspaceAsync(tabName, displayName);
     }

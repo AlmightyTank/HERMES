@@ -22,12 +22,20 @@ public sealed record HermesWorkspaceSnapshotResponse(
     HermesStashSummaryResponse Stash,
     HermesLoadoutSummaryResponse Loadout);
 
+/// <summary>
+/// Carries the Alerts fields alongside so a single call to /hermes/assistant/prepare/ is enough
+/// for a manual refresh to display current alerts, instead of needing a follow-up call to
+/// /hermes/assistant/alerts for the same freshly prepared feed.
+/// </summary>
 public sealed record HermesAssistantPrepareResponse(
     bool Prepared,
     string? Message,
     string ContextToken,
     long Revision,
-    HermesDomainRevisions Domains);
+    HermesDomainRevisions Domains,
+    bool IsStale,
+    int TotalAlerts,
+    IReadOnlyList<HermesAssistantAlertSummary> Alerts);
 
 public sealed record HermesChangesResponse(
     bool Found,

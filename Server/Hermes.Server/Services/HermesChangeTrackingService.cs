@@ -88,6 +88,8 @@ public sealed class HermesChangeTrackingService(
         new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, PreparedAssistantFeed> _preparedAssistantSnapshots =
         new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, (HermesStashAnalysisSettings Stash, HermesLoadoutAnalysisSettings Loadout)>
+        _lastKnownSettingsByScope = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _staticFingerprintSync = new();
     private string? _staticDatabaseFingerprint;
 
@@ -105,6 +107,8 @@ public sealed class HermesChangeTrackingService(
             {
                 return MissingSnapshot(sessionId, stashSettings, loadoutSettings);
             }
+
+            _lastKnownSettingsByScope[scope.ScopeKey] = (stashSettings, loadoutSettings);
 
             var state = RefreshState(scope, forceSlowSources: true);
 
@@ -169,8 +173,13 @@ public sealed class HermesChangeTrackingService(
                     "HERMES could not read the active PMC profile.",
                     string.Empty,
                     0,
-                    EmptyDomains());
+                    EmptyDomains(),
+                    false,
+                    0,
+                    []);
             }
+
+            _lastKnownSettingsByScope[scope.ScopeKey] = (stashSettings, loadoutSettings);
 
             var state = RefreshState(scope, forceSlowSources: false);
             var revision = ReadRevision(state);
@@ -194,7 +203,10 @@ public sealed class HermesChangeTrackingService(
                     "The prepared Assistant feed is waiting for: " + string.Join(", ", missing) + ".",
                     scope.ContextToken,
                     revision.Revision,
-                    revision.Domains);
+                    revision.Domains,
+                    false,
+                    0,
+                    []);
             }
 
             var response = new HermesWorkspaceSnapshotResponse(
@@ -213,12 +225,20 @@ public sealed class HermesChangeTrackingService(
                 && string.Equals(confirmedScope.ContextToken, scope.ContextToken, StringComparison.Ordinal))
             {
                 StorePreparedAssistantFeed(scope.ScopeKey, response);
+
+                // Cheap: reads back the feed just stored above instead of rebuilding it, so a
+                // manual refresh gets current alerts in this same response and does not need a
+                // separate /hermes/assistant/alerts round-trip right after.
+                var alerts = GetAssistantAlerts(sessionId);
                 return new HermesAssistantPrepareResponse(
                     true,
                     null,
                     response.ContextToken,
                     response.Revision,
-                    response.Domains);
+                    response.Domains,
+                    alerts.IsStale,
+                    alerts.TotalAlerts,
+                    alerts.Alerts);
             }
 
             RetireScope(scope, "Active PMC profile changed while HERMES was preparing Assistant alerts");
@@ -229,7 +249,10 @@ public sealed class HermesChangeTrackingService(
             "The active PMC profile changed while HERMES was preparing Assistant alerts.",
             profileScopeService.Resolve(sessionId)?.ContextToken ?? string.Empty,
             0,
-            EmptyDomains());
+            EmptyDomains(),
+            false,
+            0,
+            []);
     }
 
     private void StorePreparedAssistantFeed(
@@ -291,6 +314,25 @@ public sealed class HermesChangeTrackingService(
             currentRevision.Domains.Assistant > snapshot.Domains.Assistant,
             alerts.Count,
             alerts);
+    }
+
+    /// <summary>
+    /// Recomputes the prepared Assistant feed and returns its alerts for a live WebSocket push,
+    /// reusing the stash/loadout analysis settings from the most recent client-driven prepare or
+    /// snapshot request for this session's active profile. Returns null when the client has not
+    /// primed those settings yet (for example, before the one-time startup load completes), so the
+    /// push coordinator can skip the expensive recompute until there is something to base it on.
+    /// </summary>
+    public HermesAssistantAlertsResponse? RefreshAssistantAlertsForPush(MongoId sessionId)
+    {
+        var scope = profileScopeService.Resolve(sessionId);
+        if (scope is null || !_lastKnownSettingsByScope.TryGetValue(scope.ScopeKey, out var settings))
+        {
+            return null;
+        }
+
+        PrepareAssistantFeed(sessionId, settings.Stash, settings.Loadout);
+        return GetAssistantAlerts(sessionId);
     }
 
     private static IReadOnlyList<HermesAssistantAlertSummary> BuildAssistantAlerts(
@@ -580,6 +622,7 @@ public sealed class HermesChangeTrackingService(
             if (_activeScopeBySession.TryUpdate(sessionKey, scope.ScopeKey, previousScopeKey))
             {
                 _preparedAssistantSnapshots.TryRemove(previousScopeKey, out _);
+                _lastKnownSettingsByScope.TryRemove(previousScopeKey, out _);
                 if (_sessions.TryRemove(previousScopeKey, out var previousState))
                 {
                     lock (previousState.Sync)
@@ -598,6 +641,7 @@ public sealed class HermesChangeTrackingService(
     private void RetireScope(HermesProfileScope scope, string reason)
     {
         _preparedAssistantSnapshots.TryRemove(scope.ScopeKey, out _);
+        _lastKnownSettingsByScope.TryRemove(scope.ScopeKey, out _);
         if (_sessions.TryRemove(scope.ScopeKey, out var state))
         {
             lock (state.Sync)

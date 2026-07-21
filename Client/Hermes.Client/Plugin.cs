@@ -1,6 +1,7 @@
 using System;
 using BepInEx;
 using BepInEx.Logging;
+using Hermes.Client.Models;
 using UnityEngine;
 
 namespace Hermes.Client;
@@ -10,7 +11,7 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid = "com.amightytank.hermes";
     public const string PluginName = "HERMES Client";
-    public const string PluginVersion = "1.0.2";
+    public const string PluginVersion = "1.0.3";
 
     internal static ManualLogSource Log { get; private set; } = null!;
     internal static Plugin? Instance { get; private set; }
@@ -31,6 +32,11 @@ public sealed class Plugin : BaseUnityPlugin
         HermesPreRaidReadinessSettings.Bind(Config);
         _window = new HermesWindow();
         _snapshotCoordinator = HermesWorkspaceSnapshotCoordinator.Configure(_window);
+        HermesWebSocketClient.NotificationsUpdated += HandleNotificationsUpdatePush;
+        if (Settings.EnableLiveBackgroundRefresh.Value)
+        {
+            HermesWebSocketClient.Start();
+        }
 
         TryEnable("Ask HERMES context actions", () => new AskHermesContextMenuPatch().Enable());
         TryEnable("Character and in-raid inventory tab injection", () => new HermesNativeInventoryScreenPatch().Enable());
@@ -126,6 +132,18 @@ public sealed class Plugin : BaseUnityPlugin
         _window.OpenNativeNoticeTarget(targetTab);
         HermesGlobalNavigation.RequestOpen();
     }
+
+    private void OnDestroy()
+    {
+        HermesWebSocketClient.NotificationsUpdated -= HandleNotificationsUpdatePush;
+        HermesWebSocketClient.Stop();
+    }
+
+    // Runs on the WebSocket receive thread, not the Unity main thread. The coordinator only
+    // enqueues work here (matching how every other async HERMES fetch already hands its result
+    // back to Tick()'s pending-delta queue); it must not touch Unity APIs directly.
+    private void HandleNotificationsUpdatePush(HermesAssistantAlertsResponse alerts)
+        => _snapshotCoordinator?.HandleNotificationsPush(alerts);
 
     private void Update()
     {

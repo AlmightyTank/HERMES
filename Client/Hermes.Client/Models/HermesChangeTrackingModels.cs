@@ -33,6 +33,9 @@ internal sealed class HermesAssistantPrepareResponse
     public string ContextToken { get; set; } = string.Empty;
     public long Revision { get; set; }
     public HermesDomainRevisions Domains { get; set; } = new();
+    public bool IsStale { get; set; }
+    public int TotalAlerts { get; set; }
+    public IReadOnlyList<HermesAssistantAlertSummary> Alerts { get; set; } = [];
 }
 
 internal sealed class HermesChangesResponse

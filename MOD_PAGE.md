@@ -80,6 +80,13 @@ The top **Refresh** button performs a stronger source recheck when you have chan
 
 ## Update Log
 
+### 1.0.3
+
+- Switched Assistant alerts from periodic background polling to a server-pushed WebSocket connection, addressing reports of HERMES slowing down games during normal play.
+- Hideout, Crafts, Stash, and Loadout data no longer refresh in the background at all now: they only load when you open HERMES or switch to that tab, so nothing runs while you're not looking at it.
+- HERMES now reconnects automatically and catches up immediately if the connection drops, such as across a raid.
+- Updated package, client, and server version reporting to **1.0.3**.
+
 ### 1.0.2
 
 - Added a configurable native UI font-size option under **Interface -> Font size percent**.
